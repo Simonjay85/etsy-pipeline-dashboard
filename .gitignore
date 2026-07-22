@@ -14,6 +14,7 @@ node_modules
 __pycache__/
 *.py[cod]
 *$py.class
+.pytest_cache/
 
 # VS Code configurations
 .vscode/

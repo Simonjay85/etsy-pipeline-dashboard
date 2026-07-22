@@ -1,0 +1,24 @@
+{
+  "daisyflowdigital": {
+    "id": "daisyflowdigital",
+    "name": "Daisy Flow Digital",
+    "emoji": "🌼",
+    "wordpress_url": "https://example.com",
+    "ebay_seller_url": "https://www.ebay.com/usr/daisyflowdigital",
+    "browser_session": "~/.ebay_browser_session_daisyflowdigital",
+    "debug_port": 9230,
+    "wp_username": "",
+    "etsy_import_source": "daisyflowdigital"
+  },
+  "templystudios": {
+    "id": "templystudios",
+    "name": "Temply Studio",
+    "emoji": "🌸",
+    "wordpress_url": "https://example.com",
+    "ebay_seller_url": "https://www.ebay.com/usr/templystudios",
+    "browser_session": "~/.ebay_browser_session_templystudios",
+    "debug_port": 9231,
+    "wp_username": "",
+    "etsy_import_source": "templystudios"
+  }
+}

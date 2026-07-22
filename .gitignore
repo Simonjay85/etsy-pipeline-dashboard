@@ -1,0 +1,71 @@
+# Virtual environment
+.venv/
+venv/
+ENV/
+env/
+
+# Node modules
+node_modules
+
+# Browser sessions & caches (from Chrome automation)
+.browser-session/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# VS Code configurations
+.vscode/
+
+# OS generated files
+**/.DS_Store
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# iCloud backup placeholders
+*.__icloud_bak
+
+# Logs & temp files
+*.log
+*.tmp
+.~lock.*
+
+# Excel backups & lock files
+*backup*.xlsx
+*before_repair*.xlsx
+
+# Scratch / sandbox folder
+scratch/
+
+# Secrets & credentials
+*secrets*.json
+!*secrets*.example.json
+
+# Shop data (heavy assets: PDFs, ZIPs, images, spreadsheets)
+shops/
+shops/**/product-*/
+
+# WordPress shop data
+shops_wp/
+
+# Master product assets (large binaries)
+master_products/
+
+# Migration backups
+.migration-backup-*/
+
+# Tool/automation artifacts
+.playwright-cli/
+.qoder/
+
+# Generated output
+output/
+outputs/
+tmp/
+tmp_pdf_preview_*/

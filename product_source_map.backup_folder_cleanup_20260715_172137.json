@@ -1,0 +1,791 @@
+{
+  "01_planners_daily_weekly_monthly/49_capricorn_weekly_planner": {
+    "daisyflowdigital": "product-83",
+    "templystudios": "product-391"
+  },
+  "01_planners_daily_weekly_monthly/50_libra_weekly_planner": {
+    "daisyflowdigital": "product-84",
+    "templystudios": "product-392"
+  },
+  "01_planners_daily_weekly_monthly/51_scorpio_weekly_planner": {
+    "daisyflowdigital": "product-85",
+    "templystudios": "product-393"
+  },
+  "01_planners_daily_weekly_monthly/52_leo_weekly_planner": {
+    "daisyflowdigital": "product-86",
+    "templystudios": "product-394"
+  },
+  "01_planners_daily_weekly_monthly/53_plantify_weekly_planner": {
+    "daisyflowdigital": "product-87",
+    "templystudios": "product-395"
+  },
+  "01_planners_daily_weekly_monthly/54_plantify_daily_journal": {
+    "daisyflowdigital": "product-88",
+    "templystudios": "product-396"
+  },
+  "01_planners_daily_weekly_monthly/59_plantify_daily_brain_dump_goals_noimage": {
+    "daisyflowdigital": "product-89",
+    "templystudios": "product-397"
+  },
+  "01_planners_daily_weekly_monthly/60_plantify_2026_monthly_overview_noimage": {
+    "daisyflowdigital": "product-90",
+    "templystudios": "product-398"
+  },
+  "01_planners_daily_weekly_monthly/61_plantify_weekly_plan_noimage": {
+    "daisyflowdigital": "product-91",
+    "templystudios": "product-399"
+  },
+  "01_planners_daily_weekly_monthly/62_book_lover_work_personal_planner": {
+    "daisyflowdigital": "product-92",
+    "templystudios": "product-400"
+  },
+  "01_planners_daily_weekly_monthly/65_nursery_newborn_planner_noimage": {
+    "daisyflowdigital": "product-93",
+    "templystudios": "product-401"
+  },
+  "04_lifestyle_home_events/46_spring_journal": {
+    "daisyflowdigital": "product-94",
+    "templystudios": "product-402"
+  },
+  "04_lifestyle_home_events/47_spring_cleaning_checklist": {
+    "daisyflowdigital": "product-95",
+    "templystudios": "product-403"
+  },
+  "04_lifestyle_home_events/63_book_lover_movie_series_to_watch": {
+    "daisyflowdigital": "product-96",
+    "templystudios": "product-404"
+  },
+  "08_study_learning/58_plantify_vocabulary_worksheets": {
+    "daisyflowdigital": "product-97",
+    "templystudios": "product-405"
+  },
+  "NoImages/39_shadow_work_worksheet_incomplete": {
+    "daisyflowdigital": "product-98",
+    "templystudios": "product-406"
+  },
+  "NoImages/45_meal_plan_noimage": {
+    "daisyflowdigital": "product-99",
+    "templystudios": "product-407"
+  },
+  "NoImages/48_spring_bucket_list_noimage": {
+    "daisyflowdigital": "product-100",
+    "templystudios": "product-408"
+  },
+  "NoImages/55_plantify_daily_brain_dump": {
+    "daisyflowdigital": "product-101",
+    "templystudios": "product-409"
+  },
+  "NoImages/56_plantify_seasonal_intentions": {
+    "daisyflowdigital": "product-102",
+    "templystudios": "product-410"
+  },
+  "NoImages/57_plantify_draw_your_pets": {
+    "daisyflowdigital": "product-103",
+    "templystudios": "product-411"
+  },
+  "sync:templystudios/product-02": {
+    "daisyflowdigital": "product-02"
+  },
+  "sync:templystudios/product-03": {
+    "daisyflowdigital": "product-04"
+  },
+  "sync:templystudios/product-04": {
+    "daisyflowdigital": "product-104"
+  },
+  "sync:templystudios/product-05": {
+    "daisyflowdigital": "product-01"
+  },
+  "sync:templystudios/product-06": {
+    "daisyflowdigital": "product-01"
+  },
+  "sync:templystudios/product-07": {
+    "daisyflowdigital": "product-01"
+  },
+  "sync:templystudios/product-10": {
+    "daisyflowdigital": "product-01"
+  },
+  "sync:templystudios/product-11": {
+    "daisyflowdigital": "product-05"
+  },
+  "sync:templystudios/product-12": {
+    "daisyflowdigital": "product-06"
+  },
+  "sync:templystudios/product-13": {
+    "daisyflowdigital": "product-105"
+  },
+  "sync:templystudios/product-15": {
+    "daisyflowdigital": "product-08"
+  },
+  "sync:templystudios/product-16": {
+    "daisyflowdigital": "product-106"
+  },
+  "sync:templystudios/product-17": {
+    "daisyflowdigital": "product-10"
+  },
+  "sync:templystudios/product-18": {
+    "daisyflowdigital": "product-11"
+  },
+  "sync:templystudios/product-19": {
+    "daisyflowdigital": "product-12"
+  },
+  "sync:templystudios/product-20": {
+    "daisyflowdigital": "product-13"
+  },
+  "sync:templystudios/product-21": {
+    "daisyflowdigital": "product-14"
+  },
+  "sync:templystudios/product-22": {
+    "daisyflowdigital": "product-15"
+  },
+  "sync:templystudios/product-23": {
+    "daisyflowdigital": "product-16"
+  },
+  "sync:templystudios/product-25": {
+    "daisyflowdigital": "product-107"
+  },
+  "sync:templystudios/product-26": {
+    "daisyflowdigital": "product-19"
+  },
+  "sync:templystudios/product-27": {
+    "daisyflowdigital": "product-20"
+  },
+  "sync:templystudios/product-28": {
+    "daisyflowdigital": "product-21"
+  },
+  "sync:templystudios/product-29": {
+    "daisyflowdigital": "product-22"
+  },
+  "sync:templystudios/product-31": {
+    "daisyflowdigital": "product-108"
+  },
+  "sync:templystudios/product-32": {
+    "daisyflowdigital": "product-109"
+  },
+  "sync:templystudios/product-34": {
+    "daisyflowdigital": "product-110"
+  },
+  "sync:templystudios/product-35": {
+    "daisyflowdigital": "product-111"
+  },
+  "sync:templystudios/product-36": {
+    "daisyflowdigital": "product-112"
+  },
+  "sync:templystudios/product-37": {
+    "daisyflowdigital": "product-113"
+  },
+  "sync:templystudios/product-38": {
+    "daisyflowdigital": "product-114"
+  },
+  "sync:templystudios/product-39": {
+    "daisyflowdigital": "product-115"
+  },
+  "sync:templystudios/product-40": {
+    "daisyflowdigital": "product-116"
+  },
+  "sync:templystudios/product-41": {
+    "daisyflowdigital": "product-117"
+  },
+  "sync:templystudios/product-42": {
+    "daisyflowdigital": "product-118"
+  },
+  "sync:templystudios/product-43": {
+    "daisyflowdigital": "product-119"
+  },
+  "sync:templystudios/product-44": {
+    "daisyflowdigital": "product-120"
+  },
+  "sync:templystudios/product-45": {
+    "daisyflowdigital": "product-121"
+  },
+  "sync:templystudios/product-46": {
+    "daisyflowdigital": "product-122"
+  },
+  "sync:templystudios/product-47": {
+    "daisyflowdigital": "product-123"
+  },
+  "sync:templystudios/product-48": {
+    "daisyflowdigital": "product-124"
+  },
+  "sync:templystudios/product-49": {
+    "daisyflowdigital": "product-125"
+  },
+  "sync:templystudios/product-50": {
+    "daisyflowdigital": "product-126"
+  },
+  "sync:templystudios/product-51": {
+    "daisyflowdigital": "product-127"
+  },
+  "sync:templystudios/product-52": {
+    "daisyflowdigital": "product-128"
+  },
+  "sync:templystudios/product-53": {
+    "daisyflowdigital": "product-129"
+  },
+  "sync:templystudios/product-54": {
+    "daisyflowdigital": "product-130"
+  },
+  "sync:templystudios/product-55": {
+    "daisyflowdigital": "product-131"
+  },
+  "sync:templystudios/product-56": {
+    "daisyflowdigital": "product-132"
+  },
+  "sync:templystudios/product-57": {
+    "daisyflowdigital": "product-133"
+  },
+  "sync:templystudios/product-58": {
+    "daisyflowdigital": "product-134"
+  },
+  "sync:templystudios/product-59": {
+    "daisyflowdigital": "product-135"
+  },
+  "sync:templystudios/product-60": {
+    "daisyflowdigital": "product-136"
+  },
+  "sync:templystudios/product-61": {
+    "daisyflowdigital": "product-137"
+  },
+  "sync:templystudios/product-62": {
+    "daisyflowdigital": "product-138"
+  },
+  "sync:templystudios/product-63": {
+    "daisyflowdigital": "product-139"
+  },
+  "sync:templystudios/product-64": {
+    "daisyflowdigital": "product-140"
+  },
+  "sync:templystudios/product-65": {
+    "daisyflowdigital": "product-141"
+  },
+  "sync:templystudios/product-66": {
+    "daisyflowdigital": "product-142"
+  },
+  "sync:templystudios/product-67": {
+    "daisyflowdigital": "product-143"
+  },
+  "sync:templystudios/product-68": {
+    "daisyflowdigital": "product-144"
+  },
+  "sync:templystudios/product-69": {
+    "daisyflowdigital": "product-145"
+  },
+  "sync:templystudios/product-70": {
+    "daisyflowdigital": "product-146"
+  },
+  "sync:templystudios/product-71": {
+    "daisyflowdigital": "product-147"
+  },
+  "sync:templystudios/product-72": {
+    "daisyflowdigital": "product-148"
+  },
+  "sync:templystudios/product-73": {
+    "daisyflowdigital": "product-149"
+  },
+  "sync:templystudios/product-74": {
+    "daisyflowdigital": "product-150"
+  },
+  "sync:templystudios/product-75": {
+    "daisyflowdigital": "product-151"
+  },
+  "sync:templystudios/product-76": {
+    "daisyflowdigital": "product-152"
+  },
+  "sync:templystudios/product-77": {
+    "daisyflowdigital": "product-153"
+  },
+  "sync:templystudios/product-78": {
+    "daisyflowdigital": "product-154"
+  },
+  "sync:templystudios/product-79": {
+    "daisyflowdigital": "product-155"
+  },
+  "sync:templystudios/product-80": {
+    "daisyflowdigital": "product-156"
+  },
+  "sync:templystudios/product-81": {
+    "daisyflowdigital": "product-157"
+  },
+  "sync:templystudios/product-82": {
+    "daisyflowdigital": "product-158"
+  },
+  "sync:templystudios/product-83": {
+    "daisyflowdigital": "product-159"
+  },
+  "sync:templystudios/product-84": {
+    "daisyflowdigital": "product-160"
+  },
+  "sync:templystudios/product-85": {
+    "daisyflowdigital": "product-161"
+  },
+  "sync:templystudios/product-86": {
+    "daisyflowdigital": "product-162"
+  },
+  "sync:templystudios/product-87": {
+    "daisyflowdigital": "product-163"
+  },
+  "sync:templystudios/product-88": {
+    "daisyflowdigital": "product-164"
+  },
+  "sync:templystudios/product-89": {
+    "daisyflowdigital": "product-165"
+  },
+  "sync:templystudios/product-90": {
+    "daisyflowdigital": "product-166"
+  },
+  "sync:templystudios/product-91": {
+    "daisyflowdigital": "product-167"
+  },
+  "sync:templystudios/product-92": {
+    "daisyflowdigital": "product-168"
+  },
+  "sync:templystudios/product-93": {
+    "daisyflowdigital": "product-169"
+  },
+  "sync:templystudios/product-94": {
+    "daisyflowdigital": "product-170"
+  },
+  "sync:templystudios/product-95": {
+    "daisyflowdigital": "product-171"
+  },
+  "sync:templystudios/product-96": {
+    "daisyflowdigital": "product-172"
+  },
+  "sync:templystudios/product-97": {
+    "daisyflowdigital": "product-173"
+  },
+  "sync:templystudios/product-98": {
+    "daisyflowdigital": "product-174"
+  },
+  "sync:templystudios/product-99": {
+    "daisyflowdigital": "product-175"
+  },
+  "sync:templystudios/product-101": {
+    "daisyflowdigital": "product-176"
+  },
+  "sync:templystudios/product-102": {
+    "daisyflowdigital": "product-177"
+  },
+  "sync:templystudios/product-103": {
+    "daisyflowdigital": "product-178"
+  },
+  "sync:templystudios/product-105": {
+    "daisyflowdigital": "product-63"
+  },
+  "sync:templystudios/product-106": {
+    "daisyflowdigital": "product-64"
+  },
+  "sync:templystudios/product-107": {
+    "daisyflowdigital": "product-67"
+  },
+  "sync:templystudios/product-108": {
+    "daisyflowdigital": "product-69"
+  },
+  "sync:templystudios/product-110": {
+    "daisyflowdigital": "product-65"
+  },
+  "sync:templystudios/product-112": {
+    "daisyflowdigital": "product-179"
+  },
+  "sync:templystudios/product-116": {
+    "daisyflowdigital": "product-180"
+  },
+  "sync:templystudios/product-118": {
+    "daisyflowdigital": "product-181"
+  },
+  "sync:templystudios/product-124": {
+    "daisyflowdigital": "product-182"
+  },
+  "sync:templystudios/product-125": {
+    "daisyflowdigital": "product-183"
+  },
+  "sync:templystudios/product-126": {
+    "daisyflowdigital": "product-184"
+  },
+  "sync:templystudios/product-127": {
+    "daisyflowdigital": "product-185"
+  },
+  "sync:templystudios/product-129": {
+    "daisyflowdigital": "product-186"
+  },
+  "sync:templystudios/product-130": {
+    "daisyflowdigital": "product-187"
+  },
+  "sync:templystudios/product-131": {
+    "daisyflowdigital": "product-188"
+  },
+  "sync:templystudios/product-132": {
+    "daisyflowdigital": "product-189"
+  },
+  "sync:templystudios/product-133": {
+    "daisyflowdigital": "product-190"
+  },
+  "sync:templystudios/product-134": {
+    "daisyflowdigital": "product-191"
+  },
+  "sync:templystudios/product-135": {
+    "daisyflowdigital": "product-192"
+  },
+  "sync:templystudios/product-137": {
+    "daisyflowdigital": "product-193"
+  },
+  "sync:templystudios/product-139": {
+    "daisyflowdigital": "product-194"
+  },
+  "sync:templystudios/product-140": {
+    "daisyflowdigital": "product-195"
+  },
+  "sync:templystudios/product-141": {
+    "daisyflowdigital": "product-196"
+  },
+  "sync:templystudios/product-143": {
+    "daisyflowdigital": "product-197"
+  },
+  "sync:templystudios/product-145": {
+    "daisyflowdigital": "product-198"
+  },
+  "sync:templystudios/product-147": {
+    "daisyflowdigital": "product-199"
+  },
+  "sync:templystudios/product-149": {
+    "daisyflowdigital": "product-200"
+  },
+  "sync:templystudios/product-151": {
+    "daisyflowdigital": "product-201"
+  },
+  "sync:templystudios/product-152": {
+    "daisyflowdigital": "product-202"
+  },
+  "sync:templystudios/product-153": {
+    "daisyflowdigital": "product-203"
+  },
+  "sync:templystudios/product-154": {
+    "daisyflowdigital": "product-204"
+  },
+  "sync:templystudios/product-155": {
+    "daisyflowdigital": "product-205"
+  },
+  "sync:templystudios/product-156": {
+    "daisyflowdigital": "product-206"
+  },
+  "sync:templystudios/product-157": {
+    "daisyflowdigital": "product-207"
+  },
+  "sync:templystudios/product-158": {
+    "daisyflowdigital": "product-208"
+  },
+  "sync:templystudios/product-159": {
+    "daisyflowdigital": "product-209"
+  },
+  "sync:templystudios/product-160": {
+    "daisyflowdigital": "product-210"
+  },
+  "sync:templystudios/product-161": {
+    "daisyflowdigital": "product-211"
+  },
+  "sync:templystudios/product-162": {
+    "daisyflowdigital": "product-212"
+  },
+  "sync:templystudios/product-163": {
+    "daisyflowdigital": "product-213"
+  },
+  "sync:templystudios/product-164": {
+    "daisyflowdigital": "product-214"
+  },
+  "sync:templystudios/product-165": {
+    "daisyflowdigital": "product-215"
+  },
+  "sync:templystudios/product-166": {
+    "daisyflowdigital": "product-216"
+  },
+  "sync:templystudios/product-167": {
+    "daisyflowdigital": "product-217"
+  },
+  "sync:templystudios/product-168": {
+    "daisyflowdigital": "product-218"
+  },
+  "sync:templystudios/product-169": {
+    "daisyflowdigital": "product-219"
+  },
+  "sync:templystudios/product-170": {
+    "daisyflowdigital": "product-220"
+  },
+  "sync:templystudios/product-171": {
+    "daisyflowdigital": "product-221"
+  },
+  "sync:templystudios/product-172": {
+    "daisyflowdigital": "product-222"
+  },
+  "sync:templystudios/product-173": {
+    "daisyflowdigital": "product-223"
+  },
+  "sync:templystudios/product-174": {
+    "daisyflowdigital": "product-224"
+  },
+  "sync:templystudios/product-175": {
+    "daisyflowdigital": "product-225"
+  },
+  "sync:templystudios/product-176": {
+    "daisyflowdigital": "product-226"
+  },
+  "sync:templystudios/product-177": {
+    "daisyflowdigital": "product-227"
+  },
+  "sync:templystudios/product-178": {
+    "daisyflowdigital": "product-228"
+  },
+  "sync:templystudios/product-179": {
+    "daisyflowdigital": "product-229"
+  },
+  "sync:templystudios/product-180": {
+    "daisyflowdigital": "product-230"
+  },
+  "sync:templystudios/product-181": {
+    "daisyflowdigital": "product-231"
+  },
+  "sync:templystudios/product-182": {
+    "daisyflowdigital": "product-232"
+  },
+  "sync:templystudios/product-183": {
+    "daisyflowdigital": "product-233"
+  },
+  "sync:templystudios/product-184": {
+    "daisyflowdigital": "product-234"
+  },
+  "sync:templystudios/product-185": {
+    "daisyflowdigital": "product-235"
+  },
+  "sync:templystudios/product-186": {
+    "daisyflowdigital": "product-236"
+  },
+  "sync:templystudios/product-187": {
+    "daisyflowdigital": "product-237"
+  },
+  "sync:templystudios/product-188": {
+    "daisyflowdigital": "product-238"
+  },
+  "sync:templystudios/product-189": {
+    "daisyflowdigital": "product-239"
+  },
+  "sync:templystudios/product-190": {
+    "daisyflowdigital": "product-240"
+  },
+  "sync:templystudios/product-191": {
+    "daisyflowdigital": "product-241"
+  },
+  "sync:templystudios/product-192": {
+    "daisyflowdigital": "product-242"
+  },
+  "sync:templystudios/product-193": {
+    "daisyflowdigital": "product-243"
+  },
+  "sync:templystudios/product-194": {
+    "daisyflowdigital": "product-244"
+  },
+  "sync:templystudios/product-195": {
+    "daisyflowdigital": "product-245"
+  },
+  "sync:templystudios/product-196": {
+    "daisyflowdigital": "product-246"
+  },
+  "sync:templystudios/product-197": {
+    "daisyflowdigital": "product-247"
+  },
+  "sync:templystudios/product-198": {
+    "daisyflowdigital": "product-248"
+  },
+  "sync:templystudios/product-199": {
+    "daisyflowdigital": "product-249"
+  },
+  "sync:templystudios/product-200": {
+    "daisyflowdigital": "product-250"
+  },
+  "sync:templystudios/product-201": {
+    "daisyflowdigital": "product-251"
+  },
+  "sync:templystudios/product-202": {
+    "daisyflowdigital": "product-252"
+  },
+  "sync:templystudios/product-203": {
+    "daisyflowdigital": "product-253"
+  },
+  "sync:templystudios/product-204": {
+    "daisyflowdigital": "product-254"
+  },
+  "sync:templystudios/product-205": {
+    "daisyflowdigital": "product-255"
+  },
+  "sync:templystudios/product-206": {
+    "daisyflowdigital": "product-256"
+  },
+  "sync:templystudios/product-207": {
+    "daisyflowdigital": "product-257"
+  },
+  "sync:templystudios/product-208": {
+    "daisyflowdigital": "product-258"
+  },
+  "sync:templystudios/product-209": {
+    "daisyflowdigital": "product-259"
+  },
+  "sync:templystudios/product-210": {
+    "daisyflowdigital": "product-260"
+  },
+  "sync:templystudios/product-213": {
+    "daisyflowdigital": "product-261"
+  },
+  "sync:templystudios/product-214": {
+    "daisyflowdigital": "product-262"
+  },
+  "sync:templystudios/product-215": {
+    "daisyflowdigital": "product-263"
+  },
+  "sync:templystudios/product-238": {
+    "daisyflowdigital": "product-264"
+  },
+  "sync:templystudios/product-239": {
+    "daisyflowdigital": "product-265"
+  },
+  "sync:templystudios/product-248": {
+    "daisyflowdigital": "product-266"
+  },
+  "sync:templystudios/product-249": {
+    "daisyflowdigital": "product-267"
+  },
+  "sync:templystudios/product-321": {
+    "daisyflowdigital": "product-268"
+  },
+  "sync:templystudios/product-323": {
+    "daisyflowdigital": "product-269"
+  },
+  "sync:templystudios/product-324": {
+    "daisyflowdigital": "product-270"
+  },
+  "sync:templystudios/product-330": {
+    "daisyflowdigital": "product-271"
+  },
+  "sync:templystudios/product-332": {
+    "daisyflowdigital": "product-272"
+  },
+  "sync:templystudios/product-333": {
+    "daisyflowdigital": "product-273"
+  },
+  "sync:templystudios/product-334": {
+    "daisyflowdigital": "product-274"
+  },
+  "sync:templystudios/product-335": {
+    "daisyflowdigital": "product-275"
+  },
+  "sync:templystudios/product-336": {
+    "daisyflowdigital": "product-276"
+  },
+  "sync:templystudios/product-337": {
+    "daisyflowdigital": "product-277"
+  },
+  "sync:templystudios/product-338": {
+    "daisyflowdigital": "product-278"
+  },
+  "sync:templystudios/product-339": {
+    "daisyflowdigital": "product-279"
+  },
+  "sync:templystudios/product-340": {
+    "daisyflowdigital": "product-280"
+  },
+  "sync:templystudios/product-341": {
+    "daisyflowdigital": "product-281"
+  },
+  "sync:templystudios/product-365": {
+    "daisyflowdigital": "product-282"
+  },
+  "sync:templystudios/product-374": {
+    "daisyflowdigital": "product-283"
+  },
+  "sync:templystudios/product-381": {
+    "daisyflowdigital": "product-284"
+  },
+  "sync:templystudios/product-382": {
+    "daisyflowdigital": "product-285"
+  },
+  "sync:templystudios/product-383": {
+    "daisyflowdigital": "product-286"
+  },
+  "sync:templystudios/product-384": {
+    "daisyflowdigital": "product-287"
+  },
+  "sync:templystudios/product-385": {
+    "daisyflowdigital": "product-288"
+  },
+  "sync:templystudios/product-386": {
+    "daisyflowdigital": "product-289"
+  },
+  "sync:templystudios/product-387": {
+    "daisyflowdigital": "product-290"
+  },
+  "sync:templystudios/product-389": {
+    "daisyflowdigital": "product-291"
+  },
+  "sync:templystudios/product-390": {
+    "daisyflowdigital": "product-292"
+  },
+  "sync:templystudios/product-391": {
+    "daisyflowdigital": "product-83"
+  },
+  "sync:templystudios/product-392": {
+    "daisyflowdigital": "product-84"
+  },
+  "sync:templystudios/product-393": {
+    "daisyflowdigital": "product-85"
+  },
+  "sync:templystudios/product-394": {
+    "daisyflowdigital": "product-86"
+  },
+  "sync:templystudios/product-395": {
+    "daisyflowdigital": "product-87"
+  },
+  "sync:templystudios/product-396": {
+    "daisyflowdigital": "product-88"
+  },
+  "sync:templystudios/product-397": {
+    "daisyflowdigital": "product-89"
+  },
+  "sync:templystudios/product-398": {
+    "daisyflowdigital": "product-90"
+  },
+  "sync:templystudios/product-399": {
+    "daisyflowdigital": "product-91"
+  },
+  "sync:templystudios/product-400": {
+    "daisyflowdigital": "product-92"
+  },
+  "sync:templystudios/product-401": {
+    "daisyflowdigital": "product-93"
+  },
+  "sync:templystudios/product-402": {
+    "daisyflowdigital": "product-94"
+  },
+  "sync:templystudios/product-403": {
+    "daisyflowdigital": "product-95"
+  },
+  "sync:templystudios/product-404": {
+    "daisyflowdigital": "product-96"
+  },
+  "sync:templystudios/product-405": {
+    "daisyflowdigital": "product-97"
+  },
+  "sync:templystudios/product-406": {
+    "daisyflowdigital": "product-98"
+  },
+  "sync:templystudios/product-407": {
+    "daisyflowdigital": "product-99"
+  },
+  "sync:templystudios/product-408": {
+    "daisyflowdigital": "product-100"
+  },
+  "sync:templystudios/product-409": {
+    "daisyflowdigital": "product-101"
+  },
+  "sync:templystudios/product-410": {
+    "daisyflowdigital": "product-102"
+  },
+  "sync:templystudios/product-411": {
+    "daisyflowdigital": "product-103"
+  }
+}

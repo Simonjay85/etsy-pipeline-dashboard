@@ -1,0 +1,61 @@
+=== Folder: 01_planners_daily_weekly_monthly/64_soft_paws_monthly_planner_bundle ===
+  Dir: .
+    Files: []
+  Dir: images
+    Files: ['soft_paws_monthly_planner_bundle_listing_14.png', 'soft_paws_monthly_planner_bundle_listing_01.png', 'soft_paws_monthly_planner_bundle_listing_15.png', 'soft_paws_monthly_planner_bundle_listing_03.png', 'soft_paws_monthly_planner_bundle_listing_17.png', 'soft_paws_monthly_planner_bundle_listing_16.png', 'soft_paws_monthly_planner_bundle_listing_02.png', 'soft_paws_monthly_planner_bundle_listing_06.png', 'soft_paws_monthly_planner_bundle_listing_12.png', 'soft_paws_monthly_planner_bundle_listing_13.png', 'soft_paws_monthly_planner_bundle_listing_07.png', 'soft_paws_monthly_planner_bundle_listing_11.png', 'soft_paws_monthly_planner_bundle_listing_05.png', 'soft_paws_monthly_planner_bundle_listing_04.png', 'soft_paws_monthly_planner_bundle_listing_10.png', 'soft_paws_monthly_planner_bundle_listing_09.png', 'soft_paws_monthly_planner_bundle_listing_08.png']
+  Dir: files
+    Files: []
+=== Folder: 01_planners_daily_weekly_monthly/66_autumn_golden_bloom_2026_digital_planner_noimage ===
+  Dir: .
+    Files: []
+  Dir: images
+    Files: []
+  Dir: files
+    Files: ['autumn_golden_bloom_2026_digital_planner_screenshot.png', 'autumn_golden_bloom_2026_digital_planner_432pg.pdf']
+=== Folder: 01_planners_daily_weekly_monthly/67_magical_autumn_digital_planner_noimage ===
+  Dir: .
+    Files: []
+  Dir: images
+    Files: []
+  Dir: files
+    Files: ['magical_autumn_digital_planner_338pg.pdf']
+=== Folder: 01_planners_daily_weekly_monthly/68_love_poison_2026_digital_planner_noimage ===
+  Dir: .
+    Files: []
+  Dir: images
+    Files: []
+  Dir: files
+    Files: ['love_poison_2026_digital_planner_450pg.pdf']
+=== Folder: 01_planners_daily_weekly_monthly/70_2026_daily_notes_planner_noimage ===
+  Dir: .
+    Files: []
+  Dir: images
+    Files: []
+  Dir: files
+    Files: ['2026_daily_notes_planner_732pg.pdf']
+=== Folder: 01_planners_daily_weekly_monthly/71_2026_daily_notes_planner_variant_noimage ===
+  Dir: .
+    Files: []
+  Dir: images
+    Files: []
+  Dir: files
+    Files: ['2026_daily_notes_planner_variant_736pg.pdf']
+=== Folder: 03_time_productivity/69_productivity_planner_noimage ===
+  Dir: .
+    Files: []
+  Dir: images
+    Files: []
+  Dir: files
+    Files: ['productivity_planner_14pg.pdf']
+=== Folder: 03_time_productivity/72_30_days_challenge_tracker ===
+  Dir: .
+    Files: []
+  Dir: images
+    Files: ['30_days_challenge_tracker_listing_01.png', '30_days_challenge_tracker_listing_02.png', '30_days_challenge_tracker_listing_03.png', '30_days_challenge_tracker_listing_07.png', '30_days_challenge_tracker_listing_06.png', '30_days_challenge_tracker_listing_10.png', '30_days_challenge_tracker_listing_04.png', '30_days_challenge_tracker_listing_05.png', '30_days_challenge_tracker_listing_08.png', '30_days_challenge_tracker_listing_09.png']
+  Dir: files
+    Files: []
+=== Folder: 99_duplicates/_duplicate_downloads ===
+  Dir: .
+    Files: []
+  Dir: 18_outfit_wardrobe_planner
+    Files: ['outfit_wardrobe_planner_duplicate_09.png', 'outfit_wardrobe_planner_duplicate_08.png', 'outfit_wardrobe_planner_duplicate_05.png', 'outfit_wardrobe_planner_duplicate_04.png', 'outfit_wardrobe_planner_duplicate_10.png', 'outfit_wardrobe_planner_duplicate_06.png', 'outfit_wardrobe_planner_duplicate_07.png', 'outfit_wardrobe_planner_duplicate_03.png', 'outfit_wardrobe_planner_duplicate_02.png', 'outfit_wardrobe_planner_duplicate_01.png']

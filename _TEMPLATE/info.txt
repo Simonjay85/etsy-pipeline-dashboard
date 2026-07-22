@@ -1,0 +1,77 @@
+# ============================================================
+# ETSY LISTING INFO — Fill in all fields below
+# ============================================================
+# INSTRUCTIONS:
+#   - Lines starting with # are comments (ignored by Claude)
+#   - Do NOT delete any field labels
+#   - Save this file, then tell Claude to upload this product
+# ============================================================
+
+TITLE:
+# Max 140 characters. Put most important keywords first.
+# Example: Minimalist Wedding Invitation Template | Editable Canva, Printable PDF
+
+
+DESCRIPTION:
+# Write your full product description here.
+# You can use multiple lines. Include what the file is,
+# what it's used for, what's included, and how to use it.
+# Example:
+#   Instant digital download — no physical item will be shipped.
+#   Perfect for modern weddings. Fully editable in Canva.
+#   ✔ Includes: 1x PDF, 1x PNG (5x7 inch, 300 DPI)
+#   ✔ Easy to customize: change text, fonts, and colors
+#   ✔ Print at home or at a local print shop
+
+
+PRICE_USD:
+# Example: 4.99
+
+
+QUANTITY:
+# For digital products, use 999 (unlimited stock)
+# Example: 999
+
+
+TAGS:
+# Up to 13 tags, separated by commas. Use phrases buyers search for.
+# Example: wedding invitation, printable invite, editable template, canva template, minimalist wedding
+
+
+CATEGORY:
+# Etsy category path. Examples:
+#   Digital Downloads > Templates
+#   Digital Downloads > Clip Art & Image Files
+#   Digital Downloads > Fonts
+#   Paper & Party Supplies > Cards & Card Making
+
+
+WHO_MADE: I did
+# Options: I did | A member of my shop | Another company
+
+
+WHEN_MADE: 2020_2025
+# Options: 2020_2025 | 2010_2019 | 2005_2009 | Before 2005 | made_to_order
+
+
+DIGITAL_FILES:
+# List the filenames you will upload as the digital product.
+# These should be in the "images" folder or a separate "files" folder.
+# Example:
+#   wedding-invite-template.pdf
+#   wedding-invite-template.png
+
+
+LISTING_IMAGES:
+# List the image filenames (JPG/PNG) to use as listing photos.
+# Put image files inside the "images/" subfolder.
+# First image = main/thumbnail photo.
+# Example:
+#   preview-1.jpg
+#   preview-2.jpg
+#   mockup-lifestyle.jpg
+
+
+# ============================================================
+# END OF FILE — Save and tell Claude "upload product-XX"
+# ============================================================

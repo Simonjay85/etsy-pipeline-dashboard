@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>eBay + WordPress Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css?v=1">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-icon">🛒</span>
+    <div>
+      <div class="brand-name">eBay + WordPress</div>
+      <div class="brand-meta">
+        <select id="site-switcher" class="site-select" title="Chọn site"></select>
+        <button class="btn-icon-sm" onclick="openSettings()" title="Cài đặt">⚙️</button>
+      </div>
+    </div>
+  </div>
+  <div class="services" id="services">
+    <div class="svc" id="svc-ebay"><span class="dot"></span>eBay Browser</div>
+    <div class="svc" id="svc-wp"><span class="dot"></span>WordPress</div>
+  </div>
+  <div class="header-actions" id="header-actions-products">
+    <button class="btn btn-sync" onclick="syncEbay()">🔄 Sync eBay</button>
+    <button class="btn btn-sync" onclick="syncWoo()">🔄 Sync Woo</button>
+    <button class="btn btn-warning" onclick="importFromEtsy()">📥 Import Etsy</button>
+    <button class="btn btn-primary" onclick="runAllPendingEbay()">⚡ Post eBay Pending</button>
+    <button class="btn btn-success" onclick="runAllPendingWoo()">⚡ Post Woo Pending</button>
+    <button class="btn btn-danger" onclick="stopAll()">🛑 Stop</button>
+    <button class="btn btn-ghost" onclick="toggleLogPanel()" id="btn-toggle-log">📋 Logs</button>
+  </div>
+  <div class="header-actions hidden" id="header-actions-posts">
+    <button class="btn btn-primary" onclick="createPost()">✏️ New Post</button>
+    <button class="btn btn-sync" onclick="syncPostsFromWp()">🔄 Sync from WP</button>
+    <button class="btn btn-ghost" onclick="toggleLogPanel()">📋 Logs</button>
+  </div>
+</header>
+
+<nav class="tab-nav">
+  <button class="tab active" data-tab="products" onclick="switchTab('products')">📦 Sản phẩm</button>
+  <button class="tab" data-tab="posts" onclick="switchTab('posts')">📝 Bài viết</button>
+  <button class="tab" data-tab="settings" onclick="switchTab('settings')">⚙️ Cài đặt</button>
+</nav>
+
+<!-- Products tab -->
+<div id="tab-products" class="tab-panel active">
+  <div class="stats-bar" id="product-stats">
+    <div class="stat-card"><div class="stat-num" id="stat-total">–</div><div class="stat-label">Total</div></div>
+    <div class="stat-card success"><div class="stat-num" id="stat-ebay">–</div><div class="stat-label">On eBay</div></div>
+    <div class="stat-card success"><div class="stat-num" id="stat-woo">–</div><div class="stat-label">On Woo</div></div>
+    <div class="stat-card pending"><div class="stat-num" id="stat-pending">–</div><div class="stat-label">Pending</div></div>
+    <div class="stat-card error"><div class="stat-num" id="stat-errors">–</div><div class="stat-label">Errors</div></div>
+  </div>
+  <div class="toolbar">
+    <input type="checkbox" id="cb-select-all" onclick="toggleSelectAll()">
+    <input class="search-input" id="search-products" placeholder="🔍 Tìm title, folder, tags..." oninput="filterProducts()">
+    <select class="filter-select" id="filter-platform" onchange="filterProducts()">
+      <option value="">All platforms</option>
+      <option value="ebay_pending">eBay pending</option>
+      <option value="woo_pending">Woo pending</option>
+      <option value="errors">Errors</option>
+    </select>
+    <button class="btn btn-danger btn-sm" onclick="batchDeleteProducts()">🗑 Delete</button>
+  </div>
+  <div class="main-content">
+    <div class="product-grid" id="product-grid"></div>
+    <div class="log-panel" id="log-panel">
+      <div class="log-header">Live Logs</div>
+      <div class="log-body" id="log-body"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Posts tab -->
+<div id="tab-posts" class="tab-panel">
+  <div class="stats-bar">
+    <div class="stat-card"><div class="stat-num" id="post-stat-total">–</div><div class="stat-label">Total</div></div>
+    <div class="stat-card success"><div class="stat-num" id="post-stat-published">–</div><div class="stat-label">Published</div></div>
+    <div class="stat-card pending"><div class="stat-num" id="post-stat-draft">–</div><div class="stat-label">Draft</div></div>
+  </div>
+  <div class="toolbar">
+    <input class="search-input" id="search-posts" placeholder="🔍 Tìm bài viết..." oninput="filterPosts()">
+  </div>
+  <div class="posts-table-wrap">
+    <table class="data-table" id="posts-table">
+      <thead><tr><th>Title</th><th>Status</th><th>WP URL</th><th>Actions</th></tr></thead>
+      <tbody id="posts-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Settings tab -->
+<div id="tab-settings" class="tab-panel">
+  <div class="settings-panel">
+    <h2>Site Settings</h2>
+    <div class="form-group"><label>Site Name</label><input id="set-name" class="form-input"></div>
+    <div class="form-group"><label>WordPress URL</label><input id="set-wp-url" class="form-input" placeholder="https://yoursite.com"></div>
+    <div class="form-group"><label>WP Username</label><input id="set-wp-user" class="form-input"></div>
+    <div class="form-group"><label>WP App Password</label><input id="set-wp-pass" type="password" class="form-input" placeholder="xxxx xxxx xxxx xxxx"></div>
+    <div class="form-group"><label>WooCommerce Consumer Key</label><input id="set-wc-key" class="form-input"></div>
+    <div class="form-group"><label>WooCommerce Consumer Secret</label><input id="set-wc-secret" type="password" class="form-input"></div>
+    <div class="form-group"><label>eBay Seller URL</label><input id="set-ebay-url" class="form-input"></div>
+    <div class="form-group"><label>eBay Debug Port</label><input id="set-debug-port" type="number" class="form-input"></div>
+    <div class="form-actions">
+      <button class="btn btn-primary" onclick="saveSettings()">💾 Save</button>
+      <button class="btn btn-ghost" onclick="testWp()">Test WP</button>
+      <button class="btn btn-ghost" onclick="testWoo()">Test Woo</button>
+    </div>
+    <div id="settings-result" class="settings-result"></div>
+  </div>
+</div>
+
+<!-- Product edit modal -->
+<div class="modal-overlay hidden" id="product-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Edit Product</h3>
+      <button class="btn-icon-sm" onclick="closeProductModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="edit-row">
+      <div class="form-group"><label>Title</label><textarea id="edit-title" class="form-input" rows="2"></textarea></div>
+      <div class="form-group"><label>Description</label><textarea id="edit-description" class="form-input" rows="6"></textarea></div>
+      <div class="form-row">
+        <div class="form-group"><label>Price</label><input id="edit-price" type="number" step="0.01" class="form-input"></div>
+        <div class="form-group"><label>SKU</label><input id="edit-sku" class="form-input"></div>
+      </div>
+      <div class="form-group"><label>Tags (comma)</label><input id="edit-tags" class="form-input"></div>
+      <div class="status-row">
+        <span class="badge" id="edit-ebay-status"></span>
+        <span class="badge" id="edit-woo-status"></span>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" onclick="saveProduct()">💾 Save</button>
+        <button class="btn btn-warning" onclick="postEbayFromModal()">📤 Post eBay</button>
+        <button class="btn btn-success" onclick="postWooFromModal()">📤 Post Woo</button>
+        <button class="btn btn-ghost" onclick="pushEbayFromModal()">🔄 Push eBay</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Post edit modal -->
+<div class="modal-overlay hidden" id="post-modal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <h3>Edit Post</h3>
+      <button class="btn-icon-sm" onclick="closePostModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="post-edit-row">
+      <div class="form-group"><label>Title</label><input id="post-edit-title" class="form-input"></div>
+      <div class="form-group"><label>Slug</label><input id="post-edit-slug" class="form-input"></div>
+      <div class="form-group"><label>Excerpt</label><textarea id="post-edit-excerpt" class="form-input" rows="2"></textarea></div>
+      <div class="form-group"><label>Content (HTML)</label><textarea id="post-edit-content" class="form-input" rows="10"></textarea></div>
+      <div class="form-group"><label>Featured Image (path)</label><input id="post-edit-image" class="form-input"></div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" onclick="savePost()">💾 Save</button>
+        <button class="btn btn-ghost" onclick="savePostDraft()">📝 Save Draft to WP</button>
+        <button class="btn btn-success" onclick="publishPost()">🚀 Publish</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+<script src="/static/app.js?v=1"></script>
+</body>
+</html>

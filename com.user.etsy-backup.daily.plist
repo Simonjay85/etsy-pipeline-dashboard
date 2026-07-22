@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.user.etsy-backup.daily</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/aaronnguyen/Documents/Claude/Projects/Etsy/backup_etsy_to_drive.py</string>
+    <string>daily</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/aaronnguyen/Documents/Claude/Projects/Etsy</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/bin:/bin</string>
+    <key>ETSY_BACKUP_RCLONE_REMOTE</key>
+    <string>gdrive_dest</string>
+    <key>ETSY_BACKUP_DRIVE_PARENT_ID</key>
+    <string>1cg5xsQ_3HIPEDASOco9MddHrm993DoCA</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>3</integer>
+    <key>Minute</key><integer>15</integer>
+  </dict>
+  <key>RunAtLoad</key><false/>
+  <key>StandardOutPath</key>
+  <string>/Users/aaronnguyen/Documents/Claude/Projects/Etsy/output/backup/launchd-daily.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/aaronnguyen/Documents/Claude/Projects/Etsy/output/backup/launchd-daily.err.log</string>
+</dict>
+</plist>

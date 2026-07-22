@@ -1,0 +1,22 @@
+TÓM TẮT ĐỒNG BỘ FOLDER ETSY
+-------------------------
+Thời điểm: 2026-07-15
+Nguồn: /Users/aaronnguyen/TN/Claude/Projects/Etsy
+Đích  : /Users/aaronnguyen/Documents/Claude/Projects/Etsy
+
+Kết quả:
+- Files processed: 1
+- Size diff remaining: 0
+- Destination file count: 15157
+- Disk free /System/Volumes/Data: 98%
+
+Kết luận:
+- Không còn file nào lệch giữa 2 folder theo đối chiếu kích thước + đường dẫn.
+- Không còn file lỗi/sync thất bại.
+- Thư mục nguồn đã được dọn sạch dữ liệu (đúng yêu cầu).
+
+File báo cáo liên quan:
+1) sync_report_1_duplicated.txt
+2) sync_report_2_synced.txt
+3) sync_report_3_failed.txt
+4) sync_report_4_summary.txt (đã có chi tiết)

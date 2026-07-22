@@ -1,0 +1,806 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Etsy Pipeline Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css?v=20260719-image-lightbox-01">
+</head>
+<body>
+
+<!-- ── HEADER ── -->
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-icon">🛍</span>
+    <div>
+      <div class="brand-name">Etsy Dashboard</div>
+      <div class="brand-meta">
+        <select id="shop-switcher" class="shop-select" title="Chọn Shop">
+          <option value="">Loading...</option>
+        </select>
+        <button class="btn-icon-sm" onclick="openShopSettings()" title="Cài đặt Shop">⚙️</button>
+      </div>
+    </div>
+  </div>
+  <div class="services" id="services">
+    <div class="svc" id="svc-vertex"><span class="dot"></span>Vertex App</div>
+    <div class="svc" id="svc-mlx"><span class="dot"></span>MLX AI</div>
+    <div class="svc" id="svc-watcher"><span class="dot"></span>Watcher</div>
+  </div>
+  <div class="header-actions">
+    <button class="btn btn-success" onclick="createNewFolder()" title="Tạo folder sản phẩm mới">📁 Tạo Folder Mới</button>
+    <button class="btn btn-ghost" onclick="startWatcher()">▶ Start Watcher</button>
+    <button class="btn btn-sync" id="btn-etsy-sync" onclick="syncEtsyShop()" title="Quét Etsy Shop Manager rồi cập nhật link/status vào dashboard">🔄 Đồng bộ Etsy Shop</button>
+    <button class="btn btn-warning" onclick="openRepairModal()" title="Sửa lỗi Tab/Description/Tags trên Etsy">🛠 Sửa lỗi Etsy</button>
+    <button class="btn btn-danger" onclick="cleanDuplicates()" title="Tìm và xoá các bản nháp bị trùng lặp tiêu đề trên Etsy Shop Manager">🧹 Dọn trùng Drafts</button>
+    <button class="btn btn-seo" onclick="openSocialBulkModal()" title="Đăng bài tự động hàng loạt lên Pinterest, Twitter/X, Medium...">📢 Auto Post Hàng Loạt</button>
+    <button class="btn btn-ghost" onclick="openImportCSV()" title="Import danh sách từ Etsy CSV">📥 Import CSV</button>
+    <button class="btn btn-factory" onclick="openFactoryImport()" title="Import ảnh từ Image Factory">🖼 Import từ Factory</button>
+    <button class="btn btn-seo" onclick="batchGenerateSEO()">🤖 Generate Missing SEO</button>
+    <button class="btn btn-primary" onclick="runAllPending()">⚡ Run All Pending</button>
+    <button class="btn btn-danger" onclick="stopAll()" title="Dừng tất cả poster đang chạy">🛑 Stop All</button>
+  </div>
+</header>
+
+<!-- ── STATS BAR ── -->
+<div class="stats-bar" id="stats-bar">
+  <div class="stat-card"><div class="stat-num" id="stat-total">–</div><div class="stat-label">Tổng</div></div>
+  <div class="stat-card success"><div class="stat-num" id="stat-posted">–</div><div class="stat-label">Đã đăng</div></div>
+  <div class="stat-card pending"><div class="stat-num" id="stat-pending">–</div><div class="stat-label">Chờ đăng</div></div>
+  <div class="stat-card error"><div class="stat-num" id="stat-error">–</div><div class="stat-label">Lỗi</div></div>
+</div>
+<div class="etsy-sync-strip hidden" id="etsy-sync-strip"></div>
+<div class="etsy-sync-strip hidden" id="catalog-strip"></div>
+
+<!-- ── SEARCH ── -->
+<div class="toolbar">
+  <div class="product-source-switcher" id="product-source-switcher">
+    <label for="product-source-select" class="source-select-label">Nguồn sản phẩm</label>
+    <select id="product-source-select" class="source-select" onchange="setProductSource(this.value)">
+      <option value="local">📁 Sản phẩm local (0)</option>
+      <option value="shop">🛍 Sản phẩm trên shop (0)</option>
+      <option value="aggregate">🧮 Tổng Etsy + local (0)</option>
+    </select>
+  </div>
+  <div class="toolbar-left">
+    <input type="checkbox" id="cb-select-all" onclick="toggleSelectAll()" title="Chọn tất cả">
+    <input class="search-input" id="search" placeholder="🔍  Tìm sản phẩm..." oninput="filterProducts()">
+    <select class="filter-select" id="filter-status" title="Lọc theo trạng thái" onchange="filterProducts()">
+      <option value="">Tất cả trạng thái</option>
+      <option value="posted">✅ Đã đăng</option>
+      <option value="draft">✅ Đã đăng draft</option>
+      <option value="pending">⏳ Chờ đăng</option>
+      <option value="error">❌ Lỗi</option>
+      <option value="missing_title">⚠️ Thiếu Title</option>
+      <option value="missing_description">⚠️ Thiếu Description</option>
+      <option value="missing_tags">⚠️ Thiếu/Lỗi Tags</option>
+      <option value="missing_seo">⚠️ Thiếu bất kỳ SEO</option>
+    </select>
+    <button class="btn btn-warning btn-sm" onclick="scanAndMergeDuplicates()" title="Quét catalog hợp nhất và dồn folder trùng an toàn">🔎 Quét & dồn folder trùng</button>
+  </div>
+  
+  <div id="batch-actions" class="batch-actions">
+    <span id="batch-count-label" class="batch-count-label">0 selected</span>
+    <button class="btn btn-warning btn-sm local-batch-action" onclick="batchRegenSEO()">🤖 Tạo SEO Hàng Loạt</button>
+    <button id="local-batch-delete-btn" class="btn btn-danger btn-sm local-batch-action" onclick="batchDelete()" title="Xoá sản phẩm local đã chọn khỏi dashboard">🗑 Xoá Local đã chọn</button>
+    <button class="btn btn-ghost btn-sm local-batch-action" onclick="openSyncModal()">🔄 Sync sang Shop khác</button>
+    <button class="btn btn-primary btn-sm shop-batch-action" id="shop-bulk-create-btn" onclick="bulkCreateLocalFromEtsy()">➕ Tạo product mới + Sync</button>
+    <button class="btn btn-danger btn-sm shop-batch-action" id="shop-bulk-delete-drafts-btn" onclick="bulkDeleteSelectedEtsyDrafts()">🗑 Xoá draft Etsy đã chọn</button>
+  </div>
+</div>
+
+<!-- ── MAIN ── -->
+<div class="main-layout">
+
+  <!-- Product Table -->
+  <div class="product-section" id="product-section">
+    <div class="product-grid" id="product-grid">
+      <div class="loading-state">⏳ Đang tải...</div>
+    </div>
+  </div>
+
+  <!-- Log Panel -->
+  <div class="log-panel" id="log-panel">
+    <div class="log-header">
+      <span>📋 Live Logs</span>
+      <button class="btn-icon-sm" onclick="clearLogs()">✕ Clear</button>
+    </div>
+    <div class="log-body" id="log-body"></div>
+  </div>
+
+</div>
+
+<div class="scroll-nav" id="scroll-nav-controls">
+  <button
+    type="button"
+    id="scroll-top-btn"
+    class="scroll-nav-btn"
+    title="Lên đầu danh sách"
+    aria-label="Lên đầu danh sách">
+    ↑
+  </button>
+  <button
+    type="button"
+    id="scroll-bottom-btn"
+    class="scroll-nav-btn"
+    title="Xuống cuối danh sách"
+    aria-label="Xuống cuối danh sách">
+    ↓
+  </button>
+</div>
+
+<!-- ══════════════ EDIT MODAL ══════════════ -->
+<div class="modal-overlay" id="edit-modal">
+<div class="modal modal-wide">
+  <div class="modal-header">
+    <h2 id="modal-title">Chỉnh sửa sản phẩm</h2>
+    <button class="btn-close" onclick="closeModal('edit-modal')">✕</button>
+  </div>
+  <div class="modal-body modal-body-edit">
+    <input type="hidden" id="edit-row">
+    <input type="hidden" id="edit-folder">
+
+    <div class="edit-modal-grid">
+      <!-- Cột trái: Các trường nhập liệu SEO & Metadata -->
+      <div class="edit-modal-left">
+        <div class="form-group">
+          <label for="edit-title" class="form-label-flex">Etsy Title <span class="char-count" id="title-count">0/140</span><button class="btn-regen-field" onclick="regenField('title')" title="Generate lại Title">↻ Gen Title</button></label>
+          <textarea id="edit-title" rows="2" maxlength="140" placeholder="Nhập tiêu đề Etsy chuẩn SEO..." title="Tiêu đề Etsy" oninput="updateCount('edit-title','title-count',140)" class="input-sm"></textarea>
+        </div>
+
+        <div class="form-group">
+          <label for="edit-tags" class="form-label-flex">Tags <span class="hint">(phân cách bằng dấu phẩy, mỗi tag ≤ 20 ký tự)</span><button class="btn-regen-field" onclick="regenField('tags')" title="Generate lại Tags">↻ Gen Tags</button></label>
+          <textarea id="edit-tags" rows="2" placeholder="VD: daily planner, ipad journal..." title="Etsy Tags" class="input-sm"></textarea>
+        </div>
+
+        <div class="form-group">
+          <label for="edit-keywords">Keywords (cột C)</label>
+          <textarea id="edit-keywords" rows="2" placeholder="Keywords..." title="Keywords" class="input-sm"></textarea>
+        </div>
+
+        <div class="form-group">
+          <label>Thông tin bổ sung (Gợi ý cho AI)</label>
+          <textarea id="edit-extra" rows="2" placeholder="Ví dụ: Focus vào khách hàng nữ, màu hồng, phong cách cute..." class="input-sm"></textarea>
+        </div>
+
+        <div class="form-group">
+          <label>Link sản phẩm trên Etsy (Etsy URL)</label>
+          <input type="text" id="edit-etsy-url" placeholder="https://www.etsy.com/listing/..." class="input-compact">
+        </div>
+
+        <div class="form-row">
+          <div class="form-col">
+            <label for="edit-price">Giá (USD)</label>
+            <input type="number" id="edit-price" step="0.01" min="0" placeholder="0.00" title="Giá bán (USD)" class="input-compact">
+          </div>
+          <div class="form-col">
+            <label for="edit-section">Shop Section</label>
+            <select id="edit-section" title="Shop Section" class="select-compact">
+              <option value="Promotion">Promotion</option>
+              <option value="Template CV">Template CV</option>
+              <option value="Silhouette">Silhouette</option>
+              <option value="Digital Planner">Digital Planner</option>
+              <option value="">None (Chưa phân loại)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-row form-row-mt">
+          <div class="form-col">
+            <label>Mã SKU</label>
+            <input type="text" id="edit-sku" placeholder="VD: TS_product_01" class="input-compact">
+          </div>
+          <div class="form-col">
+            <label for="edit-qty">Số lượng (Quantity)</label>
+            <input type="number" id="edit-qty" min="0" placeholder="999" title="Số lượng" class="input-compact">
+          </div>
+        </div>
+      </div>
+
+      <!-- Cột phải: Mô tả sản phẩm (Description) chiếm toàn bộ chiều cao -->
+      <div class="edit-modal-right">
+        <label>Mô tả (Description)<button class="btn-regen-field" onclick="regenField('description')" title="Generate lại Description">↻ Gen Mô tả</button></label>
+        <textarea id="edit-description" placeholder="Mô tả chi tiết sản phẩm chuẩn SEO..."></textarea>
+      </div>
+    </div>
+  </div>
+  <div class="modal-footer modal-footer-compact">
+    <button class="btn btn-ghost" onclick="closeModal('edit-modal')">Huỷ</button>
+    <button class="btn btn-seo" onclick="regenSEO()">🤖 Tạo SEO</button>
+    <button class="btn btn-primary" id="edit-save-btn" onclick="saveEdit()">💾 Lưu</button>
+  </div>
+</div>
+</div>
+
+<!-- ══════════════ IMPORT CSV MODAL ══════════════ -->
+<div class="modal-overlay" id="import-csv-modal">
+<div class="modal">
+  <div class="modal-header">
+    <h2>📥 Import từ Etsy CSV</h2>
+    <button class="btn-close" onclick="closeModal('import-csv-modal')">✕</button>
+  </div>
+  <div class="modal-body">
+    <div class="import-instruction-card">
+      <strong class="text-accent2">📌 Cách lấy CSV từ Etsy:</strong><br>
+      1. Vào <strong>Etsy Shop Manager → Listings</strong><br>
+      2. Click <strong>"Download CSV"</strong> (góc trên phải)<br>
+      3. Upload file CSV đó vào đây ↓
+    </div>
+
+    <label for="csv-target-shop">Shop đích (nhận sản phẩm)</label>
+    <select id="csv-target-shop" title="Shop đích" class="modal-select mb-14">
+    </select>
+
+    <label>File CSV từ Etsy</label>
+    <div class="drop-zone" id="csv-drop-zone"
+         ondragover="event.preventDefault(); this.classList.add('dragover')"
+         ondragleave="this.classList.remove('dragover')"
+         ondrop="handleCSVDrop(event)"
+         onclick="document.getElementById('csv-file-input').click()">
+      <div>📄 Kéo file CSV vào đây hoặc <label class="link" for="csv-file-input">chọn file</label></div>
+      <div id="csv-file-name" class="file-name-preview"></div>
+      <input type="file" id="csv-file-input" accept=".csv" class="display-none" onchange="onCSVFileSelected()">
+    </div>
+
+    <div id="csv-import-result" class="result-box"></div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-ghost" onclick="closeModal('import-csv-modal')">Huỷ</button>
+    <button class="btn btn-primary" id="csv-import-btn" onclick="doImportCSV()">📥 Import</button>
+  </div>
+</div>
+</div>
+
+<!-- ══════════════ SYNC MODAL ══════════════ -->
+<div class="modal-overlay" id="sync-modal">
+<div class="modal">
+  <div class="modal-header">
+    <h2>🔄 Sync sang Shop khác</h2>
+    <button class="btn-close" onclick="closeModal('sync-modal')">✕</button>
+  </div>
+  <div class="modal-body">
+    <div id="sync-product-list" class="sync-product-list"></div>
+
+    <label for="sync-target-shop">Shop đích</label>
+    <select id="sync-target-shop" title="Shop đích sync" class="modal-select">
+    </select>
+
+    <div class="flex-align-center-gap10 mt-14">
+      <input type="checkbox" id="sync-copy-files" class="checkbox-compact">
+      <label for="sync-copy-files" class="checkbox-label">
+        Sao chép cả ảnh &amp; file (images/ và files/) sang shop đích
+      </label>
+    </div>
+    <div class="sync-tip">
+      Bỏ tick = chỉ copy thông tin SEO (title, tags, description). Anh tự upload ảnh riêng cho từng shop.
+    </div>
+
+    <div id="sync-result" class="result-box"></div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-ghost" onclick="closeModal('sync-modal')">Huỷ</button>
+    <button class="btn btn-primary" id="sync-btn" onclick="doSync()">🔄 Sync</button>
+  </div>
+</div>
+</div>
+
+<!-- ══════════════ REPAIR MODAL ══════════════ -->
+<div class="modal-overlay" id="repair-modal">
+<div class="modal">
+  <div class="modal-header">
+    <h2>🛠 Sửa lỗi hiển thị trên Etsy</h2>
+    <button class="btn-close" onclick="closeModal('repair-modal')">✕</button>
+  </div>
+  <div class="modal-body">
+    <div class="import-instruction-card">
+      Tính năng này dùng Playwright để tự động sửa lỗi cho một <strong>Listing đã đăng</strong> trên Etsy (ví dụ: thiếu tab ngôn ngữ, description bị dính chữ, thiếu tags).<br>
+      <strong class="text-accent2">Lưu ý: Cần mở Chrome Debug trước (chạy MỞ_CHROME_DEBUG.command)</strong>
+    </div>
+
+    <label>Etsy Listing URL hoặc ID</label>
+    <div class="flex-gap8-mb14">
+      <input type="text" id="repair-listing-id" placeholder="VD: 1234567890 hoặc https://etsy.com/listing/..." class="flex-1">
+      <button class="btn btn-ghost btn-compact" id="scan-btn" onclick="startScan()">🔍 Quét shop</button>
+    </div>
+
+    <!-- Scan result list -->
+    <div id="scan-result" class="scan-result-box">
+      <div id="scan-log" class="scan-log-box"></div>
+      <div id="scan-errors-list" class="flex-column-gap6"></div>
+    </div>
+
+    <label class="mb-8">Các lỗi cần sửa (Bot sẽ điền lại cho 9 ngôn ngữ):</label>
+    <div class="flex-column-gap8-mb14">
+      <label class="checkbox-label-flex">
+        <input type="checkbox" id="repair-tabs" checked class="checkbox-compact">
+        Bật Tab ngôn ngữ & Điền Title (nếu thiếu tab Dutch, French...)
+      </label>
+      <label class="checkbox-label-flex">
+        <input type="checkbox" id="repair-desc" checked class="checkbox-compact">
+        Sửa lỗi Format Description (bị dính thành 1 cục chữ)
+      </label>
+      <label class="checkbox-label-flex">
+        <input type="checkbox" id="repair-tags" checked class="checkbox-compact">
+        Dịch và điền thêm Tags (nếu chưa đủ 13 tags)
+      </label>
+    </div>
+
+    <div id="repair-result" class="result-box"></div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-ghost" onclick="closeModal('repair-modal')">Huỷ</button>
+    <button class="btn btn-warning" id="repair-btn" onclick="doRepair()">🛠 Bắt đầu sửa</button>
+  </div>
+</div>
+</div>
+
+<!-- ══════════════ SETTINGS MODAL ══════════════ -->
+<div class="modal-overlay" id="settings-modal">
+<div class="modal">
+  <div class="modal-header">
+    <h2>Cấu hình Shop Hiện Tại</h2>
+    <button class="btn-close" onclick="closeModal('settings-modal')">✕</button>
+  </div>
+  <div class="modal-body">
+    <input type="hidden" id="set-shop-id">
+    
+    <label for="set-name">Tên Shop</label>
+    <div class="flex-gap10">
+      <input type="text" id="set-emoji" placeholder="Emoji" title="Shop Emoji" class="shop-emoji-input">
+      <input type="text" id="set-name" placeholder="Tên Shop" title="Tên Shop" class="shop-name-input">
+    </div>
+    
+    <label class="mt-15">Link Cửa Hàng (Etsy Link)</label>
+    <input type="text" id="set-etsy-link" placeholder="https://templystudios.etsy.com" class="shop-link-input">
+    
+    <label class="mt-15">Link Mạng Xã Hội (Dành cho footer SEO)</label>
+    <textarea id="set-social-links" rows="2" placeholder="Instagram: @abc | Pinterest: @xyz"></textarea>
+    
+    <label class="mt-15">Thông Tin Shop (AI sẽ lấy làm Context để viết SEO chuẩn hơn)</label>
+    <textarea id="set-shop-info" rows="3" placeholder="Shop chuyên bán CV Template tối giản, Digital Planner..."></textarea>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-ghost" onclick="closeModal('settings-modal')">Huỷ</button>
+    <button class="btn btn-primary" onclick="saveShopSettings()">💾 Lưu</button>
+  </div>
+</div>
+</div>
+
+<!-- ══════════════ IMAGE MODAL ══════════════ -->
+<div class="modal-overlay" id="image-modal">
+<div class="modal modal-wide">
+  <div class="modal-header">
+    <h2 id="img-modal-title">Quản lý ảnh</h2>
+    <button class="btn-close" onclick="closeModal('image-modal')">✕</button>
+  </div>
+  <div class="modal-body">
+    <input type="hidden" id="img-row">
+    <div class="drop-zone" id="drop-zone"
+         ondragover="event.preventDefault(); this.classList.add('dragover')"
+         ondragleave="this.classList.remove('dragover')"
+         ondrop="handleImageDrop(event)">
+      <div>🖼  Kéo ảnh vào đây hoặc <label class="link" for="img-file-input">chọn file</label></div>
+      <input type="file" id="img-file-input" multiple accept="image/*" class="display-none" onchange="handleImageSelect()">
+    </div>
+    <div class="img-grid" id="img-grid"></div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-ghost" onclick="closeModal('image-modal')">Đóng</button>
+  </div>
+</div>
+</div>
+
+<!-- ══════════════ SOCIAL MODAL ══════════════ -->
+<div class="modal-overlay" id="social-modal">
+<div class="modal modal-wide">
+  <div class="modal-header">
+    <div class="flex-align-center-gap10">
+      <span class="font-size-1-2rem">📢</span>
+      <h2 id="social-modal-title">Quản lý & Tạo bài đăng Social</h2>
+    </div>
+    <button class="btn-close" onclick="closeModal('social-modal')">✕</button>
+  </div>
+  <div class="modal-body">
+    <input type="hidden" id="social-row">
+    <input type="hidden" id="social-folder">
+    
+    <!-- Etsy URL quick edit row -->
+    <div class="social-url-container">
+      <label class="social-url-label">Etsy Listing URL (Dùng làm link chia sẻ):</label>
+      <div class="flex-align-center-gap10">
+        <input type="text" id="social-etsy-url" placeholder="https://www.etsy.com/listing/..." class="social-etsy-url-input">
+        <button class="btn btn-primary btn-social-save" onclick="saveSocialUrl()">💾 Lưu link</button>
+      </div>
+    </div>
+    
+    <!-- Social tabs layout -->
+    <div class="social-layout">
+      <!-- Sidebar / Tab list -->
+      <div class="social-tabs-nav">
+        <button class="social-tab-btn active" onclick="switchSocialTab('instagram')" id="tab-instagram">📸 Instagram</button>
+        <button class="social-tab-btn" onclick="switchSocialTab('pinterest')" id="tab-pinterest">📌 Pinterest</button>
+        <button class="social-tab-btn" onclick="switchSocialTab('facebook')" id="tab-facebook">👥 Facebook</button>
+        <button class="social-tab-btn" onclick="switchSocialTab('twitter')" id="tab-twitter">𝕏 Twitter / X</button>
+        <button class="social-tab-btn" onclick="switchSocialTab('medium')" id="tab-medium">✍️ Medium Blog</button>
+      </div>
+      
+      <!-- Tab Content Area -->
+      <div class="social-tab-content-wrap">
+        <div class="flex-space-between">
+          <h4 id="social-tab-title" class="social-tab-title">📸 Instagram Post Caption</h4>
+          <div class="flex-gap8">
+            <button class="btn btn-seo btn-social-action" onclick="copySocialCaption()">📋 Copy Caption</button>
+            <button class="btn btn-primary btn-social-action btn-social-auto-post" id="btn-auto-post" onclick="autoPostSocial()">⚡ Auto Post</button>
+          </div>
+        </div>
+        <textarea id="social-caption-text" readonly rows="12" placeholder="Caption..." title="Social Caption Text" class="social-caption-textarea"></textarea>
+        
+        <div id="social-share-tips" class="social-share-tips">
+          💡 Tip: Đăng tải ảnh listing từ thư mục sản phẩm và dán phần caption này vào.
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-ghost" onclick="closeModal('social-modal')">Đóng</button>
+  </div>
+</div>
+</div>
+
+<!-- ── SOCIAL BULK POST MODAL ── -->
+<div class="modal-overlay" id="social-bulk-modal">
+<div class="modal modal-wide modal-social-bulk">
+  <div class="modal-header">
+    <div class="flex-align-center-gap10">
+      <span class="font-size-1-2rem">📢</span>
+      <h2>Auto Post Social Hàng Loạt</h2>
+    </div>
+    <button class="btn-close" onclick="closeModal('social-bulk-modal')">✕</button>
+  </div>
+  <div class="modal-body modal-body-social-bulk">
+    <div>
+      <label for="bulk-social-platform" class="label-bold-block-mb6">Chọn nền tảng đăng bài:</label>
+      <select id="bulk-social-platform" title="Chọn nền tảng đăng bài" class="social-bulk-input-select">
+        <option value="pinterest">📌 Pinterest</option>
+        <option value="twitter">𝕏 Twitter / X</option>
+        <option value="medium">✍️ Medium Blog</option>
+      </select>
+    </div>
+    
+    <div class="flex-gap15">
+      <div class="flex-1">
+        <label for="bulk-social-start" class="label-bold-block-mb6">Dòng bắt đầu (Excel):</label>
+        <input type="number" id="bulk-social-start" value="4" min="4" placeholder="4" title="Dòng bắt đầu" class="social-bulk-input-select">
+      </div>
+      <div class="flex-1">
+        <label for="bulk-social-end" class="label-bold-block-mb6">Dòng kết thúc (Excel):</label>
+        <input type="number" id="bulk-social-end" value="10" min="4" placeholder="10" title="Dòng kết thúc" class="social-bulk-input-select">
+      </div>
+    </div>
+    
+    <div>
+      <label for="bulk-social-delay" class="label-bold-block-mb6">Thời gian giãn cách (giây):</label>
+      <input type="number" id="bulk-social-delay" value="180" min="5" placeholder="180" title="Thời gian giãn cách" class="social-bulk-input-select">
+      <span class="social-bulk-tip">💡 Khuyên dùng 180 giây (3 phút) để tránh bị mạng xã hội chặn tài khoản vì nghi ngờ bot.</span>
+    </div>
+    
+    <div class="warning-box">
+      ⚠️ Lưu ý: Hãy chắc chắn anh đã đăng nhập các tài khoản tương ứng trên cửa sổ Chrome debug trước khi nhấn nút Bắt đầu.
+    </div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-ghost" onclick="closeModal('social-bulk-modal')">Huỷ</button>
+    <button class="btn btn-primary btn-social-auto-post" onclick="startBulkSocialPost()" title="Bắt đầu đăng bài hàng loạt" placeholder="Bắt đầu đăng">🚀 Bắt đầu đăng</button>
+  </div>
+</div>
+</div>
+
+<!-- ══════════════ IMAGE GEN MODAL ══════════════ -->
+<div class="modal-overlay" id="gen-modal">
+<div class="modal modal-gen">
+  <div class="modal-header">
+    <div class="flex-align-center-gap10">
+      <span class="font-size-1-2rem">🖼</span>
+      <h2 id="gen-modal-title">Generate Listing Images</h2>
+      <span id="gen-vertex-status" class="svc offline badge-compact"></span>
+    </div>
+    <button class="btn-close" onclick="closeModal('gen-modal')">✕</button>
+  </div>
+  <div class="modal-body gen-modal-body">
+    <input type="hidden" id="gen-row">
+    <input type="hidden" id="gen-folder">
+
+    <!-- LEFT PANEL -->
+    <div class="gen-left">
+
+      <!-- PDF Convert Card (shown when product has PDF) -->
+      <div class="gen-card gen-pdf-card display-none" id="gen-pdf-card">
+        <div class="gen-card-title">
+          <span class="gen-step bg-orange">📄</span>
+          PDF Planner Detected
+          <span id="gen-pdf-name" class="gen-badge-pdf"></span>
+        </div>
+        <div class="gen-pdf-card-desc">
+          Convert <strong id="gen-pdf-pages" class="text-accent2">tất cả trang</strong> của PDF thành ảnh PNG và lưu thẳng vào thư mục <code class="code-green">images/</code> của sản phẩm này.
+        </div>
+        <button class="btn btn-orange btn-pdf-convert" id="gen-pdf-btn" onclick="convertPdfToImages()">
+          📄 Convert PDF → Listing Images
+        </button>
+        <div id="gen-pdf-progress" class="display-none mt-10">
+          <div class="gen-progress-bar-wrap">
+            <div class="gen-progress-bar pdf-bar" id="gen-pdf-bar"></div>
+          </div>
+          <div id="gen-pdf-status" class="pdf-status"></div>
+        </div>
+        <div class="gen-divider"><span>hoặc dùng AI generate</span></div>
+      </div>
+
+      <!-- Upload Section -->
+      <div class="gen-card">
+        <div class="gen-card-title">
+          <span class="gen-step">1</span> Upload Planner Image
+          <span id="gen-auto-badge" class="gen-badge-green display-none">✓ Auto-loaded</span>
+        </div>
+        <div id="gen-upload-zone" class="gen-drop" onclick="document.getElementById('gen-file-input').click()">
+          <input type="file" id="gen-file-input" accept="image/png,image/jpeg,image/webp,application/pdf" hidden>
+          <div class="font-size-1-6rem-mb6">📁</div>
+          <div class="upload-text">Kéo & thả hoặc click để upload</div>
+          <div class="upload-subtext">PNG · JPG · WebP · <strong class="text-accent2">PDF ✓</strong></div>
+          <button class="btn btn-primary btn-sm btn-no-pointer">📂 Chọn File Planner</button>
+        </div>
+        <div id="gen-preview-wrap" class="gen-preview-wrap">
+          <img id="gen-preview-img" src="" class="gen-preview-img" alt="Ảnh xem trước thiết kế planner" title="Ảnh xem trước planner">
+          <div id="gen-preview-name" class="gen-preview-name"></div>
+          <button class="btn btn-ghost btn-sm mt-6" onclick="resetGenUpload()">↻ Đổi ảnh</button>
+        </div>
+        <div id="gen-analyze-status" class="gen-analyze-status">
+          <span class="spinner"></span> <span id="gen-analyze-msg">Đang phân tích planner...</span>
+        </div>
+      </div>
+
+
+      <!-- Settings -->
+      <div class="gen-card display-none" id="gen-settings-card">
+        <div class="gen-card-title"><span class="gen-step">2</span> Settings</div>
+        <div class="flex-column-gap8">
+          <div>
+            <label class="label-compact-block">Product Title <span class="gen-auto-tag">auto-detected</span></label>
+            <input type="text" id="gen-title" class="gen-input" placeholder="Product title...">
+          </div>
+          <div>
+            <label class="label-compact-block">Features <span class="gen-auto-tag">auto-detected</span></label>
+            <input type="text" id="gen-features" class="gen-input" placeholder="checklist, tracker, planner...">
+          </div>
+          <div>
+            <label for="gen-emojis" class="label-compact-block">Emojis <span class="gen-auto-tag">AI-suggested</span></label>
+            <input type="text" id="gen-emojis" class="gen-input" value="✨📝🌟💫🗓️" title="Danh sách Emojis cho AI gợi ý" placeholder="Danh sách Emojis...">
+          </div>
+          <div class="flex-align-center-gap8-mt4">
+            <label for="gen-canva-toggle" class="gen-toggle-wrap" title="Bật/Tắt Canva badge">
+              <input type="checkbox" id="gen-canva-toggle" title="Hiển thị huy hiệu Canva" placeholder="Hiển thị huy hiệu Canva">
+              <span class="gen-toggle"></span>
+            </label>
+            <span class="canva-badge-label">Show "Editable Canva Template" badge</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Style Grid -->
+      <div class="gen-card display-none" id="gen-style-card">
+        <div class="gen-card-title"><span class="gen-step">3</span> Choose Style</div>
+        <div class="gen-style-grid" id="gen-style-grid">
+          <!-- injected by JS -->
+        </div>
+      </div>
+
+      <!-- Generate Button -->
+      <button class="btn btn-primary btn-generate" id="gen-btn" onclick="startGenerate()">
+        <span class="btn-icon">⚡</span> Generate 10 Listing Images
+      </button>
+
+    </div>
+
+    <!-- RIGHT PANEL -->
+    <div class="gen-right">
+
+      <!-- Progress -->
+      <div id="gen-progress-section" class="gen-card display-none">
+        <div class="gen-card-title" id="gen-progress-title">Generating...</div>
+        <div class="gen-progress-bar-wrap">
+          <div class="gen-progress-bar width-0" id="gen-progress-bar"></div>
+        </div>
+        <div id="gen-progress-text" class="progress-text"></div>
+        <div id="gen-progress-grid" class="gen-prog-grid"></div>
+      </div>
+
+      <!-- Gallery -->
+      <div id="gen-gallery-section" class="gen-card gen-gallery-card display-none">
+        <div class="flex-space-between-mb10">
+          <div class="gen-card-title mb-0">✓ Generated Images</div>
+          <button class="btn btn-success btn-sm" id="gen-import-btn" onclick="importGenImages()">
+            📥 Import to Product
+          </button>
+        </div>
+        <div class="gen-img-gallery" id="gen-gallery"></div>
+      </div>
+
+      <!-- Placeholder when nothing running -->
+      <div id="gen-idle-placeholder" class="gen-idle">
+        <div class="font-size-3rem-mb12">🎨</div>
+        <div class="gallery-title">2 cách tạo listing images</div>
+        <div class="width-300-left">
+          <div class="flex-gap8-mb8-text2">
+            <span class="text-orange-font1rem">📄</span>
+            <span><strong class="text-orange">Convert PDF:</strong> Tự động dùng từng trang PDF làm ảnh listing (nhanh, không cần AI)</span>
+          </div>
+          <div class="flex-gap8-text2">
+            <span class="text-accent2-font1rem">🤖</span>
+            <span><strong class="text-accent2">AI Generate:</strong> Upload ảnh planner → AI tạo 10 ảnh marketing chuyên nghiệp</span>
+          </div>
+        </div>
+      </div>
+
+
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ── IMAGE FACTORY IMPORT MODAL ── -->
+<div class="modal-overlay" id="factory-modal">
+<div class="modal modal-wide modal-factory">
+  <div class="modal-header">
+    <div class="flex-align-center-gap10">
+      <span class="font-size-1-2rem">🖼</span>
+      <h2>Import từ Image Factory</h2>
+    </div>
+    <button class="btn-close" onclick="closeModal('factory-modal')">✕</button>
+  </div>
+  <div class="modal-body">
+
+    <!-- Info bar -->
+    <div id="factory-info-bar" class="factory-info-bar">
+      <span id="factory-path-label">📂 Đang quét...</span>
+      <div class="flex-align-center-gap10">
+        <label class="checkbox-label-sm">
+          <input type="checkbox" id="factory-auto-seo" checked class="checkbox-xs">
+          <span>Tự động gen SEO sau import</span>
+        </label>
+        <button class="btn btn-ghost btn-sm" onclick="scanFactory()">🔄 Quét lại</button>
+      </div>
+    </div>
+
+    <div class="factory-filter-bar" id="factory-filter-bar">
+      <button type="button" class="factory-filter active" data-filter="all" onclick="setFactoryFilter('all')">Tất cả <span id="factory-count-all">0</span></button>
+      <button type="button" class="factory-filter" data-filter="pending" onclick="setFactoryFilter('pending')">Chưa import <span id="factory-count-pending">0</span></button>
+      <button type="button" class="factory-filter" data-filter="imported" onclick="setFactoryFilter('imported')">Đã import <span id="factory-count-imported">0</span></button>
+    </div>
+
+    <!-- Loading state -->
+    <div id="factory-loading" class="factory-loading">
+      <div class="font-size-2rem-mb10">⏳</div>
+      <div>Đang quét Image Factory output...</div>
+    </div>
+
+    <!-- Folder grid -->
+    <div id="factory-folder-grid" class="factory-folder-grid"></div>
+
+    <!-- Empty state -->
+    <div id="factory-empty" class="factory-loading display-none">
+      <div class="font-size-2rem-mb10">📭</div>
+      <div>Không tìm thấy folder nào trong Image Factory output.</div>
+    </div>
+
+    <!-- Result after import -->
+    <div id="factory-result" class="result-box-lg"></div>
+
+  </div>
+  <div class="modal-footer modal-footer-space-between">
+    <div id="factory-select-label" class="font-size-0-82rem-text2">Chọn các folder muốn import</div>
+    <div class="flex-gap10">
+      <button class="btn btn-ghost" onclick="closeModal('factory-modal')">Đóng</button>
+      <button class="btn btn-factory" id="factory-import-btn" onclick="doFactoryImport()" disabled>🖼 Import đã chọn</button>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ═════════════ UPDATE LOCAL DATA TO ETSY ═════════════ -->
+<div class="modal-overlay" id="etsy-update-modal">
+<div class="modal modal-update">
+  <div class="modal-header">
+    <div>
+      <h2>⬆ Cập nhật Local lên Etsy</h2>
+      <div class="hint"><strong id="etsy-update-product"></strong> → <span id="etsy-update-listing"></span></div>
+    </div>
+    <button class="btn-close" onclick="closeModal('etsy-update-modal')">✕</button>
+  </div>
+  <div class="modal-body">
+    <div class="warning-box">
+      Chỉ các nội dung được chọn mới được đẩy từ Local lên listing Etsy hiện tại. Ảnh và file số mặc định không chọn để tránh ghi đè ngoài ý muốn.
+    </div>
+    <div id="etsy-update-compare-status" class="etsy-update-compare-status">
+      <span class="spinner"></span> Đang đọc dữ liệu Etsy để so sánh...
+    </div>
+    <div class="etsy-update-fields" role="group" aria-label="Nội dung cập nhật lên Etsy">
+      <label><input type="checkbox" class="etsy-update-field" value="title"> <span>Title</span></label>
+      <label><input type="checkbox" class="etsy-update-field" value="description"> <span>Mô tả</span></label>
+      <label><input type="checkbox" class="etsy-update-field" value="tags"> <span>Tags</span></label>
+      <label><input type="checkbox" class="etsy-update-field" value="price"> <span>Giá</span></label>
+      <label><input type="checkbox" class="etsy-update-field" value="qty"> <span>Số lượng</span></label>
+      <label><input type="checkbox" class="etsy-update-field" value="images"> <span>Ảnh listing</span></label>
+      <label><input type="checkbox" class="etsy-update-field" value="files"> <span>File tải xuống</span></label>
+    </div>
+    <div id="etsy-update-run-status" class="etsy-update-run-status"></div>
+    <div class="hint">Chrome của đúng shop sẽ mở và lưu thay đổi. Trạng thái chi tiết hiển thị ở đây và trong Live Logs.</div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-ghost" id="etsy-update-cancel" onclick="closeModal('etsy-update-modal')">Huỷ</button>
+    <button class="btn btn-update" id="etsy-update-submit" onclick="submitEtsyUpdate()">⬆ Cập nhật lên Etsy</button>
+  </div>
+</div>
+</div>
+
+<!-- ═════════════ MAP ETSY LISTING TO LOCAL PRODUCT ═════════════ -->
+<div class="modal-overlay" id="map-local-modal">
+<div class="modal">
+  <div class="modal-header">
+    <h2>Ghép listing Etsy với folder local</h2>
+    <button class="btn-close" onclick="closeModal('map-local-modal')">✕</button>
+  </div>
+  <div class="modal-body">
+    <input type="hidden" id="map-listing-id">
+    <div class="form-group">
+      <label>Listing Etsy</label>
+      <div id="map-listing-label" class="map-etsy-listing-info"></div>
+    </div>
+    <div class="form-group">
+      <label>Quét sản phẩm local phù hợp</label>
+      <div id="map-scan-status" class="hint">⏳ Đang quét tiêu đề và dữ liệu local...</div>
+      <div id="map-local-suggestions" class="map-local-suggestions"></div>
+    </div>
+    <div class="form-group">
+      <label for="map-local-folder">Folder local</label>
+      <input id="map-local-folder" list="map-local-folder-options" type="text"
+             placeholder="Ví dụ: product-123" autocomplete="off"
+             onkeydown="if(event.key==='Enter') submitEtsyListingMap()">
+      <datalist id="map-local-folder-options"></datalist>
+      <div class="hint">Ứng viên độ khớp cao sẽ được điền sẵn. Anh vẫn cần kiểm tra và bấm Ghép local để xác nhận.</div>
+    </div>
+    <div class="map-create-new-box">
+      <div>
+        <strong>Không có sản phẩm local phù hợp?</strong>
+        <span>Tạo folder <code>product-*</code> mới, liên kết listing và sync thông tin Etsy về Excel.</span>
+      </div>
+      <button class="btn btn-primary" id="map-create-new-submit" onclick="createNewLocalFromEtsy()">➕ Tạo product mới + Sync</button>
+    </div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-ghost" onclick="closeModal('map-local-modal')">Đóng</button>
+    <button class="btn btn-warning" id="map-local-submit" onclick="submitEtsyListingMap()">🔗 Ghép local</button>
+  </div>
+</div>
+</div>
+
+<!-- Accessible shared product-image lightbox -->
+<div class="image-lightbox" id="image-lightbox" role="dialog" aria-modal="true" aria-labelledby="lightbox-caption" aria-hidden="true">
+  <div class="image-lightbox-backdrop" data-lightbox-close></div>
+  <div class="image-lightbox-dialog">
+    <button class="image-lightbox-close" type="button" data-lightbox-close aria-label="Đóng ảnh">✕</button>
+    <button class="image-lightbox-nav image-lightbox-prev" id="lightbox-prev" type="button" aria-label="Ảnh trước">‹</button>
+    <figure>
+      <img id="lightbox-image" alt="">
+      <figcaption><span id="lightbox-caption"></span><span id="lightbox-counter"></span></figcaption>
+    </figure>
+    <button class="image-lightbox-nav image-lightbox-next" id="lightbox-next" type="button" aria-label="Ảnh tiếp theo">›</button>
+  </div>
+</div>
+
+<script src="/static/catalog_sort.js?v=20260718-hide-missing-folders-01"></script>
+<script src="/static/edit_save.js?v=20260718-edit-save-01"></script>
+<script src="/static/batch_selection.js?v=20260718-batch-actions-01"></script>
+<script src="/static/app.js?v=20260719-etsy-draft-delete-01"></script>
+</body>
+</html>

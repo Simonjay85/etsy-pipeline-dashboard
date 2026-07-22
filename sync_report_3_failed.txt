@@ -1,0 +1,6 @@
+# Báo cáo #3 - Danh sách file không thể xử lý
+# Theo kiểm tra cuối:
+#   lỗi copy/sync: 0
+#   file không xử lý được: 0
+#   file thiếu khi xử lý: 0
+# => Không còn file lỗi.

@@ -232,14 +232,51 @@ async def collect_all_draft_listings(page, shop_id: str) -> dict[str, dict]:
 async def select_listing_checkbox(page, listing_id: str) -> bool:
     return await page.evaluate(
         """async (listingId) => {
-            const anchor = document.querySelector(`a[href*=\"/listing-editor/edit/${listingId}\"]`);
-            if (!anchor) return false;
-            const card = anchor.closest('[data-listing-id]') || anchor.closest('[class*=\"card\"]') || anchor.closest('tr') || anchor.closest('[class*=\"item\"]') || anchor.parentElement;
-            if (!card) return false;
-            const cb = card.querySelector('input[type=\"checkbox\"]') || card.querySelector('[role=\"checkbox\"]');
-            if (!cb) return false;
-            if (!cb.checked) cb.click();
-            return !!cb.checked;
+            const extractListingId = (anchor) => {
+                const href = anchor ? String(anchor.getAttribute('href') || '') : '';
+                const match = href.match(/\\/listing-editor\\/edit\\/(\\d+)(?=$|[/?#?])/);
+                return match ? match[1] : null;
+            };
+
+            const targetAnchor = Array.from(document.querySelectorAll('a[href*=\"/listing-editor/edit/\"]'))
+                .find((link) => extractListingId(link) === listingId);
+            if (!targetAnchor || !targetAnchor.parentElement) return false;
+
+            let cursor = targetAnchor.parentElement;
+            while (cursor) {
+                const listingIds = new Set();
+                const links = Array.from(cursor.querySelectorAll('a[href*=\"/listing-editor/edit/\"]'));
+                for (const link of links) {
+                    const linkId = extractListingId(link);
+                    if (linkId) listingIds.add(linkId);
+                }
+
+                if (listingIds.size > 0) {
+                    if (listingIds.size !== 1 || !listingIds.has(listingId)) return false;
+
+                    const checkbox = cursor.querySelector('input[type=\"checkbox\"]') || cursor.querySelector('[role=\"checkbox\"]');
+                    if (!checkbox) {
+                        cursor = cursor.parentElement;
+                        continue;
+                    }
+
+                    if (checkbox.tagName && checkbox.tagName.toLowerCase() === 'input' && checkbox.type === 'checkbox') {
+                        if (!checkbox.checked) checkbox.click();
+                        return !!checkbox.checked;
+                    }
+
+                    if (checkbox.getAttribute('role') === 'checkbox') {
+                        const initial = String(checkbox.getAttribute('aria-checked') || '').toLowerCase() === 'true';
+                        if (!initial) checkbox.click();
+                        return String(checkbox.getAttribute('aria-checked') || '').toLowerCase() === 'true';
+                    }
+
+                    return false;
+                }
+
+                cursor = cursor.parentElement;
+            }
+            return false;
         }""",
         listing_id,
     )

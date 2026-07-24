@@ -91,7 +91,9 @@ _product_create_lock = asyncio.Lock()
 _etsy_compare_lock = asyncio.Lock()
 _etsy_draft_delete_lock = asyncio.Lock()
 _batch_delete_lock = asyncio.Lock()
+_etsy_post_run_lock = asyncio.Lock()
 _etsy_update_jobs: dict[str, dict] = {}
+_ETSY_POST_LOCK_PREFIX = "__ETSY_POST__"
 _RUNTIME_PRECHECK_MODULES_POSTER = ("openpyxl", "playwright.async_api", "deep_translator", "google.genai.types")
 _RUNTIME_PRECHECK_MODULES_UPDATER = ("openpyxl", "playwright.async_api")
 
@@ -150,6 +152,38 @@ def _register_background_task(key: str, task: asyncio.Task):
 
 def _pop_background_task(key: str):
     _running_tasks.pop(key, None)
+
+
+def _etsy_post_lock_key(shop_id: str) -> str:
+    return f"{_ETSY_POST_LOCK_PREFIX}:{shop_id}"
+
+
+def _is_poster_locked_for_shop(shop_id: str) -> bool:
+    lock_key = _etsy_post_lock_key(shop_id)
+    return lock_key in _running_processes or lock_key in _running_tasks
+
+
+def _acquire_poster_lock(shop_id: str) -> str:
+    lock_key = _etsy_post_lock_key(shop_id)
+    if _is_poster_locked_for_shop(shop_id):
+        raise HTTPException(409, f"Một bài đăng đang chạy cho shop {shop_id}. Vui lòng đợi hoàn tất rồi thử lại")
+    _running_processes[lock_key] = None
+    return lock_key
+
+
+def _release_poster_lock(shop_id: str):
+    lock_key = _etsy_post_lock_key(shop_id)
+    _running_processes.pop(lock_key, None)
+    _running_tasks.pop(lock_key, None)
+
+
+_LISTING_URL_RE = re.compile(r"/(?:listing/|listing-editor/edit/)(\d+)")
+_LISTING_ID_RE = re.compile(r"^\s*\d+\s*$")
+
+
+def _listing_url_has_id(value: str) -> bool:
+    text = str(value or "").strip()
+    return bool(_LISTING_URL_RE.search(text) or _LISTING_ID_RE.fullmatch(text))
 
 def broadcast(msg: str):
     for q in _log_subscribers:
@@ -414,6 +448,208 @@ def _allocate_product_slot(
 def _clear_catalog_row(ws, row_num: int):
     for column in range(2, 19):
         set_cell_value(ws, row_num, column, None)
+
+
+def _quarantine_root(shop_dir: Path) -> Path:
+    """Recoverable folder for removed local product folders."""
+    root = shop_dir / ".deleted_local_products"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _quarantine_destination(shop_dir: Path, folder: str) -> Path:
+    root = _quarantine_root(shop_dir)
+    safe_folder = re.sub(r"[^A-Za-z0-9._-]+", "_", folder)
+    marker = f"{time.strftime('%Y%m%d_%H%M%S')}_{time.time_ns()}"
+    return root / f"{safe_folder}_deleted_{marker}"
+
+
+def _build_local_delete_metadata(row: int, folder: str, target_folder: Path) -> dict[str, int | str]:
+    return {
+        "row": row,
+        "folder": folder,
+        "quarantine_folder": str(target_folder),
+    }
+
+
+def _parse_delete_request_payload(data: dict, *, require_folder: bool = True) -> tuple[str, str]:
+    if not isinstance(data, dict):
+        raise HTTPException(400, "Payload phải là JSON object")
+    shop = str(data.get("shop") or "").strip()
+    if not shop:
+        raise HTTPException(400, "Thiếu thông tin shop")
+    try:
+        _assert_shop_identity(shop)
+    except RuntimeError as error:
+        raise HTTPException(409, str(error)) from error
+    folder = str(data.get("folder") or "").strip() if require_folder else ""
+    if require_folder:
+        folder = _validate_product_numbered_folder_name(folder)
+    return shop, folder
+
+
+async def _read_delete_payload(req: Request) -> dict:
+    try:
+        data = await req.json()
+    except Exception as error:
+        raise HTTPException(400, "Payload phải là JSON object") from error
+    if not isinstance(data, dict):
+        raise HTTPException(400, "Payload phải là JSON object")
+    return data
+
+
+def _parse_run_selected_request_payload(data: dict) -> tuple[str, list[tuple[int, str]]]:
+    if not isinstance(data, dict):
+        raise HTTPException(400, "Payload phải là JSON object")
+
+    shop = str(data.get("shop") or "").strip()
+    if not shop:
+        raise HTTPException(400, "Thiếu thông tin shop")
+    try:
+        _assert_shop_identity(shop)
+    except RuntimeError as error:
+        raise HTTPException(409, str(error)) from error
+
+    raw_items = data.get("items")
+    if not isinstance(raw_items, list) or not raw_items:
+        raise HTTPException(400, "items phải là danh sách không rỗng")
+
+    normalized: list[tuple[int, str]] = []
+    seen_rows: set[int] = set()
+    seen_folders: set[str] = set()
+    for item in raw_items:
+        if not isinstance(item, dict):
+            raise HTTPException(400, "Mỗi phần tử trong items phải có dạng {row, folder}")
+        row = item.get("row")
+        if isinstance(row, bool) or not isinstance(row, int):
+            raise HTTPException(400, "Mỗi item phải có row dạng số nguyên")
+        if row < 4:
+            raise HTTPException(400, f"Row {row} không hợp lệ (phải >= 4)")
+        if row in seen_rows:
+            raise HTTPException(400, f"row {row} bị lặp trong danh sách")
+        folder = _validate_product_numbered_folder_name(item.get("folder"))
+        if folder in seen_folders:
+            raise HTTPException(400, f"folder bị lặp trong danh sách: {folder}")
+
+        normalized.append((row, folder))
+        seen_rows.add(row)
+        seen_folders.add(folder)
+
+    return shop, normalized
+
+
+def _partition_selected_local_products(
+    shop_id: str,
+    selected_items: list[tuple[int, str]],
+) -> tuple[list[tuple[int, str]], list[dict]]:
+    """Split selected items into (valid, rejected).
+
+    Per-item problems (đã có URL, Đã đăng, thiếu title, ...) are rejected with a
+    reason so the batch can continue with the remaining products.
+    """
+    excel_path = EXCEL_FILE()
+    if not excel_path.exists():
+        raise HTTPException(404, "Chưa có file Excel của shop đang hoạt động")
+    wb = openpyxl.load_workbook(excel_path)
+    ws = wb["Listings"]
+    shop_dir = SHOP_DIR()
+    valid: list[tuple[int, str]] = []
+    rejected: list[dict] = []
+    for row, folder in selected_items:
+        current_folder = str(ws.cell(row=row, column=2).value or "").strip()
+        if current_folder != folder:
+            rejected.append({
+                "row": row,
+                "folder": folder,
+                "reason": (
+                    f"Row {row} bị thay đổi: folder hiện tại "
+                    f"'{current_folder or '[trống]'}' không khớp '{folder}'"
+                ),
+            })
+            continue
+        title = ws.cell(row=row, column=8).value
+        if not str(title or "").strip():
+            rejected.append({
+                "row": row,
+                "folder": folder,
+                "reason": f"Row {row} chưa có đủ dữ liệu: thiếu title",
+            })
+            continue
+        status = str(ws.cell(row=row, column=14).value or "").strip()
+        if "Đã đăng" in status:
+            rejected.append({
+                "row": row,
+                "folder": folder,
+                "reason": f"Row {row} đang có trạng thái '{status}', không nên đăng lại",
+            })
+            continue
+        if _listing_url_has_id(str(ws.cell(row=row, column=16).value or "")):
+            rejected.append({
+                "row": row,
+                "folder": folder,
+                "reason": f"Row {row} đã có Etsy URL/listing ID tại cột P, không nên đăng lại",
+            })
+            continue
+        folder_path = shop_dir / folder
+        if not folder_path.exists():
+            rejected.append({
+                "row": row,
+                "folder": folder,
+                "reason": f"Không tìm thấy folder local: {folder}",
+            })
+            continue
+        valid.append((row, folder))
+    return valid, rejected
+
+
+def _validate_selected_local_products(
+    shop_id: str,
+    selected_items: list[tuple[int, str]],
+) -> list[tuple[int, str]]:
+    """Legacy hard-fail wrapper — prefer _partition_selected_local_products."""
+    valid, rejected = _partition_selected_local_products(shop_id, selected_items)
+    if rejected:
+        raise HTTPException(400, rejected[0]["reason"])
+    return valid
+
+
+def _mark_selected_row_errors(excel_path: Path, rejected: list[dict]) -> None:
+    """Write ❌ Lỗi status for skipped batch items so the card shows the reason."""
+    if not rejected:
+        return
+    wb = openpyxl.load_workbook(excel_path)
+    ws = wb["Listings"]
+    for item in rejected:
+        reason = str(item.get("reason") or "Không đủ điều kiện đăng").strip()
+        set_cell_value(ws, int(item["row"]), 14, f"❌ Lỗi: {reason}")
+    wb.save(excel_path)
+
+
+def _set_selected_rows_pending(excel_path: Path, selected_rows: list[int]) -> None:
+    if not selected_rows:
+        return
+    backup = excel_path.with_name(f"{excel_path.stem}.run_selected_backup_{time.strftime('%Y%m%d_%H%M%S')}{excel_path.suffix}")
+    wb = openpyxl.load_workbook(excel_path)
+    ws = wb["Listings"]
+
+    backup_created = False
+    try:
+        shutil.copy2(excel_path, backup)
+        backup_created = True
+        for row in selected_rows:
+            set_cell_value(ws, row, 14, "⏳ Chờ đăng")
+        wb.save(excel_path)
+    except Exception as error:
+        if backup_created:
+            try:
+                shutil.copy2(backup, excel_path)
+            except Exception as restore_error:
+                raise HTTPException(
+                    500,
+                    "Đặt trạng thái Chờ đăng thất bại và không khôi phục được workbook",
+                ) from restore_error
+        raise HTTPException(500, "Đặt trạng thái Chờ đăng thất bại, đã rollback workbook") from error
+
 
 def products_from_excel() -> list[dict]:
     wb = openpyxl.load_workbook(EXCEL_FILE(), data_only=True)
@@ -2072,14 +2308,13 @@ async def create_product(request: Request):
     }
 
 @app.delete("/api/products/{row}")
-async def delete_product(row: int):
-    """Xoá sản phẩm khỏi Excel (clear row data, không xoá folder)."""
-    wb = openpyxl.load_workbook(EXCEL_FILE())
-    ws = wb["Listings"]
-    for col in range(1, 16):
-        set_cell_value(ws, row, col, None)
-    wb.save(EXCEL_FILE())
-    return {"ok": True}
+async def delete_product(row: int, request: Request):
+    """Xoá sản phẩm local khỏi cả catalog và folder."""
+    if _batch_delete_lock.locked():
+        raise HTTPException(409, "Một lệnh xoá đang chạy")
+
+    async with _batch_delete_lock:
+        return await _delete_local_products(request, row)
 
 @app.post("/api/batch-delete")
 async def batch_delete(req: Request):
@@ -2091,16 +2326,8 @@ async def batch_delete(req: Request):
 
 async def _batch_delete_unlocked(req: Request):
     """Xoá nhiều sản phẩm khỏi Excel cùng lúc."""
-    data = await req.json()
-    if not isinstance(data, dict):
-        raise HTTPException(400, "Payload phải là một đối tượng JSON")
-    shop_id = str(data.get("shop") or "").strip()
-    if not shop_id:
-        raise HTTPException(400, "Thiếu thông tin shop")
-    try:
-        _assert_shop_identity(shop_id)
-    except RuntimeError as error:
-        raise HTTPException(409, str(error)) from error
+    data = await _read_delete_payload(req)
+    shop_id, _ = _parse_delete_request_payload(data, require_folder=False)
 
     raw_items = data.get("items")
     if not isinstance(raw_items, list) or not raw_items:
@@ -2108,6 +2335,7 @@ async def _batch_delete_unlocked(req: Request):
 
     normalized_items = []
     seen_rows = set()
+    seen_folders = set()
     for item in raw_items:
         if not isinstance(item, dict):
             raise HTTPException(400, "Mỗi phần tử trong items phải có định dạng {row, folder}")
@@ -2118,41 +2346,125 @@ async def _batch_delete_unlocked(req: Request):
             raise HTTPException(400, f"row {row} không hợp lệ (phải >= 4)")
         if row in seen_rows:
             raise HTTPException(400, f"row {row} bị lặp trong danh sách")
-        folder = str(item.get("folder") or "").strip()
-        if not folder:
-            raise HTTPException(400, f"item tại row {row} thiếu folder")
+        folder = _validate_product_numbered_folder_name(item.get("folder"))
+        if folder in seen_folders:
+            raise HTTPException(400, f"folder bị lặp trong danh sách: {folder}")
+        seen_folders.add(folder)
         seen_rows.add(row)
         normalized_items.append((row, folder))
 
     if not normalized_items:
-        return {"ok": True, "shop": shop_id, "deleted": 0}
+        return {
+            "ok": True,
+            "shop": shop_id,
+            "deleted": 0,
+            "items": [],
+            "deleted_folders": [],
+        }
 
     excel_path = EXCEL_FILE()
+    try:
+        result = await _delete_local_products_unlocked(shop_id, normalized_items, excel_path)
+        return result
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(500, "Xoá hàng loạt thất bại") from error
+
+
+async def _delete_local_products(request: Request, row: int):
+    data = await _read_delete_payload(request)
+    shop_id, folder = _parse_delete_request_payload(data)
+    normalized_items = [(row, folder)]
+
+    return await _delete_local_products_unlocked(shop_id, normalized_items, EXCEL_FILE())
+
+
+async def _delete_local_products_unlocked(shop_id: str, normalized_items: list[tuple[int, str]], excel_path: Path):
+    if not excel_path.exists():
+        raise HTTPException(404, "Chưa có file Excel của shop đang hoạt động")
+    if not normalized_items:
+        return {"ok": True, "shop": shop_id, "deleted": 0, "items": [], "deleted_folders": []}
+
     wb = openpyxl.load_workbook(excel_path)
     ws = wb["Listings"]
+    shop_dir = SHOP_DIR()
     for row, folder in normalized_items:
+        if row < 4:
+            raise HTTPException(400, "Row phải từ 4 trở lên")
         current_folder = str(ws.cell(row=row, column=2).value or "").strip()
         if not current_folder:
             raise HTTPException(409, f"Không tìm thấy sản phẩm hợp lệ tại row {row}")
         if current_folder != folder:
-            raise HTTPException(409, f"Row {row} bị thay đổi: folder hiện tại '{current_folder}' không khớp '{folder}'")
+            raise HTTPException(
+                409,
+                f"Row {row} bị thay đổi: folder hiện tại '{current_folder}' không khớp '{folder}'",
+            )
+        if not (shop_dir / folder).exists():
+            raise HTTPException(404, f"Không tìm thấy folder local: {folder}")
+
+    moved_items: list[tuple[int, str, Path, Path]] = []
+    deleted_items: list[dict[str, int | str]] = []
 
     backup_path = excel_path.with_name(
-        f"{excel_path.stem}.backup_batch_delete_{time.strftime('%Y%m%d_%H%M%S')}{excel_path.suffix}"
+        f"{excel_path.stem}.backup_delete_{time.strftime('%Y%m%d_%H%M%S')}{excel_path.suffix}"
     )
-    shutil.copy2(excel_path, backup_path)
+    mutation_started = False
     try:
+        shutil.copy2(excel_path, backup_path)
+        mutation_started = True
+
+        for row, folder in normalized_items:
+            folder_path = shop_dir / folder
+            if not folder_path.exists():
+                raise HTTPException(404, f"Không tìm thấy folder local: {folder}")
+            target_folder = _quarantine_destination(shop_dir, folder)
+            shutil.move(str(folder_path), str(target_folder))
+            moved_items.append((row, folder, folder_path, target_folder))
+
         for row, _folder in normalized_items:
             _clear_catalog_row(ws, row)
-        wb.save(excel_path)
-    except Exception as error:
-        try:
-            shutil.copy2(backup_path, excel_path)
-        except Exception:
-            pass
-        raise HTTPException(500, "Lưu file Excel thất bại, đã khôi phục từ bản sao dự phòng") from error
 
-    return {"ok": True, "shop": shop_id, "deleted": len(normalized_items)}
+        wb.save(excel_path)
+        for row, folder, _source, target in moved_items:
+            deleted_items.append(_build_local_delete_metadata(row, folder, target))
+        return {
+            "ok": True,
+            "shop": shop_id,
+            "deleted": len(moved_items),
+            "items": deleted_items,
+            "deleted_folders": [item["quarantine_folder"] for item in deleted_items],
+        }
+    except Exception as error:
+        restore_errors: list[str] = []
+        if mutation_started:
+            for row, folder, source_folder, target_folder in reversed(moved_items):
+                try:
+                    if target_folder.exists():
+                        target_folder.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.move(str(target_folder), str(source_folder))
+                except Exception as restore_error:
+                    restore_errors.append(f"{folder}@row {row}: {restore_error}")
+
+            try:
+                shutil.copy2(backup_path, excel_path)
+            except Exception as restore_error:
+                restore_errors.append(f"khôi phục workbook: {restore_error}")
+
+            if restore_errors:
+                raise HTTPException(
+                    500,
+                    "Xoá local thất bại và khôi phục không hoàn toàn: "
+                    + "; ".join(restore_errors),
+                ) from error
+
+            if isinstance(error, HTTPException):
+                raise HTTPException(500, "Xoá local thất bại sau khi bắt đầu thao tác") from error
+            raise HTTPException(500, "Lưu file Excel thất bại, đã khôi phục bản sao dự phòng") from error
+
+        if isinstance(error, HTTPException):
+            raise error
+        raise HTTPException(500, str(error)) from error
 
 @app.post("/api/fix-sections")
 async def fix_sections():
@@ -3055,11 +3367,91 @@ async def post_to_etsy(row: int):
     if folder in _running_processes or folder in _running_tasks:
         return JSONResponse({"ok": False, "error": f"{folder} đang chạy rồi"}, status_code=409)
     shop_id = _active_shop_id
-    save_to_excel(row, {"status": "⏳ Chờ đăng"})
-    broadcast(f"[DASH] 🔄 Reset → ⏳ Chờ đăng: {folder}")
-    task = asyncio.create_task(_run_poster(row, folder, shop_id))
+    if _is_poster_locked_for_shop(shop_id):
+        return JSONResponse(
+            {"ok": False, "error": "Một bài đăng đang chạy cho shop này. Vui lòng đợi hoàn tất rồi thử lại"},
+            status_code=409,
+        )
+    lock_key = _acquire_poster_lock(shop_id)
+    try:
+        save_to_excel(row, {"status": "⏳ Chờ đăng"})
+        broadcast(f"[DASH] 🔄 Reset → ⏳ Chờ đăng: {folder}")
+        task = asyncio.create_task(_run_poster(row, folder, shop_id, lock_key=lock_key))
+    except Exception:
+        _release_poster_lock(shop_id)
+        raise
     _running_tasks[folder] = task
+    _register_background_task(lock_key, task)
     return {"ok": True, "message": f"Đang chạy poster cho {folder}"}
+
+
+@app.post("/api/run-selected-products")
+async def run_selected_products(req: Request):
+    data = await _read_delete_payload(req)
+    shop_id, items = _parse_run_selected_request_payload(data)
+    valid_items, rejected = _partition_selected_local_products(shop_id, items)
+    excel_path = EXCEL_FILE()
+
+    # Mark skipped products with per-card error reasons; do not abort the batch.
+    if rejected:
+        try:
+            _mark_selected_row_errors(excel_path, rejected)
+        except Exception as error:
+            raise HTTPException(500, "Không ghi được trạng thái lỗi cho sản phẩm bị bỏ qua") from error
+        for item in rejected:
+            broadcast(f"[BATCH] ⏭ Bỏ qua {item['folder']}: {item['reason']}")
+
+    if not valid_items:
+        raise HTTPException(
+            400,
+            f"Không có sản phẩm hợp lệ để đăng trong {len(items)} đã chọn"
+            + (f" (đã bỏ qua {len(rejected)})" if rejected else ""),
+        )
+
+    if _is_poster_locked_for_shop(shop_id):
+        raise HTTPException(
+            409,
+            "Một bài đăng đang chạy cho shop này. Vui lòng đợi hoàn tất rồi thử lại",
+        )
+
+    rows = [row for row, _ in valid_items]
+    lock_key = _acquire_poster_lock(shop_id)
+    try:
+        _set_selected_rows_pending(excel_path, rows)
+    except HTTPException:
+        _release_poster_lock(shop_id)
+        raise
+    except Exception as error:
+        _release_poster_lock(shop_id)
+        raise HTTPException(500, "Đặt trạng thái Chờ đăng thất bại") from error
+
+    try:
+        task = asyncio.create_task(_run_selected_poster(shop_id, valid_items, lock_key=lock_key))
+    except Exception:
+        _release_poster_lock(shop_id)
+        raise
+    _register_background_task(lock_key, task)
+    skipped_payload = [
+        {"row": item["row"], "folder": item["folder"], "reason": item["reason"]}
+        for item in rejected
+    ]
+    message = f"Đã xếp hàng {len(valid_items)} sản phẩm vào queue, chạy 1 Chrome lần lượt"
+    if rejected:
+        message += f" (bỏ qua {len(rejected)} sản phẩm không đủ điều kiện)"
+    return JSONResponse(
+        status_code=202,
+        content={
+            "ok": True,
+            "shop": shop_id,
+            "queued": len(valid_items),
+            "skipped": len(rejected),
+            "items": [{"row": row, "folder": folder} for row, folder in valid_items],
+            "folders": [folder for _, folder in valid_items],
+            "rejected": skipped_payload,
+            "job": lock_key,
+            "message": message,
+        },
+    )
 
 
 @app.post("/api/products/{row}/push-to-etsy")
@@ -3202,7 +3594,9 @@ async def _run_etsy_updater(
         _pop_background_task(folder)
         _running_processes.pop(folder, None)
 
-async def _run_poster(row: int, folder: str, shop_id: str):
+async def _run_poster(row: int, folder: str, shop_id: str, lock_key: str | None = None):
+    if lock_key is None:
+        lock_key = _etsy_post_lock_key(shop_id)
     proc: asyncio.subprocess.Process | None = None
     env = {**__import__('os').environ, "PYTHONUNBUFFERED": "1"}
     try:
@@ -3222,6 +3616,7 @@ async def _run_poster(row: int, folder: str, shop_id: str):
             *cmd, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT, cwd=str(BASE_DIR), env=env)
         _running_processes[folder] = proc
+        _running_processes[lock_key] = proc
         if proc.stdout:
             async for line in proc.stdout:
                 text = line.decode("utf-8", errors="replace").rstrip()
@@ -3233,17 +3628,24 @@ async def _run_poster(row: int, folder: str, shop_id: str):
         broadcast(f"[POSTER] ❌ {e}")
     finally:
         await _terminate_subprocess(proc)
+        _running_processes.pop(lock_key, None)
         _running_processes.pop(folder, None)
         _pop_background_task(folder)
+        _pop_background_task(lock_key)
 
 # ── API: Run ALL pending — 1 Chrome duy nhất, tuần tự ────────────────────────────
 @app.post("/api/run-all-pending")
 async def run_all_pending():
-    if "__BATCH__" in _running_processes or "__BATCH__" in _running_tasks:
-        return JSONResponse({"ok": False, "error": "Batch đang chạy rồi — chờ xong mới chạy tiếp"}, status_code=409)
     shop_id = _active_shop_id
-    task = asyncio.create_task(_run_batch_poster(shop_id))
-    _register_background_task("__BATCH__", task)
+    if _is_poster_locked_for_shop(shop_id):
+        return JSONResponse({"ok": False, "error": "Batch đang chạy rồi — chờ xong mới chạy tiếp"}, status_code=409)
+    lock_key = _acquire_poster_lock(shop_id)
+    try:
+        task = asyncio.create_task(_run_batch_poster(shop_id, lock_key=lock_key))
+    except Exception:
+        _release_poster_lock(shop_id)
+        raise
+    _register_background_task(lock_key, task)
     return {"ok": True, "message": "Đã khởi động batch poster (1 Chrome)"}
 
 # Noise patterns to filter from live logs
@@ -3252,7 +3654,7 @@ _LOG_NOISE = (
     "LibreSSL", "site-packages/urllib",
 )
 
-async def _run_batch_poster(shop_id: str):
+async def _run_batch_poster(shop_id: str, lock_key: str):
     proc: asyncio.subprocess.Process | None = None
     env = {**__import__('os').environ, "PYTHONUNBUFFERED": "1"}
     try:
@@ -3269,7 +3671,7 @@ async def _run_batch_poster(shop_id: str):
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT, cwd=str(BASE_DIR), env=env)
-        _running_processes["__BATCH__"] = proc
+        _running_processes[lock_key] = proc
         if proc.stdout:
             async for line in proc.stdout:
                 text = line.decode("utf-8", errors="replace").rstrip()
@@ -3281,8 +3683,44 @@ async def _run_batch_poster(shop_id: str):
         broadcast(f"[BATCH] ❌ {e}")
     finally:
         await _terminate_subprocess(proc)
-        _running_processes.pop("__BATCH__", None)
-        _pop_background_task("__BATCH__")
+        _running_processes.pop(lock_key, None)
+        _pop_background_task(lock_key)
+
+
+async def _run_selected_poster(shop_id: str, items: list[tuple[int, str]], lock_key: str):
+    cmd = [PYTHON_BIN, "-u", ETSY_POSTER, "--shop", shop_id]
+    for row, folder in items:
+        cmd.extend(["--selected-product", f"{row}:{folder}"])
+
+    proc: asyncio.subprocess.Process | None = None
+    env = {**__import__('os').environ, "PYTHONUNBUFFERED": "1"}
+    try:
+        preflight_ok, preflight_msg = await _runtime_prefetch_import_check(
+            PYTHON_BIN,
+            "[BATCH]",
+            _RUNTIME_PRECHECK_MODULES_POSTER,
+        )
+        if not preflight_ok:
+            broadcast(f"[BATCH] ❌ {preflight_msg}")
+            return
+        broadcast("[BATCH] 🚀 Khởi động đăng hàng loạt local đã chọn — 1 Chrome, xử lý tuần tự...")
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT, cwd=str(BASE_DIR), env=env)
+        _running_processes[lock_key] = proc
+        if proc.stdout:
+            async for line in proc.stdout:
+                text = line.decode("utf-8", errors="replace").rstrip()
+                if text and not any(n in text for n in _LOG_NOISE):
+                    broadcast(f"[BATCH] {text}")
+        code = await proc.wait()
+        broadcast(f"[BATCH] {'✅ Hoàn tất hàng loạt đã chọn!' if code == 0 else f'❌ Lỗi exit {code}'}")
+    except Exception as e:
+        broadcast(f"[BATCH] ❌ {e}")
+    finally:
+        await _terminate_subprocess(proc)
+        _running_processes.pop(lock_key, None)
+        _pop_background_task(lock_key)
 
 # ── API: Stop all running posters ────────────────────────────────────────────────
 @app.post("/api/stop-all")

@@ -669,7 +669,7 @@ async function loadProducts(options = {}) {
     setProductSource(currentProductSource, true);
     updateStats(allProducts);
     updateEtsyManagerStats(etsyManagerSnapshot);
-    loadAggregateCatalog();
+    await loadAggregateCatalog({ throwOnError });
     refreshScrollNavState();
     return allProducts;
   } catch (e) {
@@ -681,7 +681,8 @@ async function loadProducts(options = {}) {
   }
 }
 
-async function loadAggregateCatalog() {
+async function loadAggregateCatalog(options = {}) {
+  const { throwOnError = false } = options;
   try {
     const res = await fetch('/api/aggregate-products');
     const data = await res.json();
@@ -691,9 +692,11 @@ async function loadAggregateCatalog() {
     updateProductSourceSwitcher();
     if (currentProductSource === 'aggregate') filterProducts();
     refreshScrollNavState();
+    return aggregateCatalog;
   } catch (e) {
     aggregateCatalog = null;
     console.warn('[Aggregate catalog]', e);
+    if (throwOnError) throw e;
     refreshScrollNavState();
   }
 }
@@ -1947,24 +1950,40 @@ async function openFolder(row, type) {
 }
 
 async function deleteProduct(row, folder) {
-  if (!confirm(`Xoá "${folder}" khỏi dashboard?\n\n• Dữ liệu trong Excel sẽ bị xoá\n• Folder trên ổ cứng KHÔNG bị xoá\n\nTiếp tục?`)) return;
+  const activeShop = document.getElementById('shop-switcher')?.value?.trim() || '';
+  if (!activeShop) {
+    toast('error', 'Thiếu thông tin shop hiện tại để xoá Local');
+    return;
+  }
+  if (!confirm(`Xoá "${folder}" khỏi dashboard?\n\n• Dữ liệu trong Excel sẽ bị xoá\n• Thư mục trên ổ cứng sẽ được chuyển sang thư mục thu gom để có thể khôi phục\n\nTiếp tục?`)) return;
   try {
-    await fetch(`/api/products/${row}`, { method: 'DELETE' });
-    // Remove from local state
-    allProducts = allProducts.filter(p => p.row !== row);
-    // Remove card from DOM
-    const card = document.getElementById(`card-${row}`);
-    if (card) card.remove();
-    updateStats(allProducts);
-    toast('success', `🗑 Đã xoá ${folder} khỏi dashboard`);
+    const response = await fetch(`/api/products/${row}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shop: activeShop, folder }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) {
+      throw new Error(data?.error || data?.detail || `HTTP ${response.status}`);
+    }
+    try {
+      await loadProducts({ throwOnError: true });
+      toast('success', `🗑 Đã xoá ${folder} khỏi dashboard`);
+    } catch (refreshError) {
+      toast('warning', `✅ ${folder} đã bị xoá khỏi dashboard, nhưng làm mới danh sách gặp lỗi: ${refreshError.message}`);
+    }
   } catch (e) {
-    toast('error', `Lỗi: ${e.message}`);
+    toast('error', `Lỗi xoá sản phẩm: ${e.message}`);
   }
 }
 
 async function batchDelete() {
   const selected = selectedBatchCheckboxes('local');
   const activeShop = document.getElementById('shop-switcher')?.value?.trim() || '';
+  if (!activeShop) {
+    toast('error', 'Thiếu thông tin shop hiện tại để xoá hàng loạt');
+    return;
+  }
   const items = selected
     .map((cb) => ({
       row: parseInt(cb.value, 10),
@@ -1977,7 +1996,7 @@ async function batchDelete() {
     return;
   }
   
-  if (!confirm(`Xoá ${items.length} sản phẩm khỏi dashboard?\n\n• Dữ liệu trong Excel sẽ bị xoá\n• Folder trên ổ cứng KHÔNG bị xoá\n\nTiếp tục?`)) return;
+  if (!confirm(`Xoá ${items.length} sản phẩm khỏi dashboard?\n\n• Dữ liệu trong Excel sẽ bị xoá\n• Các thư mục local sẽ được chuyển sang vùng thu gom phục hồi\n\nTiếp tục?`)) return;
   const button = document.getElementById('local-batch-delete-btn');
   const oldButtonText = button?.innerHTML;
   if (button) {
@@ -2016,6 +2035,93 @@ async function batchDelete() {
     if (button) {
       button.disabled = false;
       button.innerHTML = oldButtonText || '🗑 Xoá Local đã chọn';
+    }
+  }
+}
+
+async function batchPostSelected() {
+  const activeShop = document.getElementById('shop-switcher')?.value?.trim() || '';
+  if (!activeShop) {
+    toast('error', 'Thiếu thông tin shop hiện tại để đăng hàng loạt');
+    return;
+  }
+
+  const selected = selectedBatchCheckboxes('local');
+  const items = selected
+    .map((cb) => ({
+      row: parseInt(cb.value, 10),
+      folder: String(cb.dataset.folder || '').trim(),
+    }))
+    .filter((item) =>
+      Number.isInteger(item.row) && item.row >= 4
+      && /^product-\d+$/.test(item.folder)
+    );
+
+  if (selected.length === 0 || items.length === 0) {
+    toast('error', 'Chưa chọn sản phẩm local nào để đăng');
+    return;
+  }
+  if (selected.length !== items.length) {
+    toast('error', 'Có checkbox local chưa hợp lệ (row/folder). Vui lòng kiểm tra lại.');
+    return;
+  }
+
+  if (!confirm(`Đăng ${items.length} sản phẩm đã chọn?
+
+✅ 1 Chrome, xử lý tuần tự`)) return;
+
+  const button = document.getElementById('local-batch-post-btn');
+  const oldButtonText = button?.innerHTML;
+  if (button) {
+    button.disabled = true;
+    button.innerHTML = '<span class="spinner"></span> Đang đăng...';
+  }
+
+  try {
+    const res = await fetch('/api/run-selected-products', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shop: activeShop, items }),
+    });
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok || !data?.ok) {
+      throw new Error(data?.error || data?.detail || `HTTP ${res.status}`);
+    }
+
+    selectedBatchCheckboxes('local').forEach((cb) => (cb.checked = false));
+    document.getElementById('cb-select-all').checked = false;
+    updateBatchUI();
+    await loadProducts({ throwOnError: true });
+
+    const queued = data?.queued ?? items.length;
+    const skipped = Number(data?.skipped || 0);
+    const rejected = Array.isArray(data?.rejected) ? data.rejected : [];
+    toast('success', `✅ Đã xếp hàng ${queued} sản phẩm vào Live Queue`);
+    if (skipped > 0) {
+      const names = rejected
+        .map((item) => item?.folder || `row ${item?.row || '?'}`)
+        .filter(Boolean)
+        .slice(0, 3)
+        .join(', ');
+      const more = skipped > 3 ? ` +${skipped - 3} khác` : '';
+      toast(
+        'error',
+        `⏭ Bỏ qua ${skipped} sản phẩm (đã gắn lỗi dưới thẻ): ${names}${more}`,
+      );
+    } else {
+      toast('info', '🚀 Đang theo dõi Live Logs để xem tiến trình đăng');
+    }
+    if (queued > 0 && skipped > 0) {
+      toast('info', '🚀 Tiếp tục đăng các sản phẩm còn lại — xem Live Logs');
+    }
+  } catch (e) {
+    toast('error', `Lỗi đăng hàng loạt: ${e.message}`);
+    try { await loadProducts({ throwOnError: false }); } catch (_) { /* ignore */ }
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.innerHTML = oldButtonText || '🚀 Đăng hàng loạt';
     }
   }
 }

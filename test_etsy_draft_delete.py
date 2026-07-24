@@ -11,6 +11,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 
 from fastapi import HTTPException
+from playwright.async_api import async_playwright
 
 import dashboard_app
 import etsy_clean_duplicates
@@ -59,6 +60,51 @@ class FakePage:
 
 
 class TestEtsyDraftDelete(unittest.TestCase):
+    async def _launch_browser(self, pw):
+        try:
+            return await pw.chromium.launch(channel="chrome", headless=True)
+        except Exception:
+            return await pw.chromium.launch(
+                executable_path="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                headless=True,
+            )
+
+    def _run_select_checkbox_with_html(self, html: str, listing_id: str) -> dict[str, bool] | bool:
+        async def runner():
+            async with async_playwright() as pw:
+                browser = await self._launch_browser(pw)
+                try:
+                    page = await browser.new_page()
+                    await page.set_content(html)
+                    return await etsy_clean_duplicates.select_listing_checkbox(page, listing_id)
+                finally:
+                    await browser.close()
+
+        return asyncio.run(runner())
+
+    def _run_select_checkbox_with_html_and_state(self, html: str, listing_id: str) -> tuple[bool, dict[str, bool]]:
+        async def runner():
+            async with async_playwright() as pw:
+                browser = await self._launch_browser(pw)
+                try:
+                    page = await browser.new_page()
+                    await page.set_content(html)
+                    selected = await etsy_clean_duplicates.select_listing_checkbox(page, listing_id)
+                    states = await page.evaluate(
+                        """() => {
+                            return {
+                                native_111: !!document.querySelector('#cb-111') && document.querySelector('#cb-111').checked,
+                                native_222: !!document.querySelector('#cb-222') && document.querySelector('#cb-222').checked,
+                                aria_222: !!document.querySelector('#cb-222-aria') && document.querySelector('#cb-222-aria').getAttribute('aria-checked')
+                            };
+                        }"""
+                    )
+                    return selected, states
+                finally:
+                    await browser.close()
+
+        return asyncio.run(runner())
+
     def test_select_targets_maps_ids_to_expected_pages(self):
         all_listings = {
             "4528885906": {"id": "4528885906", "title": "A", "page": 3},
@@ -139,6 +185,124 @@ class TestEtsyDraftDelete(unittest.TestCase):
             "https://www.etsy.com/your/shops/me/tools/listings/page:3,state:draft",
             "https://www.etsy.com/your/shops/me/tools/listings/page:2,state:draft",
         ], page.goto_calls)
+
+    def test_select_listing_checkbox_uses_parent_card_for_card_body_anchor(self):
+        html = """
+        <div class="card">
+          <div class="card-body">
+            <a href="/listing-editor/edit/4528263097">Business Planner 2027</a>
+          </div>
+          <input id="cb-111" type="checkbox"/>
+        </div>
+        """
+        selected = self._run_select_checkbox_with_html(html, "4528263097")
+        self.assertTrue(selected)
+
+    def test_select_listing_checkbox_selects_only_target_when_cards_adjacent(self):
+        html = """
+        <div id="list">
+          <div class="card">
+            <div class="card-body">
+              <a href="/listing-editor/edit/111">One</a>
+            </div>
+            <input id="cb-111" type="checkbox"/>
+          </div>
+          <div class="card">
+            <div class="card-body">
+              <a href="/listing-editor/edit/222">Two</a>
+            </div>
+            <input id="cb-222" type="checkbox"/>
+          </div>
+        </div>
+        """
+        selected, states = self._run_select_checkbox_with_html_and_state(html, "111")
+        self.assertTrue(selected)
+        self.assertTrue(states["native_111"])
+        self.assertFalse(states["native_222"])
+
+    def test_select_listing_checkbox_does_not_match_listing_id_prefix(self):
+        html = """
+        <div class="card">
+          <div class="card-body">
+            <a href="/listing-editor/edit/45282630970">Not target listing</a>
+          </div>
+          <input id="cb-222" type="checkbox"/>
+        </div>
+        """
+        selected = self._run_select_checkbox_with_html(html, "4528263097")
+        self.assertFalse(selected)
+
+    def test_select_listing_checkbox_fails_without_checkbox(self):
+        html = """
+        <div class="card">
+          <a href="/listing-editor/edit/111">Missing checkbox</a>
+        </div>
+        """
+        selected = self._run_select_checkbox_with_html(html, "111")
+        self.assertFalse(selected)
+
+    def test_select_listing_checkbox_fails_with_multiple_listing_ids_in_same_container(self):
+        html = """
+        <div class="card">
+          <a href="/listing-editor/edit/111">One</a>
+          <input id="cb-111" type="checkbox"/>
+          <a href="/listing-editor/edit/222">Two</a>
+        </div>
+        """
+        selected = self._run_select_checkbox_with_html(html, "111")
+        self.assertFalse(selected)
+
+    def test_select_listing_checkbox_supports_checked_native_and_aria(self):
+        html = """
+        <div id="root">
+          <div class="card">
+            <a href="/listing-editor/edit/111">Native prechecked</a>
+            <input id="cb-111" type="checkbox" checked />
+          </div>
+          <div class="card">
+            <a href="/listing-editor/edit/222">Aria prechecked</a>
+            <div id="cb-222-aria" role="checkbox" aria-checked="true"></div>
+          </div>
+        </div>
+        """
+        selected, states = self._run_select_checkbox_with_html_and_state(html, "222")
+        self.assertTrue(selected)
+        self.assertTrue(states["aria_222"] == "true")
+
+        selected_native, states_native = self._run_select_checkbox_with_html_and_state(html, "111")
+        self.assertTrue(selected_native)
+        self.assertTrue(states_native["native_111"])
+
+    def test_execute_deletions_never_clicks_delete_if_selection_fails(self):
+        page = FakePage()
+        ids_by_page = {2: ["111", "222"]}
+        listings_by_page = {
+            2: [{"id": "111", "title": "One", "page": 2}, {"id": "222", "title": "Two", "page": 2}],
+        }
+
+        async def fake_scrape(fake_page, page_number):
+            return listings_by_page.get(page_number, [])
+
+        async def fake_select(_fake_page, listing_id):
+            return listing_id == "111"
+
+        async def fake_verify_identity(_page, _shop):
+            return None
+
+        async def fake_verify_after(*args, **kwargs):
+            return ["222"]
+
+        click_delete = AsyncMock()
+
+        with patch.object(etsy_clean_duplicates, "scrape_draft_listings", new=fake_scrape), \
+                patch.object(etsy_clean_duplicates, "select_listing_checkbox", new=fake_select), \
+                patch.object(etsy_clean_duplicates, "click_delete_and_confirm", new=click_delete), \
+                patch.object(etsy_clean_duplicates, "verify_shop_identity", new=fake_verify_identity), \
+                patch.object(etsy_clean_duplicates, "verify_absent_after_delete", new=fake_verify_after):
+            with self.assertRaises(RuntimeError):
+                asyncio.run(etsy_clean_duplicates.execute_deletions(page, "daisyflowdigital", ids_by_page))
+
+        self.assertFalse(click_delete.called)
 
     def test_verify_absent_after_delete_detects_moved_listing_globally(self):
         page = FakePage()

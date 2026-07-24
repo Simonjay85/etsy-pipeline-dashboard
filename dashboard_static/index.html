@@ -84,6 +84,7 @@
   <div id="batch-actions" class="batch-actions">
     <span id="batch-count-label" class="batch-count-label">0 selected</span>
     <button class="btn btn-warning btn-sm local-batch-action" onclick="batchRegenSEO()">🤖 Tạo SEO Hàng Loạt</button>
+    <button id="local-batch-post-btn" class="btn btn-primary btn-sm local-batch-action" onclick="batchPostSelected()" title="Đăng nhiều sản phẩm local cùng lúc bằng một Chrome">🚀 Đăng hàng loạt</button>
     <button id="local-batch-delete-btn" class="btn btn-danger btn-sm local-batch-action" onclick="batchDelete()" title="Xoá sản phẩm local đã chọn khỏi dashboard">🗑 Xoá Local đã chọn</button>
     <button class="btn btn-ghost btn-sm local-batch-action" onclick="openSyncModal()">🔄 Sync sang Shop khác</button>
     <button class="btn btn-primary btn-sm shop-batch-action" id="shop-bulk-create-btn" onclick="bulkCreateLocalFromEtsy()">➕ Tạo product mới + Sync</button>
@@ -783,7 +784,6 @@
   </div>
 </div>
 </div>
-
 
 <!-- ═════════════ LINK LOCAL PRODUCT TO ETSY LISTING ═════════════ -->
 <div class="modal-overlay" id="link-etsy-modal">

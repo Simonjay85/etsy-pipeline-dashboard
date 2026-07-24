@@ -6,7 +6,7 @@
 <title>Etsy Pipeline Dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/style.css?v=20260719-image-lightbox-01">
+<link rel="stylesheet" href="/static/style.css?v=20260724-unverified-link-01">
 </head>
 <body>
 
@@ -784,6 +784,42 @@
 </div>
 </div>
 
+
+<!-- ═════════════ LINK LOCAL PRODUCT TO ETSY LISTING ═════════════ -->
+<div class="modal-overlay" id="link-etsy-modal">
+<div class="modal">
+  <div class="modal-header">
+    <h2>Ghép link Etsy cho sản phẩm local</h2>
+    <button class="btn-close" onclick="closeModal('link-etsy-modal')">✕</button>
+  </div>
+  <div class="modal-body">
+    <input type="hidden" id="link-local-row">
+    <input type="hidden" id="link-local-folder">
+    <div class="form-group">
+      <label>Sản phẩm local</label>
+      <div id="link-local-label" class="map-etsy-listing-info"></div>
+    </div>
+    <div class="form-group">
+      <label>Gợi ý listing Etsy chưa ghép</label>
+      <div id="link-etsy-scan-status" class="hint">⏳ Đang gợi ý listing Etsy chưa ghép...</div>
+      <div id="link-etsy-suggestions" class="map-local-suggestions"></div>
+    </div>
+    <div class="form-group">
+      <label for="link-etsy-input">Listing ID hoặc URL Etsy</label>
+      <input id="link-etsy-input" type="text"
+             placeholder="4542555210 hoặc https://www.etsy.com/listing/4542555210"
+             autocomplete="off"
+             onkeydown="if(event.key==='Enter') submitLinkEtsyFromLocal()">
+      <div class="hint">Dùng khi draft đã lên Etsy nhưng dashboard chưa lưu được listing ID (URL chưa xác minh).</div>
+    </div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-ghost" onclick="closeModal('link-etsy-modal')">Đóng</button>
+    <button class="btn btn-warning" id="link-etsy-submit" onclick="submitLinkEtsyFromLocal()">🔗 Ghép link</button>
+  </div>
+</div>
+</div>
+
 <!-- Accessible shared product-image lightbox -->
 <div class="image-lightbox" id="image-lightbox" role="dialog" aria-modal="true" aria-labelledby="lightbox-caption" aria-hidden="true">
   <div class="image-lightbox-backdrop" data-lightbox-close></div>
@@ -801,6 +837,6 @@
 <script src="/static/catalog_sort.js?v=20260718-hide-missing-folders-01"></script>
 <script src="/static/edit_save.js?v=20260718-edit-save-01"></script>
 <script src="/static/batch_selection.js?v=20260718-batch-actions-01"></script>
-<script src="/static/app.js?v=20260719-etsy-draft-delete-01"></script>
+<script src="/static/app.js?v=20260724-unverified-link-01"></script>
 </body>
 </html>

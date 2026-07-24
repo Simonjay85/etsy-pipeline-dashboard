@@ -629,6 +629,12 @@ body {
   width: fit-content;
 }
 .product-etsy-link:hover { color: var(--text1); text-decoration: underline; }
+.product-etsy-link.missing {
+  color: var(--orange);
+  font-weight: 600;
+  text-decoration: none;
+  cursor: default;
+}
 .btn-etsy {
   background: rgba(245,100,0,0.12);
   color: #fb923c;

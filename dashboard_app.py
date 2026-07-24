@@ -2426,6 +2426,31 @@ async def _sync_local_from_etsy(
     return details, asset_sync, sync_status, bool(sync_status.get("overall")), synced_fields
 
 
+def _mapped_etsy_listing_ids(products: list[dict] | None = None) -> set[str]:
+    mapped: set[str] = set()
+    for product in products if products is not None else products_from_excel():
+        listing_id = _extract_etsy_listing_id(str(product.get("etsy_url") or ""))
+        if listing_id:
+            mapped.add(listing_id)
+    return mapped
+
+
+def _status_for_linked_etsy_listing(listing: dict | None, fallback_status: str = "") -> str:
+    status_labels = {
+        "active": "✅ Đã đăng",
+        "draft": "✅ Đã đăng draft",
+        "inactive": "⏸ Inactive trên Etsy",
+        "expired": "⌛ Expired trên Etsy",
+    }
+    manager_status = str((listing or {}).get("managerStatus") or "").lower()
+    if manager_status in status_labels:
+        return status_labels[manager_status]
+    current = str(fallback_status or "").strip()
+    if "URL chưa xác minh" in current or ("Đã đăng" in current and "draft" in current.lower()):
+        return "✅ Đã đăng draft"
+    return current or "✅ Đã đăng draft"
+
+
 @app.get("/api/etsy/match-suggestions/{listing_id}")
 async def etsy_match_suggestions(listing_id: str, limit: int = 5):
     if not re.fullmatch(r"\d+", listing_id):
@@ -2480,11 +2505,70 @@ async def etsy_match_suggestions(listing_id: str, limit: int = 5):
     }
 
 
+@app.get("/api/etsy/link-suggestions-for-folder/{folder}")
+async def etsy_link_suggestions_for_folder(folder: str, limit: int = 5):
+    """Suggest unmapped Etsy listings that likely belong to a local product folder."""
+    folder = str(folder or "").strip()
+    if not folder:
+        raise HTTPException(400, "Thiếu folder local")
+    limit = max(1, min(int(limit), 10))
+
+    products = products_from_excel()
+    local_product = next((p for p in products if p.get("folder") == folder), None)
+    if not local_product:
+        raise HTTPException(404, f"Không tìm thấy folder local: {folder}")
+    if str(local_product.get("etsy_url") or "").strip():
+        raise HTTPException(409, f"{folder} đã có link Etsy")
+
+    snapshot = latest_etsy_manager_snapshot()
+    mapped_ids = _mapped_etsy_listing_ids(products)
+    local_title = str(local_product.get("title") or "")
+    candidates = []
+    for listing in snapshot.get("listings", []):
+        listing_id = str(listing.get("id") or "").strip()
+        if not listing_id.isdigit() or listing_id in mapped_ids:
+            continue
+        manager_status = str(listing.get("managerStatus") or listing.get("status") or "").lower()
+        if manager_status and manager_status not in {"draft", "active"}:
+            continue
+        score = _listing_match_score(str(listing.get("title") or ""), local_title)
+        candidates.append({
+            "id": listing_id,
+            "title": listing.get("title") or "",
+            "status": listing.get("managerStatus") or listing.get("status") or "",
+            "url": listing.get("url") or f"https://www.etsy.com/listing/{listing_id}",
+            "score": score,
+            "confidence": "high" if score >= 0.90 else "medium" if score >= 0.75 else "low",
+        })
+    candidates.sort(key=lambda item: (-item["score"], str(item.get("id") or "")))
+    suggestions = candidates[:limit]
+    top_score = suggestions[0]["score"] if suggestions else 0.0
+    second_score = suggestions[1]["score"] if len(suggestions) > 1 else 0.0
+    auto_fill_listing_id = None
+    if suggestions and top_score >= 0.90 and (top_score >= 0.96 or top_score - second_score >= 0.06):
+        auto_fill_listing_id = suggestions[0]["id"]
+
+    return {
+        "ok": True,
+        "folder": folder,
+        "row": local_product.get("row"),
+        "title": local_title,
+        "status": local_product.get("status"),
+        "suggestions": suggestions,
+        "auto_fill_listing_id": auto_fill_listing_id,
+        "scanned_etsy_total": len(candidates),
+        "snapshot_total": len(snapshot.get("listings", [])),
+    }
+
+
 @app.post("/api/etsy/map-listing")
 async def map_etsy_listing(request: Request):
     data = await request.json()
     listing_id = str(data.get("listing_id") or "").strip()
     folder = str(data.get("folder") or "").strip()
+    raw_url = str(data.get("etsy_url") or "").strip()
+    if not listing_id and raw_url:
+        listing_id = _extract_etsy_listing_id(raw_url)
     if not re.fullmatch(r"\d+", listing_id):
         raise HTTPException(400, "Listing ID Etsy không hợp lệ")
     if not folder:
@@ -2505,20 +2589,17 @@ async def map_etsy_listing(request: Request):
         (item for item in snapshot.get("listings", []) if str(item.get("id", "")) == listing_id),
         None,
     )
-    if not listing:
+    allow_manual = bool(data.get("allow_manual")) or bool(raw_url)
+    if not listing and not allow_manual:
         raise HTTPException(404, "Listing không có trong bản đồng bộ Etsy mới nhất")
 
-    status_labels = {
-        "active": "✅ Đã đăng",
-        "draft": "✅ Đã đăng draft",
-        "inactive": "⏸ Inactive trên Etsy",
-        "expired": "⌛ Expired trên Etsy",
-    }
-    manager_status = str(listing.get("managerStatus") or "").lower()
-    etsy_url = str(listing.get("url") or f"https://www.etsy.com/listing/{listing_id}")
+    etsy_url = str((listing or {}).get("url") or raw_url or f"https://www.etsy.com/listing/{listing_id}")
+    if not _extract_etsy_listing_id(etsy_url):
+        etsy_url = f"https://www.etsy.com/listing/{listing_id}"
+    status_value = _status_for_linked_etsy_listing(listing, local_product.get("status") or "")
     save_to_excel(local_product["row"], {
         "etsy_url": etsy_url,
-        "status": status_labels.get(manager_status, local_product.get("status") or "⏳ Chờ đăng"),
+        "status": status_value,
     })
     broadcast(f"[ETSY-MAP] ✅ {listing_id} → {folder}")
     return {
@@ -2527,6 +2608,8 @@ async def map_etsy_listing(request: Request):
         "folder": folder,
         "row": local_product["row"],
         "etsy_url": etsy_url,
+        "status": status_value,
+        "from_snapshot": bool(listing),
     }
 
 

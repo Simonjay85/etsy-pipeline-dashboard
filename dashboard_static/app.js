@@ -1216,6 +1216,121 @@ function chooseEtsyMapSuggestion(folder) {
   });
 }
 
+function extractEtsyListingIdInput(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (/^\d+$/.test(raw)) return raw;
+  const match = raw.match(/\/listing\/(\d+)/) || raw.match(/listing-editor\/edit\/(\d+)/) || raw.match(/listing_id=(\d+)/);
+  return match ? match[1] : '';
+}
+
+async function openLinkEtsyFromLocal(row) {
+  const product = allProducts.find(item => Number(item.row) === Number(row));
+  if (!product) return toast('error', 'Không tìm thấy sản phẩm local');
+  if (String(product.etsy_url || '').trim()) {
+    return toast('info', `${product.folder} đã có link Etsy`);
+  }
+
+  document.getElementById('link-local-row').value = String(product.row);
+  document.getElementById('link-local-folder').value = product.folder;
+  document.getElementById('link-local-label').innerHTML = `
+    <strong>${escHtml(product.folder)}</strong>
+    <span>${escHtml(product.title || '[Cần SEO]')}</span>
+    <small>${escHtml(product.status || '')}</small>`;
+  document.getElementById('link-etsy-input').value = '';
+  document.getElementById('link-etsy-suggestions').innerHTML = '';
+  document.getElementById('link-etsy-scan-status').textContent = '⏳ Đang gợi ý listing Etsy chưa ghép...';
+  openModal('link-etsy-modal');
+  document.getElementById('link-etsy-input').focus();
+
+  try {
+    const res = await fetch(`/api/etsy/link-suggestions-for-folder/${encodeURIComponent(product.folder)}?limit=5`);
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.detail || data.error || 'Không lấy được gợi ý Etsy');
+    const suggestions = data.suggestions || [];
+    document.getElementById('link-etsy-suggestions').innerHTML = suggestions.length
+      ? suggestions.map((candidate, index) => {
+          const percent = Math.round(Number(candidate.score || 0) * 100);
+          const confidenceText = candidate.confidence === 'high' ? 'Khớp cao' : candidate.confidence === 'medium' ? 'Cần xem lại' : 'Khớp thấp';
+          return `<button type="button" class="map-suggestion-card confidence-${escHtml(candidate.confidence)}" data-listing-id="${escHtml(candidate.id)}" onclick="chooseLinkEtsySuggestion(this.dataset.listingId)">
+            <div class="map-suggestion-placeholder">🛍</div>
+            <span class="map-suggestion-copy">
+              <strong>${index === 0 ? '⭐ ' : ''}Etsy ${escHtml(candidate.id)}</strong>
+              <span>${escHtml(candidate.title || 'Chưa có tiêu đề')}</span>
+              <small>${confidenceText} · ${percent}% · ${escHtml(candidate.status || 'unknown')}</small>
+            </span>
+          </button>`;
+        }).join('')
+      : '<div class="hint">Không có listing Active/Draft chưa ghép khớp tiêu đề. Có thể dán Listing ID hoặc URL bên dưới.</div>';
+    if (data.auto_fill_listing_id) {
+      document.getElementById('link-etsy-input').value = data.auto_fill_listing_id;
+      document.getElementById('link-etsy-scan-status').textContent =
+        `✅ Đã quét ${data.scanned_etsy_total} listing chưa ghép. Đã điền sẵn ứng viên độ khớp cao; anh kiểm tra trước khi ghép.`;
+    } else if (!(data.snapshot_total > 0)) {
+      document.getElementById('link-etsy-scan-status').textContent =
+        '⚠️ Chưa có bản đồng bộ Etsy Shop. Bấm “Đồng bộ Etsy Shop” hoặc dán Listing ID/URL thủ công.';
+    } else {
+      document.getElementById('link-etsy-scan-status').textContent =
+        `🔎 Đã quét ${data.scanned_etsy_total} listing chưa ghép. Chưa có ứng viên đủ tin cậy; hãy chọn gợi ý hoặc dán ID/URL.`;
+    }
+  } catch (e) {
+    document.getElementById('link-etsy-scan-status').textContent = `❌ ${e.message}`;
+  }
+}
+
+function chooseLinkEtsySuggestion(listingId) {
+  document.getElementById('link-etsy-input').value = String(listingId || '');
+  document.querySelectorAll('#link-etsy-suggestions .map-suggestion-card').forEach(card => {
+    card.classList.toggle('selected', card.dataset.listingId === String(listingId || ''));
+  });
+}
+
+async function submitLinkEtsyFromLocal() {
+  const folder = document.getElementById('link-local-folder').value.trim();
+  const row = Number(document.getElementById('link-local-row').value);
+  const rawInput = document.getElementById('link-etsy-input').value.trim();
+  const listingId = extractEtsyListingIdInput(rawInput);
+  if (!folder) return toast('warning', 'Thiếu folder local');
+  if (!listingId) return toast('warning', 'Nhập Listing ID hoặc URL Etsy hợp lệ');
+
+  const submit = document.getElementById('link-etsy-submit');
+  const originalText = submit.textContent;
+  submit.disabled = true;
+  submit.textContent = 'Đang ghép...';
+  toast('info', `🔗 Đang ghép ${folder} với Etsy ${listingId}...`);
+  try {
+    const payload = {
+      folder,
+      listing_id: listingId,
+      allow_manual: true,
+    };
+    if (/etsy\.com/i.test(rawInput)) payload.etsy_url = rawInput;
+    const res = await fetch('/api/etsy/map-listing', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.detail || data.error || 'Không ghép được link Etsy');
+
+    const product = allProducts.find(item => Number(item.row) === row || item.folder === folder);
+    if (product) {
+      product.etsy_url = data.etsy_url || `https://www.etsy.com/listing/${listingId}`;
+      product.status = data.status || '✅ Đã đăng draft';
+      const card = document.getElementById(`card-${product.row}`);
+      if (card) card.outerHTML = productCard(product);
+    }
+    closeModal('link-etsy-modal');
+    toast('success', `✅ Đã ghép ${folder} → Etsy ${listingId}. Sync/Update đã sẵn sàng.`);
+    updateStats(allProducts);
+  } catch (e) {
+    toast('error', `❌ ${e.message}`);
+  } finally {
+    submit.disabled = false;
+    submit.textContent = originalText;
+  }
+}
+
 async function submitEtsyListingMap() {
   const listingId = document.getElementById('map-listing-id').value.trim();
   const folder = document.getElementById('map-local-folder').value.trim();
@@ -1307,10 +1422,22 @@ function renderProducts(products) {
   refreshScrollNavState();
 }
 
+function productNeedsEtsyLink(p) {
+  const etsyUrl = String(p?.etsy_url || '').trim();
+  if (etsyUrl) return false;
+  const status = String(p?.status || '');
+  return status.includes('URL chưa xác minh')
+    || (status.includes('Đã đăng') && status.toLowerCase().includes('draft'));
+}
+
 function productCard(p) {
   const isRunning = runningSet.has(p.folder);
-  const statusClass = isRunning ? 'running'
-    : (p.needs_seo || p.status.includes('⚠'))  ? 'warning'
+  const etsyUrl = String(p.etsy_url || '').trim();
+  const needsEtsyLink = productNeedsEtsyLink(p);
+  const urlUnverified = needsEtsyLink || String(p.status || '').includes('URL chưa xác minh');
+
+  let statusClass = isRunning ? 'running'
+    : (p.needs_seo || p.status.includes('⚠') || urlUnverified) ? 'warning'
     : p.status.includes('Đã đăng') ? 'posted'
     : (p.status.includes('Lỗi') || p.status.includes('❌')) ? 'error'
     : 'pending';
@@ -1330,6 +1457,9 @@ function productCard(p) {
     } else {
       errorReason = p.status.replace(/^❌\s*/, '').replace(/^Lỗi[:\s]*/, '').trim();
     }
+  } else if (urlUnverified) {
+    badgeLabel = '⚠ Draft · chưa có link';
+    statusClass = isRunning ? 'running' : 'warning';
   } else if (p.status.includes('Đã đăng')) {
     if (p.status.includes('draft')) {
       badgeLabel = '✅ Đã đăng draft';
@@ -1344,15 +1474,14 @@ function productCard(p) {
 
   const galleryHtml = productImageGallery(p.image_previews || p.all_images, p.folder);
 
-  const etsyUrl = String(p.etsy_url || '').trim();
   const etsyIdMatch = etsyUrl.match(/\/listing\/(\d+)/);
   const etsyId = etsyIdMatch ? etsyIdMatch[1] : '';
   const etsyLinkHtml = etsyUrl
     ? `<a class="product-etsy-link" href="${escHtml(etsyUrl)}" target="_blank" rel="noopener" title="Mở listing Etsy ${etsyId || ''}">🔗 Etsy ${etsyId || ''}</a>`
-    : `<span class="product-etsy-link" style="color:var(--text3); font-weight:500;" title="Chưa có link Etsy được đồng bộ">🔗 Chưa có link Etsy</span>`;
+    : `<span class="product-etsy-link missing" title="Draft đã lưu trên Etsy nhưng chưa xác minh được listing ID">🔗 Chưa có link Etsy${needsEtsyLink ? ' · cần ghép' : ''}</span>`;
   const etsyButtonHtml = etsyUrl
     ? `<button class="btn btn-etsy btn-sm" onclick="openEtsyListing('${escJs(etsyUrl)}')" title="Mở listing Etsy trực tiếp">🔗 Etsy</button>`
-    : `<button class="btn btn-etsy btn-sm btn-disabled" disabled title="Sản phẩm này chưa có link Etsy khớp chắc">🔗 Etsy</button>`;
+    : `<button class="btn btn-warning btn-sm" onclick="openLinkEtsyFromLocal(${p.row})" title="Ghép listing ID/URL Etsy cho sản phẩm này">🔗 Ghép link</button>`;
 
   let seoBadges = '';
   if (p.missing_fields && p.missing_fields.length > 0) {

@@ -11,6 +11,23 @@
   - Etsy: `push-to-etsy`, `sync-from-etsy`, `post`, `run-all-pending`
   - Stop-all should terminate tracked subprocesses and clear pending queues.
 
+## Canonical workspace (only root)
+
+This repo is the **only** canonical Etsy project root:
+
+| Role | Canonical path |
+|------|----------------|
+| Project root | `/Users/aaronnguyen/Developer/Etsy` |
+| Factory source | `/Users/aaronnguyen/Developer/Etsy/master_products` |
+| Shop data | `/Users/aaronnguyen/Developer/Etsy/shops` |
+| Backups | `/Users/aaronnguyen/Developer/Etsy/output/backup` |
+
+- Import Factory reads `master_products`. Asset-intake / image-factory output must land under `master_products` in this repo.
+- Resolve paths from the repo root (`Path(__file__).resolve().parent` for root-level scripts). Do not hardcode the obsolete tree.
+- `/Users/aaronnguyen/Documents/Claude/Projects/Etsy` is obsolete — never use it as source or destination.
+
+**Before claiming completion:** confirm generated `master_products/product-NN` folders exist in this repo and that the dashboard Import Factory scan can see them.
+
 ## Operational notes
 
 - `shops_config.json` / `ebay_wp_config.json` and secret files are JSON configs and should be treated defensively.

@@ -19,6 +19,11 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from etsy_catalog import build_unified_catalog, merge_safe_duplicates
 from shop_asset_workflow import copy_image_with_watermark, get_watermark_text
+from etsy_browser_session import (
+    is_session_ready as is_etsy_session_ready,
+    SHOP_MANAGER_URL,
+    resolve_etsy_session,
+)
 
 # ── Paths ───────────────────────────────────────────────────────────────────────
 BASE_DIR       = Path(__file__).parent
@@ -179,6 +184,7 @@ def _release_poster_lock(shop_id: str):
 
 _LISTING_URL_RE = re.compile(r"/(?:listing/|listing-editor/edit/)(\d+)")
 _LISTING_ID_RE = re.compile(r"^\s*\d+\s*$")
+_ETSY_MANAGER_LISTING_RE = re.compile(r"^https://(?:www\.)?etsy\.com/(?:your/shops/me/)?listing-editor/edit/(\d+)(?:[/?#].*)?$", re.IGNORECASE)
 
 
 def _listing_url_has_id(value: str) -> bool:
@@ -826,22 +832,323 @@ def _assert_shop_identity(target_shop_id: str) -> None:
         )
 
 
-async def _assert_etsy_page_shop_identity(page, target_shop_id: str) -> None:
-    """Fail before scraping when the authenticated editor belongs to another shop."""
-    shop_url = str(SHOPS.get(target_shop_id, {}).get("etsy_link") or "")
-    expected_match = re.search(r"/shop/([^/?#]+)", shop_url, re.I)
-    expected = expected_match.group(1).lower() if expected_match else ""
+def _etsy_session_payload(shop_id: str) -> dict:
+    session = resolve_etsy_session(BASE_DIR, SHOPS, shop_id)
+    return {
+        "shop_id": shop_id,
+        "shop_name": SHOPS.get(shop_id, {}).get("name", shop_id),
+        "profile_dir": str(session.profile_dir),
+        "debug_port": session.debug_port,
+        "browser_ready": is_etsy_session_ready(session),
+        "purpose": "etsy_posting",
+    }
+
+
+def _extract_manager_listing_id(value: str) -> str:
+    match = _ETSY_MANAGER_LISTING_RE.fullmatch(str(value or "").strip())
+    return match.group(1) if match else ""
+
+
+def _normalize_etsy_shop_slug(raw: str) -> str:
+    slug = str(raw or "").strip().lower().strip("/")
+    if not slug:
+        return ""
+    slug = re.sub(r"\?.*$", "", slug)
+    slug = re.sub(r"/.*$", "", slug)
+    return slug.strip()
+
+
+def _expected_shop_slug(target_shop_id: str) -> str:
+    shop_url = str(SHOPS.get(target_shop_id, {}).get("etsy_link") or "").strip()
+    match = re.search(r"/shop/([^/?#]+)", shop_url, re.I)
+    return _normalize_etsy_shop_slug(match.group(1)) if match else ""
+
+
+def _dedupe_preserve_order(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        deduped.append(value)
+    return deduped
+
+
+def _parse_visible_shop_slugs(values: list[str] | None) -> list[str]:
+    normalized: list[str] = []
+    for raw in values or []:
+        slug = _normalize_etsy_shop_slug(raw)
+        if not slug or slug == "me":
+            continue
+        normalized.append(slug)
+    return _dedupe_preserve_order(normalized)
+
+
+def _is_etsy_auth_required_text(value: str) -> bool:
+    normalized = str(value or "").lower()
+    return any(
+        token in normalized
+        for token in (
+            "sign in to continue",
+            "please sign in",
+            "create an account",
+            "đăng nhập để",
+            "you need to sign in",
+        )
+    )
+
+
+def _is_etsy_access_blocked_text(value: str) -> bool:
+    normalized = str(value or "").lower()
+    return any(
+        token in normalized
+        for token in (
+            "verify you are human",
+            "access denied",
+            "unusual activity",
+            "hcaptcha",
+            "recaptcha",
+        )
+    )
+
+
+def _is_etsy_auth_required_url(url: str) -> bool:
+    try:
+        parsed = urllib.parse.urlparse(url)
+        pathname = (parsed.path or "").lower()
+        return any(
+            pathname.startswith(segment)
+            for segment in (
+                "/join",
+                "/signin",
+                "/sign-in",
+            )
+        )
+    except Exception:
+        return False
+
+
+def _normalize_url_path(path: str) -> str:
+    normalized = str(path or "").strip()
+    if not normalized:
+        return "/"
+    normalized = re.sub(r"/+", "/", normalized.strip())
+    if not normalized.startswith("/"):
+        normalized = f"/{normalized}"
+    return normalized.rstrip("/") or "/"
+
+
+def _is_etsy_host(url_or_host: str) -> bool:
+    try:
+        parsed = urllib.parse.urlparse(
+            url_or_host if "://" in url_or_host else f"//{url_or_host}"
+        )
+        return (parsed.hostname or "").lower() in {"etsy.com", "www.etsy.com"}
+    except Exception:
+        return False
+
+
+def _is_etsy_shop_manager_route(url: str) -> bool:
+    try:
+        parsed = urllib.parse.urlparse(url)
+        if not _is_etsy_host(parsed.netloc):
+            return False
+        manager_path = _normalize_url_path(urllib.parse.urlparse(SHOP_MANAGER_URL).path)
+        return _normalize_url_path(parsed.path) == manager_path
+    except Exception:
+        return False
+
+
+def _is_etsy_shop_public_route(url: str) -> bool:
+    try:
+        parsed = urllib.parse.urlparse(url)
+        if not _is_etsy_host(parsed.netloc):
+            return False
+        return _normalize_url_path(parsed.path).startswith("/shop/")
+    except Exception:
+        return False
+
+
+def _is_etsy_access_blocked_url(url: str) -> bool:
+    try:
+        parsed = urllib.parse.urlparse(url)
+        pathname = (parsed.path or "").lower()
+        blocked_paths = (
+            "/access-denied",
+            "/access_denied",
+            "/challenge",
+            "/session/challenge",
+            "/captcha",
+        )
+        return any(pathname.startswith(item) for item in blocked_paths)
+    except Exception:
+        return False
+
+
+async def _read_visible_text(page) -> str:
+    for selector in ("main", "[role='main']", "#content", "body"):
+        try:
+            element = page.locator(selector).first
+            if await element.count() > 0:
+                text = await element.inner_text()
+                if text:
+                    return str(text)
+        except Exception:
+            pass
+    try:
+        return str(await page.evaluate("() => (document?.body?.innerText || '')")) or ""
+    except Exception:
+        return ""
+
+
+async def _extract_shop_anchors(page) -> list[str]:
+    return _parse_visible_shop_slugs(
+        list(
+            await page.evaluate(
+                r'''() => {
+                const selectors = [
+                    "header a[href*='/shop/']",
+                    "a[href*='/shop/']",
+                    ".shops a[href*='/shop/']",
+                    "#content a[href*='/shop/']",
+                ];
+                const anchors = [];
+                for (const selector of selectors) {
+                    for (const node of document.querySelectorAll(selector)) {
+                        anchors.push(node.href || node.getAttribute('href') || '');
+                    }
+                }
+                return anchors.map((href) => {
+                    const match = (href || '').match(/\/shop\/([^/?#]+)/i);
+                    return match ? match[1] : null;
+                }).filter(Boolean);
+            }'''
+            )
+        )
+    )
+
+
+async def _assert_etsy_page_shop_identity(
+    page,
+    target_shop_id: str,
+    *,
+    shop_identity_verified: bool = False,
+) -> None:
+    expected = _expected_shop_slug(target_shop_id)
     if not expected:
         raise RuntimeError(f"Shop {target_shop_id} chưa có Etsy URL hợp lệ để xác minh phiên đăng nhập")
-    slugs = await page.evaluate(r'''() => Array.from(document.querySelectorAll('a[href*="/shop/"]'))
-        .map(a => (a.href || a.getAttribute('href') || '').match(/\/shop\/([^/?#]+)/i))
-        .filter(Boolean)
-        .map(match => match[1].toLowerCase())''')
-    actual = next((slug for slug in slugs if slug != "me"), "")
-    if actual != expected:
+
+    anchors = await _extract_shop_anchors(page)
+    if not anchors and not shop_identity_verified:
         raise RuntimeError(
-            f"Phiên Etsy sai shop: editor={actual or 'không xác định'}, yêu cầu={expected}"
+            f"Phiên Etsy chưa xác minh: không đọc được shop trên editor, yêu cầu={expected}"
         )
+    if not anchors:
+        return
+    if len(anchors) != 1 or anchors[0] != expected:
+        raise RuntimeError(
+            f"Phiên Etsy sai shop: editor={', '.join(anchors)} , yêu cầu={expected}"
+        )
+
+
+def _classify_etsy_session_state(url: str, visible_text: str) -> tuple[bool, bool]:
+    auth_required = _is_etsy_auth_required_url(url) or _is_etsy_auth_required_text(visible_text)
+    access_blocked = _is_etsy_access_blocked_url(url) or _is_etsy_access_blocked_text(visible_text)
+    return auth_required, access_blocked
+
+
+async def _assert_etsy_editor_access(page, listing_id: str) -> None:
+    final_url = str(page.url or "").strip()
+    text = await _read_visible_text(page)
+    auth_required, access_blocked = _classify_etsy_session_state(final_url, text)
+    if auth_required:
+        raise RuntimeError(
+            "Phiên Etsy chưa đăng nhập: hãy mở nút Browser Etsy, đăng nhập đúng shop, sau đó nhấn Sync lại"
+        )
+    if access_blocked:
+        raise RuntimeError("Etsy đang chặn/đòi xác minh phiên này, hãy xác minh thủ công rồi Sync lại")
+
+    opened_listing_id = _extract_manager_listing_id(final_url)
+    if not opened_listing_id:
+        raise RuntimeError(
+            f"Không mở đúng editor listing cho ID {listing_id}. URL hiện tại: {final_url or 'không có'}"
+        )
+    if opened_listing_id != listing_id:
+        raise RuntimeError(
+            f"Editor sai listing: editor={opened_listing_id}, yêu cầu={listing_id}"
+        )
+
+
+async def _assert_etsy_shop_manager_preflight(page, target_shop_id: str) -> bool:
+    await page.goto(SHOP_MANAGER_URL, wait_until="domcontentloaded", timeout=20000)
+    expected = _expected_shop_slug(target_shop_id)
+    if not expected:
+        raise RuntimeError(f"Shop {target_shop_id} chưa có Etsy URL hợp lệ để xác minh phiên đăng nhập")
+
+    timeout_ms = 8000
+    poll_ms = 250
+    deadline = time.monotonic() + timeout_ms / 1000.0
+
+    while True:
+        final_url = str(page.url or "").strip()
+        text = await _read_visible_text(page)
+        auth_required, access_blocked = _classify_etsy_session_state(final_url, text)
+        if auth_required:
+            raise RuntimeError(
+                "Phiên Etsy chưa đăng nhập: hãy mở nút Browser Etsy, đăng nhập đúng shop, sau đó nhấn Sync lại"
+            )
+        if access_blocked:
+            raise RuntimeError("Etsy đang chặn/đòi xác minh phiên này, hãy xác minh thủ công rồi Sync lại")
+        if _is_etsy_shop_public_route(final_url):
+            raise RuntimeError(
+                "Phiên Etsy chưa xác minh: không mở đúng Shop Manager, đang ở trang cửa hàng công khai."
+            )
+
+        if not _is_etsy_shop_manager_route(final_url):
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f"Shop Manager chưa sẵn sàng/chưa xác minh: url hiện tại={final_url or 'không có'}"
+                )
+            await asyncio.sleep(poll_ms / 1000.0)
+            continue
+
+        manager_slugs = await _extract_shop_anchors(page)
+        if manager_slugs:
+            if len(manager_slugs) != 1 or manager_slugs[0] != expected:
+                raise RuntimeError(
+                    f"Phiên Etsy sai shop: editor={', '.join(manager_slugs)} , yêu cầu={expected}"
+                )
+            return True
+
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                "Shop Manager chưa sẵn sàng/chưa xác minh: không đọc được shop trên Shop Manager"
+            )
+
+        await asyncio.sleep(poll_ms / 1000.0)
+
+
+async def _assert_etsy_editor_ready(page, listing_id: str) -> None:
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
+    try:
+        await page.wait_for_selector(
+            'textarea[name="title"], input[name="title"], #title-input',
+            timeout=20000,
+        )
+    except PlaywrightTimeoutError as exc:
+        text = await _read_visible_text(page)
+        auth_required, access_blocked = _classify_etsy_session_state(str(page.url or ""), text)
+        if auth_required:
+            raise RuntimeError(
+                "Phiên Etsy chưa đăng nhập: hãy mở nút Browser Etsy, đăng nhập đúng shop, sau đó nhấn Sync lại"
+            ) from exc
+        if access_blocked:
+            raise RuntimeError("Etsy đang chặn/đòi xác minh phiên này, hãy xác minh thủ công rồi Sync lại") from exc
+        raise RuntimeError(
+            f"Không nạp được giao diện Listing Editor cho listing {listing_id}; có thể đăng nhập sai shop hoặc trang bị chặn"
+        ) from exc
 
 
 def _validate_etsy_image_bytes(image_bytes: bytes) -> tuple[bool, tuple[int, int] | None]:
@@ -1413,61 +1720,43 @@ async def scrape_listing_details(
     include_asset_summary: bool = False,
 ) -> dict:
     from playwright.async_api import async_playwright
-    import sys
-    from pathlib import Path
 
     target_shop_id = shop_id or _active_shop_id
     if shop_id:
         _assert_shop_identity(target_shop_id)
-    BROWSER_DIR = _resolve_browser_session_dir(target_shop_id)
-    shop_cfg = SHOPS.get(target_shop_id, {})
-    BASE_DIR = Path(__file__).parent
-    CHROME_PATH = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+    session = resolve_etsy_session(BASE_DIR, SHOPS, target_shop_id)
+    session_verified = is_etsy_session_ready(session)
 
     pw = await async_playwright().start()
     browser_ctx = None
     connected_cdp = False
 
-    # 1. Try to connect via CDP (Chrome Debug Port)
-    debug_port = shop_cfg.get("debug_port")
-    if debug_port or target_shop_id == "templystudios":
-        try:
-            port = int(debug_port or 9222)
-            browser = await pw.chromium.connect_over_cdp(f"http://localhost:{port}", timeout=3000)
-            browser_ctx = browser.contexts[0] if browser.contexts else await browser.new_context()
-            connected_cdp = True
-        except Exception as e:
-            print(f"CDP connection failed: {e}. Falling back to persistent context.")
+    # 1. Chỉ dùng đúng session theo resolve_etsy_session.
+    if not session_verified:
+        await pw.stop()
+        raise RuntimeError(
+            f"Phiên Etsy chưa sẵn sàng cho shop={target_shop_id}. "
+            "Hãy mở nút Browser Etsy, đăng nhập đúng shop, giữ cửa sổ login mở, rồi Sync lại."
+        )
 
-    # 2. If CDP failed, launch persistent context using the local session
-    if not browser_ctx:
-        # Bulk/local sync runs in a restricted macOS environment where Chrome's
-        # Crashpad xattr writes can abort a persistent headed session.  Default
-        # to headless for Etsy scraping; callers may opt into a visible window
-        # with ETSY_SCRAPER_HEADLESS=0.
-        headless_env = str(os.environ.get("ETSY_SCRAPER_HEADLESS", "1")).lower()
-        scraper_headless = headless_env not in {"0", "false", "no", "off"}
-        launch_kw = {
-            "user_data_dir": str(BROWSER_DIR),
-            "headless": scraper_headless,
-            "args": [
-                "--start-maximized",
-                "--disable-blink-features=AutomationControlled",
-                "--disable-crash-reporter",
-                "--disable-breakpad",
-            ],
-            "viewport": None,
-        }
-        # Playwright's bundled Chromium avoids the macOS system Chrome
-        # Crashpad/xattr restrictions seen in the sandbox.  Set
-        # ETSY_SCRAPER_USE_SYSTEM_CHROME=1 only when the real Chrome profile is
-        # required; the persistent Etsy session remains usable with bundled
-        # Chromium in the default path.
-        use_system_chrome = str(os.environ.get("ETSY_SCRAPER_USE_SYSTEM_CHROME", "0")).lower() in {"1", "true", "yes", "on"}
-        bundled_chromium = Path(pw.chromium.executable_path)
-        if CHROME_PATH.exists() and (use_system_chrome or not bundled_chromium.exists()):
-            launch_kw["executable_path"] = str(CHROME_PATH)
-        browser_ctx = await pw.chromium.launch_persistent_context(**launch_kw)
+    # 2. Connect chính xác vào CDP của phiên đã xác thực.
+    try:
+        browser = await pw.chromium.connect_over_cdp(session.cdp_url, timeout=3000)
+        browser_ctx = browser.contexts[0] if browser.contexts else await browser.new_context()
+        connected_cdp = True
+    except Exception as exc:
+        await pw.stop()
+        raise RuntimeError(
+            f"Không kết nối được phiên Etsy CDP cho shop={target_shop_id} qua {session.cdp_url}. "
+            "Hãy mở nút Browser Etsy, đăng nhập đúng shop, giữ cửa sổ đăng nhập mở, rồi Sync lại."
+        ) from exc
+
+    # 3. Dùng profile + cdp này rồi xác nhận không được fallback sang bundled/headless.
+    #   (Không mở context local khi CDP chưa sẵn sàng)
+    if not connected_cdp:
+        raise RuntimeError(
+            "Không có phiên CDP hoạt động cho scraping. Hãy mở Browser Etsy đúng shop, rồi thử lại."
+        )
 
     try:
         page = None
@@ -1477,18 +1766,31 @@ async def scrape_listing_details(
                 break
         if page is None:
             page = await browser_ctx.new_page()
+        # 3. Shop-manager identity preflight trong cùng browser context/page.
+        #    Tránh fail-open khi profile đúng nhưng account/shop không khớp.
+        shop_identity_verified = await _assert_etsy_shop_manager_preflight(page, target_shop_id)
         edit_url = f"https://www.etsy.com/your/shops/me/listing-editor/edit/{listing_id}"
         try:
             await page.goto(edit_url, wait_until="commit", timeout=20000)
         except Exception as e:
             print(f"Navigation timeout/error: {e}")
-
-        try:
-            await page.wait_for_selector('textarea[name="title"], input[name="title"], #title-input', timeout=20000)
-        except Exception as e:
-            print(f"Warning: title input did not appear: {e}")
-        await page.wait_for_timeout(2000)
-        await _assert_etsy_page_shop_identity(page, target_shop_id)
+        await _assert_etsy_editor_access(page, listing_id)
+        # Verify editor route chính xác cho listing_id trước khi chốt metadata.
+        opened_listing_id = _extract_manager_listing_id(str(page.url or "").strip())
+        if not opened_listing_id:
+            raise RuntimeError(
+                f"Không mở đúng editor listing cho ID {listing_id}. URL hiện tại: {page.url or 'không có'}"
+            )
+        if opened_listing_id != listing_id:
+            raise RuntimeError(
+                f"Editor sai listing: editor={opened_listing_id}, yêu cầu={listing_id}"
+            )
+        await _assert_etsy_editor_ready(page, listing_id)
+        await _assert_etsy_page_shop_identity(
+            page,
+            target_shop_id,
+            shop_identity_verified=shop_identity_verified,
+        )
 
         # Scrape Title
         title = ""

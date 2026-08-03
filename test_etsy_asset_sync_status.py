@@ -58,12 +58,13 @@ class TestAssetSyncStatus(unittest.IsolatedAsyncioTestCase):
         }
         writes = []
         with tempfile.TemporaryDirectory() as tmpdir, \
+            patch.object(dashboard_app, "_active_shop_id", "templystudios"), \
                 patch.object(dashboard_app, "scrape_listing_details", new=AsyncMock(return_value=details)), \
                 patch.object(dashboard_app, "save_to_excel", side_effect=lambda row, updates, excel_path=None: writes.append(dict(updates))):
             await dashboard_app._sync_local_from_etsy(
                 listing_id="123",
                 row=4,
-                shop_id="daisyflowdigital",
+                shop_id="templystudios",
                 product_path=Path(tmpdir) / "product-1",
                 excel_path=Path(tmpdir) / "book.xlsx",
             )

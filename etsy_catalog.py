@@ -67,8 +67,71 @@ def normalize_title(value: str) -> str:
 
 
 def extract_listing_id(url: str) -> str:
-    match = re.search(r"/listing/(\d+)", str(url or ""))
+    match = re.search(r"/listing/([0-9]+)", str(url or ""))
     return match.group(1) if match else ""
+
+
+def _normalize_etsy_listing_id(value: Any) -> str:
+    text = str(value or "").strip()
+    return text if text.isdigit() else ""
+
+
+def normalize_etsy_manager_snapshot(raw: dict[str, Any]) -> dict[str, Any]:
+    """Normalize and dedupe an Etsy manager snapshot payload.
+
+    Status precedence is active > draft > inactive > expired.
+    Malformed/missing listing IDs are kept as independent records.
+    """
+    status_order = ("active", "draft", "inactive", "expired")
+    raw_counts = {status: 0 for status in status_order}
+    winners_by_id: dict[str, dict[str, Any]] = {}
+    winner_order: list[str] = []
+    malformed_records: list[dict[str, Any]] = []
+    duplicate_count = 0
+
+    for status in status_order:
+        values = raw.get(status, [])
+        if not isinstance(values, list):
+            continue
+        raw_counts[status] = len(values)
+        for item in values:
+            if not isinstance(item, dict):
+                continue
+            listing = dict(item)
+            listing["managerStatus"] = status
+            listing_id = _normalize_etsy_listing_id(item.get("id"))
+            if not listing_id:
+                malformed_records.append(listing)
+                continue
+            if listing_id in winners_by_id:
+                duplicate_count += 1
+                continue
+            winners_by_id[listing_id] = listing
+            winner_order.append(listing_id)
+
+    listings: list[dict[str, Any]] = []
+    for listing_id in winner_order:
+        listing = dict(winners_by_id[listing_id])
+        listing["listing_id"] = listing_id
+        listings.append(listing)
+
+    for listing in malformed_records:
+        listing = dict(listing)
+        listing["listing_id"] = str(listing.get("id") or "")
+        listings.append(listing)
+
+    counts = {status: 0 for status in status_order}
+    for listing in listings:
+        status = str(listing.get("managerStatus", "")).lower()
+        if status in counts:
+            counts[status] += 1
+
+    return {
+        "raw_counts": raw_counts,
+        "counts": counts,
+        "duplicate_count": duplicate_count,
+        "listings": listings,
+    }
 
 
 def _safe_hash(path: Path) -> str:
@@ -356,20 +419,19 @@ def load_etsy_snapshot(base_dir: Path, shop_id: str) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError):
         return {"source": str(latest), "counts": {}, "listings": []}
 
-    listings: list[dict[str, Any]] = []
-    counts: dict[str, int] = {}
-    for status in ("active", "draft", "inactive", "expired"):
-        values = data.get(status, [])
-        counts[status] = len(values) if isinstance(values, list) else 0
-        for item in values if isinstance(values, list) else []:
-            if not isinstance(item, dict):
-                continue
-            listing = dict(item)
-            listing["managerStatus"] = listing.get("managerStatus") or status
-            listing["listing_id"] = str(listing.get("id", ""))
-            listings.append(listing)
-    counts["total"] = sum(counts.values())
-    return {"source": str(latest), "counts": counts, "listings": listings}
+    normalized = normalize_etsy_manager_snapshot(data)
+    counts = dict(normalized.get("counts", {}))
+    raw_counts = dict(normalized.get("raw_counts", {}))
+    raw_counts["total"] = sum(raw_counts.values())
+    if counts:
+        counts["total"] = sum(counts.values())
+    return {
+        "source": str(latest),
+        "counts": counts,
+        "raw_counts": raw_counts,
+        "duplicate_count": normalized.get("duplicate_count", 0),
+        "listings": normalized.get("listings", []),
+    }
 
 
 def build_unified_catalog(base_dir: Path, shop_id: str, excel_path: Path) -> dict[str, Any]:
@@ -435,6 +497,14 @@ def build_unified_catalog(base_dir: Path, shop_id: str, excel_path: Path) -> dic
             continue
         local_record = dict(local_record)
         local_record["source_label"] = "Local"
+        # A local row can retain an old Etsy URL after that listing no longer
+        # appears in the newest manager snapshot.  Keep the workbook status
+        # intact (it is historical metadata), but expose the reconciliation
+        # mismatch so the dashboard does not present it as confirmed posted.
+        listing_id = str(local_record.get("listing_id") or "")
+        if snapshot.get("source") and listing_id and listing_id not in mapped_listing_ids:
+            local_record["reconciliation_status"] = "unmatched_local_listing"
+            local_record["reconciliation_note"] = "Listing ID is absent from the latest Etsy Manager snapshot"
         records.append(local_record)
 
     records.sort(key=_catalog_record_sort_key)

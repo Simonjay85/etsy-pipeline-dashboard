@@ -37,6 +37,20 @@ Thumbs.db
 *.tmp
 .~lock.*
 
+# Runtime state
+shops_config.json
+active_shop.txt
+
+# Runtime diagnostics and cache artifacts (future runtime diagnostics/staging target)
+.etsy-dashboard-diagnostics/
+diagnostics/
+output/backup/staging/
+
+# Screenshot/failure artifacts
+*failure*.png
+*screenshot*.png
+*error*.png
+
 # Excel backups & lock files
 *backup*.xlsx
 *before_repair*.xlsx

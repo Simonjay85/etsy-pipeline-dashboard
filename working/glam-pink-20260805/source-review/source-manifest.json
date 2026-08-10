@@ -1,0 +1,25 @@
+{
+  "source": "/Users/aaronnguyen/.codex/attachments/c6093f1a-5822-457f-9891-5bb4089bf16e/Glam Pink.pdf",
+  "root_reviewed": "/Users/aaronnguyen/Developer/Etsy/working/glam-pink-20260805/source-review/single-source",
+  "file_count": 1,
+  "records": [
+    {
+      "path": "Glam Pink.pdf",
+      "size_bytes": 10664921,
+      "sha256": "976cc9762c68ba2d541e7b3cd1161efec558f74e3b1d5f3a87fab7193e1006c1",
+      "extension": ".pdf",
+      "mime": "application/pdf",
+      "empty": false,
+      "pdf": {
+        "pages": 15,
+        "encrypted": false,
+        "text_chars": null,
+        "rendered_pages": 15,
+        "pdfinfo_ok": true,
+        "pdfinfo_error": null,
+        "text_extract_error": "pdftotext not installed"
+      }
+    }
+  ],
+  "warnings": []
+}

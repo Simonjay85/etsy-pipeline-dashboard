@@ -5,7 +5,7 @@ Social Media Auto Poster
 • Dùng Playwright với Chrome session thực (.browser-session)
 • Đọc SEO data từ shop's Etsy_SEO_Generator.xlsx
 • Lấy ảnh cover đầu tiên của sản phẩm
-• Tự động đăng lên: Pinterest, Twitter/X, Medium
+• Tự động đăng lên: Instagram, Pinterest, Facebook, Twitter/X, Medium, Reddit
 • Chạy: python3 social_auto_post.py --row <ROW> --platform <PLATFORM> --shop <SHOP_ID>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
@@ -16,6 +16,19 @@ import argparse
 import re
 import subprocess
 from pathlib import Path
+from urllib.parse import urlsplit
+from social_browser_session import (
+    SOCIAL_URLS,
+    is_session_ready,
+    load_social_session,
+    open_social_browser,
+)
+from social_post_store import record_social_post
+from medium_content import (
+    make_medium_article_title,
+    make_medium_research_article,
+    render_medium_plain_text,
+)
 
 # ── Auto-install dependencies ──────────────────────────────────────────────────
 def ensure_deps():
@@ -32,11 +45,190 @@ ensure_deps()
 import openpyxl
 from playwright.async_api import async_playwright
 
-BASE_DIR = Path(__file__).parent
-BROWSER_DIR = BASE_DIR / ".browser-session"
-CHROME_PATH = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+BASE_DIR = Path(__file__).resolve().parent
 
 COMMON_HASHTAGS = "#digitaldownload #printable #instantdownload #etsyshop #etsyseller #digitalart"
+PINTEREST_TITLE_MAX_LENGTH = 100
+PINTEREST_DESCRIPTION_MAX_LENGTH = 800
+PINTEREST_PUBLISH_PATH_PATTERN = r"/pin/\d+/?(?:[?#].*)?$"
+PINTEREST_PUBLISH_URL_PATTERN = r"^" + PINTEREST_PUBLISH_PATH_PATTERN
+PINTEREST_PUBLISH_ABSOLUTE_URL_PATTERN = (
+    r"^https?://"
+    r"(?:(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)?)"
+    r"pinterest\.com"
+    + PINTEREST_PUBLISH_PATH_PATTERN
+)
+PINTEREST_PUBLISH_ERROR_KEYWORDS = {
+    "long",
+    "trim",
+    "must fix",
+    "required",
+    "error",
+    "oops",
+    "invalid",
+    "missing",
+}
+
+
+def _normalize_text(text: str) -> str:
+    return re.sub(r"\s+", " ", str(text).strip())
+
+
+def _truncate_text_tail(text: str, max_length: int) -> str:
+    if max_length <= 0:
+        return ""
+    return text[-max_length:] if len(text) > max_length else text
+
+
+def _truncate_to_word_boundary(text: str, max_length: int) -> str:
+    if max_length <= 0:
+        return ""
+    if len(text) <= max_length:
+        return text
+
+    words = text.split(" ")
+    chosen_parts: list[str] = []
+    total = 0
+    for word in words:
+        separator_len = 1 if chosen_parts else 0
+        if total + separator_len + len(word) > max_length:
+            break
+        chosen_parts.append(word)
+        total += separator_len + len(word)
+
+    if chosen_parts:
+        return " ".join(chosen_parts)
+
+    return text[:max_length]
+
+
+def _normalize_pinterest_title(title: str, max_length: int = PINTEREST_TITLE_MAX_LENGTH) -> str:
+    """Normalize Pinterest title and trim deterministically to <= max_length.
+
+    Prefer word-boundary truncation and always return a non-empty string when the
+    input has visible content.
+    """
+    if not title:
+        return ""
+    normalized = _normalize_text(title)
+    if len(normalized) <= max_length:
+        return normalized
+
+    return _truncate_to_word_boundary(normalized, max_length)
+
+
+def _fit_title_and_keywords_with_budget(title: str, keywords: str, budget: int) -> str:
+    if budget <= 0:
+        return ""
+
+    separator = "\n\n"
+    if title and not keywords:
+        return _truncate_to_word_boundary(title, budget)
+    if keywords and not title:
+        return _truncate_to_word_boundary(keywords, budget)
+
+    if len(title) <= budget:
+        remaining = budget - len(title)
+        if remaining <= len(separator):
+            return title
+        keyword_budget = remaining - len(separator)
+        trimmed_keywords = _truncate_to_word_boundary(keywords, keyword_budget)
+        if trimmed_keywords:
+            return f"{title}{separator}{trimmed_keywords}"
+        return title
+
+    return _truncate_to_word_boundary(title, budget)
+
+
+def _build_pinterest_description(
+    title: str,
+    desc: str,
+    tags: str,
+    etsy_url: str,
+) -> tuple[str, str, str]:
+    normalized_title = _normalize_text(title)
+    sentences = [s.strip() for s in _normalize_text(desc).replace(".", ". ").split(". ") if s.strip()]
+    short_desc = ". ".join(sentences[:3]) + "." if sentences else _normalize_text(desc)[:200]
+    tag_list = [t.strip() for t in (tags or "").split(",") if t.strip()]
+    keywords = " | ".join(tag_list[:5])
+    if keywords:
+        keywords = f"{keywords} | Instant Digital Download"
+    else:
+        keywords = "Instant Digital Download"
+    clean_url = _normalize_text(etsy_url) or "https://www.etsy.com"
+    cta = f"🛒 Shop now → {clean_url}"
+    return normalized_title, short_desc, keywords, cta
+
+
+def _normalize_pinterest_description(
+    title: str,
+    desc: str,
+    tags: str,
+    etsy_url: str,
+    max_length: int = PINTEREST_DESCRIPTION_MAX_LENGTH,
+) -> tuple[str, bool]:
+    """
+    Build and normalize Pinterest description text.
+
+    Returns:
+        tuple[description, was_truncated]
+    """
+    if max_length <= 0:
+        return "", False
+
+    normalized_title, short_desc, keywords, cta_line = _build_pinterest_description(
+        title, desc, tags, etsy_url
+    )
+
+    if not cta_line:
+        cta_line = "🛒 Shop now → https://www.etsy.com"
+
+    raw_prefix = "\n\n".join(
+        [part for part in (normalized_title, short_desc, keywords) if part]
+    )
+    raw = f"{raw_prefix}\n\n{cta_line}" if raw_prefix else cta_line
+    if len(raw) <= max_length:
+        return raw, False
+
+    if len(cta_line) >= max_length:
+        return _truncate_text_tail(cta_line, max_length), True
+
+    separator = "\n\n"
+    separator_len = len(separator)
+    budget_for_prefix = max_length - len(cta_line) - separator_len
+    if budget_for_prefix <= 0:
+        return _truncate_text_tail(cta_line, max_length), True
+
+    if not normalized_title and not short_desc and not keywords:
+        return _truncate_text_tail(cta_line, max_length), True
+
+    # Keep title + keywords whenever possible, then trim description.
+    title_keyword_prefix = "\n\n".join(
+        [part for part in (normalized_title, keywords) if part]
+    )
+    if title_keyword_prefix:
+        if len(title_keyword_prefix) <= budget_for_prefix:
+            desc_budget = budget_for_prefix - len(title_keyword_prefix)
+            if normalized_title and keywords:
+                desc_budget -= separator_len
+            elif normalized_title or keywords:
+                desc_budget -= separator_len
+            desc_budget = max(0, desc_budget)
+            desc_trimmed = _truncate_to_word_boundary(short_desc, desc_budget)
+            prefix = "\n\n".join(
+                [part for part in (normalized_title, desc_trimmed, keywords) if part]
+            )
+            return f"{prefix}\n\n{cta_line}", True
+
+    prefix = _fit_title_and_keywords_with_budget(
+        normalized_title, keywords, budget_for_prefix
+    )
+    if not prefix:
+        return _truncate_text_tail(cta_line, max_length), True
+
+    prefix = _truncate_to_word_boundary(prefix, budget_for_prefix)
+    return f"{prefix}\n\n{cta_line}", True
+
 
 # ── Caption Generators ────────────────────────────────────────────────────────
 def make_instagram_caption(title, desc, tags, etsy_url):
@@ -48,11 +240,10 @@ def make_instagram_caption(title, desc, tags, etsy_url):
     return f"{hook}\n\n✨ Get it instantly as a digital download!\n👇 Link in bio or search on Etsy: \"{title[:40]}\"\n\n{hashtags}"
 
 def make_pinterest_description(title, desc, tags, etsy_url):
-    sentences = [s.strip() for s in desc.replace("\n", " ").split(".") if s.strip()]
-    short_desc = ". ".join(sentences[:3]) + "." if sentences else desc[:200]
-    tag_list = [t.strip() for t in tags.split(",") if t.strip()]
-    keywords = " | ".join(tag_list[:5])
-    return f"{title}\n\n{short_desc}\n\n{keywords} | Instant Digital Download | Printable PDF\n\n🛒 Shop now → {etsy_url}"
+    normalized_desc, _ = _normalize_pinterest_description(
+        title, desc, tags, etsy_url, max_length=PINTEREST_DESCRIPTION_MAX_LENGTH
+    )
+    return normalized_desc
 
 def make_facebook_post(title, desc, tags, etsy_url):
     sentences = [s.strip() for s in desc.replace("\n", " ").split(".") if s.strip()]
@@ -66,10 +257,15 @@ def make_twitter_post(title, etsy_url):
     tweet = f"🆕 {short_title} — instant digital download! ✨\n\n🛒 {etsy_url}\n\n#printable #digitaldownload #etsyshop"
     return tweet[:280]
 
-def make_medium_intro(title, desc, tags, etsy_url):
-    tag_list = [t.strip() for t in tags.split(",") if t.strip()]
-    keywords_prose = ", ".join(tag_list[:5])
-    return f"# {title}\n\n{desc}\n\n---\n\n## Get It Now\n\nThis is an **instant digital download** — you'll receive the file immediately after purchase. No waiting, no shipping.\n\n👉 **[Get it on Etsy]({etsy_url})**\n\n---\n\n*Tags: {keywords_prose}*"
+def make_medium_intro(title, desc, tags, etsy_url, *, include_heading=True):
+    """Compatibility wrapper for the shared Medium article builder."""
+    return make_medium_research_article(
+        title,
+        desc,
+        tags,
+        etsy_url,
+        include_heading=include_heading,
+    )
 
 # ── Read Product Data ─────────────────────────────────────────────────────────
 def read_product_data(shop_id: str, row_num: int):
@@ -136,6 +332,383 @@ def read_product_data(shop_id: str, row_num: int):
 
 # ── Automation Handlers ───────────────────────────────────────────────────────
 
+async def _wait_for_confirmation(page, selectors, url_pattern=None, timeout=15000):
+    """Require a visible success signal or a platform-specific published URL."""
+    deadline = asyncio.get_running_loop().time() + timeout / 1000
+    while asyncio.get_running_loop().time() < deadline:
+        if url_pattern and re.search(url_pattern, page.url):
+            return True
+        for selector in selectors:
+            try:
+                locator = page.locator(selector).first
+                if await locator.count() and await locator.is_visible():
+                    return True
+            except Exception:
+                pass
+        await page.wait_for_timeout(350)
+    return False
+
+
+async def _is_locator_disabled(locator) -> bool:
+    try:
+        if await locator.is_disabled():
+            return True
+    except Exception:
+        pass
+
+    try:
+        aria_disabled = await locator.get_attribute("aria-disabled")
+        if str(aria_disabled).strip().lower() == "true":
+            return True
+    except Exception:
+        pass
+
+    try:
+        # Native boolean attributes are enabled by presence, including disabled="".
+        return await locator.get_attribute("disabled") is not None
+    except Exception:
+        return False
+
+
+async def _find_visible_locator(page, selectors):
+    for selector in selectors:
+        locator = page.locator(selector).first
+        if not await locator.count():
+            continue
+        if await locator.is_visible():
+            return locator
+    return None
+
+
+def _looks_like_pinterest_validation_message(text: str | None) -> str | None:
+    if not text:
+        return None
+    normalized = " ".join(text.replace("\n", " ").split()).strip().lower()
+    if not normalized:
+        return None
+    for keyword in PINTEREST_PUBLISH_ERROR_KEYWORDS:
+        if keyword in normalized:
+            return normalized
+    return None
+
+
+async def _read_pinterest_validation_text(page) -> str | None:
+    validation_selectors = [
+        '[role="alert"]',
+        '[role="status"]',
+        '[aria-live="polite"]',
+        '[aria-live="assertive"]',
+        '[data-test-id*="error" i]',
+    ]
+    for selector in validation_selectors:
+        locator = page.locator(selector).first
+        if not await locator.count() or not await locator.is_visible():
+            continue
+        text = (await locator.text_content()) or ""
+        maybe_error = _looks_like_pinterest_validation_message(text)
+        if maybe_error:
+            return text.strip()
+    return None
+
+
+def _extract_pin_url(url: str | None) -> str | None:
+    if not url:
+        return None
+
+    candidate = str(url).strip()
+    if not candidate:
+        return None
+    parsed_candidate = urlsplit(candidate)
+
+    if candidate.startswith("/") and re.match(PINTEREST_PUBLISH_URL_PATTERN, candidate):
+        return f"https://www.pinterest.com{parsed_candidate.path}"
+
+    if re.match(PINTEREST_PUBLISH_ABSOLUTE_URL_PATTERN, candidate):
+        normalized = f"{parsed_candidate.scheme}://{parsed_candidate.netloc}{parsed_candidate.path}"
+        return normalized
+
+    return None
+
+
+async def _read_pinterest_confirmation_pin_url(page) -> str | None:
+    pin_link_selectors = [
+        '[role="link"]:has-text("See your Pin")',
+        'a:has-text("See your Pin")',
+    ]
+    for selector in pin_link_selectors:
+        locator = page.locator(selector).first
+        if not await locator.count() or not await locator.is_visible():
+            continue
+
+        pin_href = (await locator.get_attribute("href")) or ""
+        extracted = _extract_pin_url(pin_href)
+        if extracted:
+            return extracted
+
+    return None
+
+
+async def _wait_for_pinterest_publish_result(page, *, timeout_ms: int = 20000, poll_ms: int = 350):
+    deadline = asyncio.get_running_loop().time() + timeout_ms / 1000
+    success_text = "You created a Pin!"
+    success_selectors = [
+        '[role="alert"]',
+        '[role="status"]',
+        '[aria-live="polite"]',
+        '[aria-live="assertive"]',
+    ]
+    while asyncio.get_running_loop().time() < deadline:
+        page_pin_url = _extract_pin_url(page.url)
+        if page_pin_url:
+            return True, page_pin_url
+
+        for selector in success_selectors:
+            try:
+                locator = page.locator(selector).first
+                if await locator.count() and await locator.is_visible():
+                    raw_text = (await locator.text_content()) or ""
+                    normalized = _normalize_text(raw_text).lower()
+                    if normalized == success_text.lower():
+                        return True, _extract_pin_url(page.url)
+            except Exception:
+                pass
+
+        pin_url = await _read_pinterest_confirmation_pin_url(page)
+        if pin_url:
+            return True, pin_url
+
+        validation_text = await _read_pinterest_validation_text(page)
+        if validation_text:
+            return False, validation_text
+        await page.wait_for_timeout(poll_ms)
+    return False, None
+
+
+async def _fill_pinterest_title_with_dom_events(page, title: str) -> bool:
+    """Fill the title without interpolating user data into JavaScript source."""
+    script = """
+        (value) => {
+            const element = document.querySelector(
+                '[data-testid*="title" i] input, '
+                + 'input[placeholder*="title" i], '
+                + 'textarea[placeholder*="title" i], '
+                + 'input[type="text"]'
+            );
+            if (!element) return false;
+
+            const prototype = element instanceof HTMLTextAreaElement
+                ? HTMLTextAreaElement.prototype
+                : HTMLInputElement.prototype;
+            const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+            if (!setter) return false;
+
+            setter.call(element, value);
+            element.dispatchEvent(new Event("input", { bubbles: true }));
+            element.dispatchEvent(new Event("change", { bubbles: true }));
+            return element.value === value;
+        }
+    """
+    try:
+        return bool(await page.evaluate(script, title))
+    except Exception:
+        return False
+
+
+async def _pinterest_board_needs_selection(trigger) -> bool:
+    try:
+        selected = await trigger.get_attribute("data-selected")
+        if selected is not None:
+            return str(selected).strip().lower() in ("false", "0")
+    except Exception:
+        pass
+
+    labels = []
+    for attribute in ("aria-label", "title"):
+        try:
+            labels.append((await trigger.get_attribute(attribute)) or "")
+        except Exception:
+            pass
+    try:
+        labels.append((await trigger.text_content()) or "")
+    except Exception:
+        pass
+
+    selection_prompts = {
+        "select",
+        "select a board",
+        "select board",
+        "choose a board",
+        "choose board",
+        "chọn bảng",
+    }
+    return any(
+        " ".join(label.split()).strip().lower() in selection_prompts
+        for label in labels
+    )
+
+
+async def _select_default_pinterest_board_if_needed(page) -> bool:
+    """Select the first board only when Pinterest explicitly requests one."""
+    trigger_selectors = [
+        '[data-test-id="board-dropdown-select-button"]',
+        '[data-testid="board-dropdown-select-button"]',
+        '[data-test-id="board-select"]',
+        '[data-testid="board-select"]',
+        '[role="button"][aria-label="Select board"]',
+        '[role="button"][aria-label="Select a board"]',
+        'button[aria-label="Select board"]',
+        'button[aria-label="Select a board"]',
+    ]
+    trigger = await _find_visible_locator(page, trigger_selectors)
+    if trigger is None or not await _pinterest_board_needs_selection(trigger):
+        return False
+
+    print("▶ Đang mở danh sách bảng (Board dropdown)...")
+    await trigger.click()
+    await page.wait_for_timeout(1500)
+
+    board_option = await _find_visible_locator(
+        page,
+        [
+            '[data-test-id="board-row"]',
+            '[data-testid="board-row"]',
+            '[role="option"]',
+        ],
+    )
+    if board_option is None:
+        return False
+
+    board_name = ((await board_option.text_content()) or "").strip()
+    if board_name:
+        print(f"👉 Chọn bảng đầu tiên: '{board_name.splitlines()[0]}'")
+    await board_option.click()
+    await page.wait_for_timeout(1500)
+    return True
+
+
+async def _click_pinterest_publish(page):
+    publish_selectors = [
+        '[data-test-id="board-dropdown-save-button"]',
+        '[data-testid="board-dropdown-save-button"]',
+        'div[role="button"]:has-text("Publish")',
+        'div[role="button"]:has-text("Đăng")',
+        'div[role="button"]:has-text("Lưu")',
+        '[data-test-id*="save-button" i]',
+        '[data-testid*="save-button" i]',
+        'button[aria-label="Publish"]',
+        'button:has-text("Publish")',
+        '[data-test-id*="publish" i] button',
+        '[data-testid*="publish" i] button',
+        'button[type="submit"]',
+    ]
+
+    publish_btn = await _find_visible_locator(page, publish_selectors)
+    if publish_btn is None:
+        return False, "❌ Không tìm thấy nút Publish trên Pinterest."
+
+    if await _is_locator_disabled(publish_btn):
+        validation_text = await _read_pinterest_validation_text(page)
+        if validation_text:
+            return False, validation_text
+        return False, "Nút Publish trên Pinterest đang bị vô hiệu hóa."
+
+    await publish_btn.scroll_into_view_if_needed()
+    await page.wait_for_timeout(500)
+    await publish_btn.click()
+    return await _wait_for_pinterest_publish_result(page)
+
+
+async def post_instagram(page, p):
+    print("▶ Điều hướng tới Instagram...")
+    await page.goto(SOCIAL_URLS["instagram"], wait_until="domcontentloaded")
+    await page.wait_for_timeout(3500)
+    if "accounts/login" in page.url or await page.locator('input[name="username"]').count():
+        print("❌ Chưa đăng nhập Instagram trong session social của shop.")
+        return False
+    if not p["cover_image"]:
+        print("❌ Không tìm thấy ảnh cover để đăng Instagram.")
+        return False
+
+    create_selectors = [
+        '[aria-label="New post"]',
+        '[aria-label="Bài viết mới"]',
+        'a[href="#"]:has-text("Create")',
+        'span:has-text("Create")',
+        'span:has-text("Tạo")',
+    ]
+    opened = False
+    for selector in create_selectors:
+        try:
+            control = page.locator(selector).first
+            if await control.count() and await control.is_visible():
+                await control.click()
+                opened = True
+                break
+        except Exception:
+            pass
+    if not opened:
+        print("❌ Không tìm thấy nút tạo bài viết Instagram.")
+        return False
+
+    file_input = page.locator('input[type="file"][accept*="image"]').first
+    try:
+        await file_input.wait_for(state="attached", timeout=10000)
+        await file_input.set_input_files(p["cover_image"])
+    except Exception as exc:
+        print(f"❌ Không tải được ảnh lên Instagram: {exc}")
+        return False
+
+    for _ in range(2):
+        await page.wait_for_timeout(1800)
+        next_button = page.locator(
+            'div[role="button"]:has-text("Next"), '
+            'div[role="button"]:has-text("Tiếp"), '
+            'button:has-text("Next"), button:has-text("Tiếp")'
+        ).first
+        if not await next_button.count() or not await next_button.is_visible():
+            print("❌ Không tìm thấy bước Tiếp theo của Instagram.")
+            return False
+        await next_button.click()
+
+    caption = make_instagram_caption(
+        p["title"], p["desc"], p["tags"], p["etsy_url"]
+    )
+    caption_box = page.locator(
+        'textarea[aria-label*="caption" i], '
+        'textarea[aria-label*="chú thích" i], '
+        'div[contenteditable="true"][role="textbox"]'
+    ).first
+    try:
+        await caption_box.wait_for(state="visible", timeout=10000)
+        await caption_box.fill(caption)
+    except Exception as exc:
+        print(f"❌ Không điền được caption Instagram: {exc}")
+        return False
+
+    share = page.locator(
+        'div[role="button"]:has-text("Share"), '
+        'div[role="button"]:has-text("Chia sẻ"), '
+        'button:has-text("Share"), button:has-text("Chia sẻ")'
+    ).first
+    if not await share.count() or not await share.is_visible():
+        print("❌ Không tìm thấy nút Share Instagram.")
+        return False
+    await share.click()
+    confirmed = await _wait_for_confirmation(
+        page,
+        [
+            'text="Your post has been shared."',
+            'text="Đã chia sẻ bài viết của bạn."',
+            '[role="dialog"]:has-text("Post shared")',
+        ],
+        timeout=25000,
+    )
+    if not confirmed:
+        print("❌ Instagram chưa trả về xác nhận đã đăng; không ghi nhận thành công.")
+        return False
+    print("✅ Instagram xác nhận bài viết đã được chia sẻ.")
+    return True
+
 async def post_pinterest(page, p):
     print("▶ Điều hướng tới Pinterest Pin Builder...")
     await page.goto("https://www.pinterest.com/pin-builder/", wait_until="domcontentloaded")
@@ -194,23 +767,50 @@ async def post_pinterest(page, p):
     
     # 2. Fill Title
     print("▶ Điền tiêu đề...")
+    normalized_title = _normalize_pinterest_title(p["title"])
+    if normalized_title != p["title"]:
+        print(
+            f"⚠ Tiêu đề Pinterest vượt quá {PINTEREST_TITLE_MAX_LENGTH} ký tự, "
+            f"đã cắt ngắn từ {len(p['title'])} xuống {len(normalized_title)} ký tự."
+        )
     title_filled = False
     for sel in ['[data-testid*="title" i] input', 'input[placeholder*="title" i]', 'textarea[placeholder*="title" i]', 'input[type="text"]']:
         try:
             el = page.locator(sel).first
             if await el.count() > 0 and await el.is_visible():
                 await el.click()
-                await el.fill(p["title"])
+                await el.fill(normalized_title)
                 title_filled = True
                 break
         except: pass
     if not title_filled:
-        print("⚠ Không điền được tiêu đề bằng cách thường, thử ép kiểu JavaScript...")
-        await page.evaluate(f"document.querySelector('input[type=\"text\"]').value = '{p['title']}'")
+        print("⚠ Không điền được tiêu đề bằng cách thường, thử DOM fallback an toàn...")
+        title_filled = await _fill_pinterest_title_with_dom_events(
+            page, normalized_title
+        )
+    if not title_filled:
+        print("❌ Không thể điền tiêu đề Pinterest; dừng trước khi đăng.")
+        return False
         
     # 3. Fill Description
     print("▶ Điền mô tả...")
-    desc_text = make_pinterest_description(p["title"], p["desc"], p["tags"], p["etsy_url"])
+    destination_link = p.get("shop_etsy_url") or p["etsy_url"]
+    desc_text, was_desc_truncated = _normalize_pinterest_description(
+        p["title"],
+        p["desc"],
+        p["tags"],
+        destination_link,
+        max_length=PINTEREST_DESCRIPTION_MAX_LENGTH,
+    )
+    if was_desc_truncated:
+        print(
+            f"⚠ Mô tả Pinterest vượt quá {PINTEREST_DESCRIPTION_MAX_LENGTH} "
+            "ký tự, đã tự động rút ngắn."
+        )
+
+    if len(desc_text) > PINTEREST_DESCRIPTION_MAX_LENGTH:
+        print("⚠ Mô tả Pinterest vẫn vượt quá giới hạn, bỏ qua bước điền mô tả.")
+        return False
     desc_filled = False
     for sel in ['[data-testid*="description" i] [contenteditable="true"]', '[data-testid*="description" i] textarea', 'textarea[placeholder*="about" i]', '[contenteditable="true"]']:
         try:
@@ -235,14 +835,13 @@ async def post_pinterest(page, p):
                 el = page.locator(sel).first
                 if await el.count() > 0 and await el.is_visible():
                     await el.click()
-                    await el.fill(p["title"][:500])
+                    await el.fill(normalized_title[:500])
                     alt_filled = True
                     break
     except Exception as alt_err:
         print(f"⚠ Lỗi khi điền Alt Text: {alt_err}")
 
     # 5. Fill Destination Link
-    destination_link = p.get("shop_etsy_url") or p["etsy_url"]
     print(f"▶ Điền Destination Link (Shop Etsy): {destination_link}...")
     link_filled = False
     link_selectors = [
@@ -267,65 +866,40 @@ async def post_pinterest(page, p):
     
     # 6. Select Board & Publish
     print("▶ Chọn bảng và Đăng...")
-    published = False
     
-    # Thử tìm và click Board Dropdown để chọn bảng nếu có
+    # Chỉ chọn board khi Pinterest hiển thị đúng trigger "Select board".
+    # Nếu đã có board, helper không thay đổi lựa chọn hiện tại.
     try:
-        dropdown = page.locator('[data-test-id*="board-dropdown"], [data-testid*="board-dropdown"], [data-test-id*="board-select"], [role="button"]:has-text("Select"), [aria-label*="Select board"]').first
-        if await dropdown.count() > 0 and await dropdown.is_visible():
-            print("▶ Đang mở danh sách bảng (Board dropdown)...")
-            await dropdown.click(force=True)
-            await page.wait_for_timeout(1500)
-            
-            # Chọn board đầu tiên
-            board_opt = page.locator('[data-test-id*="board-row"], [data-testid*="board-row"], [role="option"]').first
-            if await board_opt.count() > 0:
-                board_name = await board_opt.inner_text()
-                print(f"👉 Chọn bảng đầu tiên: '{board_name.splitlines()[0]}'")
-                await board_opt.click(force=True)
-                await page.wait_for_timeout(1500)
+        await _select_default_pinterest_board_if_needed(page)
     except Exception as board_err:
         print(f"  ⚠ Lỗi khi chọn bảng (bỏ qua và tự động dùng bảng mặc định): {board_err}")
 
-    # Lọc qua các selector của nút Publish
-    publish_selectors = [
-        '[data-test-id="board-dropdown-save-button"]:visible',
-        '[data-testid="board-dropdown-save-button"]:visible',
-        'div[role="button"]:has-text("Publish"):visible',
-        'div[role="button"]:has-text("Đăng"):visible',
-        'div[role="button"]:has-text("Lưu"):visible',
-        '[data-test-id*="save-button" i]:visible',
-        '[data-testid*="save-button" i]:visible',
-        'button[aria-label="Publish"]:visible',
-        'button:has-text("Publish"):visible',
-        'clg-button:has-text("Publish"):visible',
-        '[data-test-id*="publish" i] button:visible',
-        '[data-testid*="publish" i] button:visible',
-        'button[type="submit"]:visible'
-    ]
-
-    for btn_sel in publish_selectors:
-        try:
-            btn = page.locator(btn_sel).first
-            if await btn.count() > 0:
-                print(f"👉 Tìm thấy nút Publish với selector: {btn_sel}")
-                await btn.scroll_into_view_if_needed()
-                await page.wait_for_timeout(500)
-                await btn.click(force=True)
-                
-                print("⏳ Đang lưu Pin...")
-                await page.wait_for_timeout(8000)
-                published = True
-                break
-        except Exception as e:
-            print(f"⚠ Thử click Publish lỗi: {e}")
-            
-    if published:
-        print("✅ Đã đăng Pin lên Pinterest thành công!")
-        return True
+    publish_ok, publish_result = await _click_pinterest_publish(page)
+    if publish_ok:
+        if publish_result:
+            print(f"✅ Pinterest đã xác nhận Pin được xuất bản: {publish_result}")
+        else:
+            print("✅ Pinterest đã xác nhận Pin được xuất bản.")
+        return True, publish_result
+    if publish_result:
+        print(f"❌ {publish_result}")
     else:
-        print("❌ Không tìm thấy nút Publish trên Pinterest.")
-        return False
+        print("❌ Pinterest chưa trả về xác nhận đã xuất bản.")
+
+    return False, publish_result
+
+
+async def _dismiss_x_overlays(page):
+    """Wait for and dismiss X/Twitter's React Native Web overlay layers that intercept clicks."""
+    overlay_sel = ".r-1p0dtai.r-1d2f490.r-1xcajam.r-zchlnj.r-ipm5af"
+    try:
+        await page.wait_for_selector(overlay_sel, state="hidden", timeout=6000)
+    except Exception:
+        # Overlay may persist — force-remove via JS so clicks land
+        await page.evaluate(
+            """(sel) => document.querySelectorAll(sel).forEach(el => el.remove())""",
+            overlay_sel,
+        )
 
 
 async def post_twitter(page, p):
@@ -348,9 +922,10 @@ async def post_twitter(page, p):
     tweet_text = make_twitter_post(p["title"], p["etsy_url"])
     print(f"▶ Điền nội dung Tweet ({len(tweet_text)} ký tự)...")
     
+    await _dismiss_x_overlays(page)
     textbox = page.locator('[data-testid="tweetTextarea_0"], .public-DraftEditor-content, [role="textbox"]').first
     await textbox.wait_for(state="visible", timeout=10000)
-    await textbox.click()
+    await textbox.click(force=True)
     await page.wait_for_timeout(500)
     await textbox.fill(tweet_text)
     await page.wait_for_timeout(1000)
@@ -365,15 +940,92 @@ async def post_twitter(page, p):
             
     # 3. Click Post Button
     print("▶ Đang click nút Đăng bài (Post)...")
+    await _dismiss_x_overlays(page)
     post_btn = page.locator('[data-testid="tweetButton"], [data-testid="tweetButtonInline"], button:has-text("Post"), button:has-text("Tweet")').first
     if await post_btn.count() > 0 and await post_btn.is_visible():
-        await post_btn.click()
-        await page.wait_for_timeout(4000)
-        print("✅ Đã đăng bài lên Twitter/X thành công!")
-        return True
+        await post_btn.click(force=True)
+        confirmed = await _wait_for_confirmation(
+            page,
+            [
+                '[data-testid="toast"]:has-text("sent")',
+                '[role="alert"]:has-text("sent")',
+                '[role="alert"]:has-text("đã được gửi")',
+            ],
+            url_pattern=r"/status/\d+",
+            timeout=18000,
+        )
+        if confirmed:
+            print("✅ X/Twitter đã xác nhận bài viết được gửi.")
+            return True
+        print("❌ X/Twitter chưa trả về xác nhận đã đăng.")
+        return False
     else:
         print("❌ Không tìm thấy nút Post/Tweet.")
         return False
+
+
+MEDIUM_TITLE_SELECTOR = (
+    'h3[placeholder="Title"], h3[class*="title"], h3[id*="title"]'
+)
+MEDIUM_BODY_SELECTORS = (
+    'p[placeholder*="Tell your story" i]',
+    '[data-testid="story-body"]',
+    '[aria-label*="story" i][contenteditable="true"]',
+    'section[class*="story" i] [contenteditable="true"]',
+)
+
+
+async def _locators_are_distinct(first, second) -> bool:
+    """Return false when editor identity cannot be proven."""
+    try:
+        first_handle = await first.element_handle()
+        second_handle = await second.element_handle()
+        if first_handle is None or second_handle is None:
+            return False
+        return bool(
+            await first_handle.evaluate(
+                "(element, other) => element !== other", second_handle
+            )
+        )
+    except Exception:
+        return False
+
+
+async def _resolve_medium_editors(page):
+    """Resolve distinct Medium title/body editors, failing closed on ambiguity."""
+    title_el = page.locator(MEDIUM_TITLE_SELECTOR).first
+    if await title_el.count() > 0:
+        for selector in MEDIUM_BODY_SELECTORS:
+            body_el = page.locator(selector).first
+            if await body_el.count() > 0 and await body_el.is_visible():
+                if await _locators_are_distinct(title_el, body_el):
+                    return title_el, body_el
+        return None, None
+
+    editable_nodes = page.locator('[contenteditable="true"]')
+    if await editable_nodes.count() != 2:
+        return None, None
+    fallback_title = editable_nodes.nth(0)
+    fallback_body = editable_nodes.nth(1)
+    if not await _locators_are_distinct(fallback_title, fallback_body):
+        return None, None
+    return fallback_title, fallback_body
+
+
+async def _read_medium_editor_text(locator) -> str:
+    last_value = ""
+    for reader_name in ("inner_text", "text_content", "input_value"):
+        reader = getattr(locator, reader_name, None)
+        if not callable(reader):
+            continue
+        try:
+            value = await reader()
+        except Exception:
+            continue
+        last_value = str(value or "")
+        if last_value.strip():
+            break
+    return re.sub(r"\s+", " ", last_value).strip()
 
 
 async def post_medium(page, p):
@@ -387,29 +1039,49 @@ async def post_medium(page, p):
         
     print("✓ Đã đăng nhập Medium.")
     
-    # 1. Fill Title
+    # 1. Resolve distinct title/body editors without guessing an arbitrary node.
+    title_el, body_el = await _resolve_medium_editors(page)
+    if title_el is None or body_el is None:
+        print("❌ Không xác định được editor tiêu đề/nội dung Medium an toàn; dừng trước khi đăng.")
+        return False
+
+    article_title = make_medium_article_title(p["title"], p["desc"], p["tags"])
+    body_markdown = make_medium_intro(
+        p["title"],
+        p["desc"],
+        p["tags"],
+        p["etsy_url"],
+        include_heading=False,
+    )
+    body_text = render_medium_plain_text(body_markdown)
+
+    # 2. Fill Title
     print("▶ Điền tiêu đề Medium...")
-    title_el = page.locator('h3[placeholder="Title"], h3[class*="title"], h3[id*="title"], [contenteditable="true"]').first
     await title_el.wait_for(state="visible", timeout=10000)
     await title_el.click()
-    await title_el.fill(p["title"])
+    await title_el.fill(article_title)
     await page.keyboard.press("Enter")
     await page.wait_for_timeout(1000)
     
-    # 2. Fill Body
-    print("▶ Điền mô tả sản phẩm...")
-    body_text = make_medium_intro(p["title"], p["desc"], p["tags"], p["etsy_url"])
-    # Paste body text cleanly
-    body_el = page.locator('p[placeholder*="Tell your story" i], section[class*="story" i], [contenteditable="true"]').nth(1)
-    if await body_el.count() > 0:
-        await body_el.click()
-        await body_el.fill(body_text)
-    else:
-        # Fallback: type
-        await page.keyboard.type(body_text)
+    # 3. Fill Body as plain text so Medium does not interpret raw Markdown as
+    # malformed editor content.
+    print("▶ Điền nội dung bài viết...")
+    await body_el.click()
+    await body_el.fill(body_text)
     await page.wait_for_timeout(2000)
+
+    # Fail closed if either editor did not retain the expected content. Do this
+    # before opening the Publish menu.
+    title_readback = await _read_medium_editor_text(title_el)
+    body_readback = await _read_medium_editor_text(body_el)
+    required_body_markers = ("Abstract", "Research Question", "Practical Method")
+    if article_title not in title_readback or not all(
+        marker in body_readback for marker in required_body_markers
+    ):
+        print("❌ Medium không giữ đúng tiêu đề/nội dung bài viết; dừng trước khi Publish.")
+        return False
     
-    # 3. Publish
+    # 4. Publish
     print("▶ Click Publish menu...")
     pub_menu = page.locator('button:has-text("Publish"), [data-action="publish-overlay"]').first
     if await pub_menu.count() > 0:
@@ -420,9 +1092,20 @@ async def post_medium(page, p):
         pub_now = page.locator('button:has-text("Publish now"), button[class*="publish"]').first
         if await pub_now.count() > 0:
             await pub_now.click()
-            await page.wait_for_timeout(4000)
-            print("✅ Đã đăng bài lên Medium thành công!")
-            return True
+            confirmed = await _wait_for_confirmation(
+                page,
+                [
+                    'text="Your story is published"',
+                    '[role="alert"]:has-text("published")',
+                ],
+                url_pattern=r"medium\.com/(?!new-story).+",
+                timeout=20000,
+            )
+            if confirmed:
+                print("✅ Medium đã xác nhận bài viết được xuất bản.")
+                return True
+            print("❌ Medium chưa trả về xác nhận đã xuất bản.")
+            return False
             
     print("❌ Không tự động click được nút Publish trên Medium.")
     return False
@@ -536,10 +1219,22 @@ async def post_facebook(page, p):
         except: pass
         
     if posted:
-        print("⏳ Đang đợi Facebook hoàn tất đăng tải...")
-        await page.wait_for_timeout(6000)
-        print("✅ Đã đăng bài lên Facebook Fanpage thành công!")
-        return True
+        print("⏳ Đang đợi Facebook xác nhận đăng tải...")
+        confirmed = await _wait_for_confirmation(
+            page,
+            [
+                '[role="alert"]:has-text("Your post is now published")',
+                '[role="alert"]:has-text("Bài viết của bạn hiện đã được đăng")',
+                '[role="status"]:has-text("published")',
+                '[role="status"]:has-text("đã đăng")',
+            ],
+            timeout=25000,
+        )
+        if confirmed:
+            print("✅ Facebook đã xác nhận bài viết được đăng.")
+            return True
+        print("❌ Facebook chưa trả về xác nhận đã đăng; không ghi nhận thành công.")
+        return False
     else:
         print("❌ Không tìm thấy nút Đăng (Post) trên Facebook.")
         return False
@@ -650,10 +1345,21 @@ async def post_reddit(page, p, subreddit="u_SimonJay0805"):
         except: pass
         
     if posted:
-        print("⏳ Đang đợi đăng bài Reddit...")
-        await page.wait_for_timeout(6000)
-        print("✅ Đã đăng bài lên Reddit thành công!")
-        return True
+        print("⏳ Đang đợi Reddit xác nhận đăng bài...")
+        confirmed = await _wait_for_confirmation(
+            page,
+            [
+                '[role="alert"]:has-text("successfully")',
+                '[role="status"]:has-text("posted")',
+            ],
+            url_pattern=r"/comments/[a-z0-9]+/",
+            timeout=20000,
+        )
+        if confirmed:
+            print("✅ Reddit đã xác nhận bài viết được đăng.")
+            return True
+        print("❌ Reddit chưa trả về xác nhận đã đăng.")
+        return False
     else:
         print("❌ Không tìm thấy nút Post trên Reddit.")
         return False
@@ -678,41 +1384,54 @@ async def main():
     print(f"  📌 Folder: {p['folder']} | Title: {p['title'][:40]}...")
     print(f"{'='*60}\n")
     
-    BROWSER_DIR.mkdir(exist_ok=True)
-    # Xoá singleton lock files Chrome
-    for lf in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
-        try: (BROWSER_DIR / lf).unlink(missing_ok=True)
-        except: pass
+    try:
+        session = load_social_session(BASE_DIR, args.shop)
+    except (OSError, ValueError, KeyError) as exc:
+        print(f"❌ Không đọc được session social riêng của shop: {exc}")
+        sys.exit(1)
+
+    print(
+        f"🌐 Session riêng: port {session.debug_port} | "
+        f"profile {session.profile_dir}"
+    )
+    if not is_session_ready(session):
+        print("ℹ️ Chrome social của shop chưa mở. Đang mở đúng profile riêng...")
+        try:
+            ready = await asyncio.to_thread(
+                open_social_browser, session, args.platform
+            )
+        except (FileNotFoundError, OSError, ValueError) as exc:
+            print(f"❌ Không mở được Chrome social: {exc}")
+            sys.exit(1)
+        if not ready:
+            print("❌ Chrome social chưa sẵn sàng trên đúng cổng debug của shop.")
+            sys.exit(1)
         
     async with async_playwright() as pw:
-        browser = None
-        ctx = None
         try:
-            print("⏳ Đang thử kết nối tới Chrome đang mở (cổng 9222)...")
-            browser = await pw.chromium.connect_over_cdp("http://127.0.0.1:9222")
-            ctx = browser.contexts[0]
-            print("✅ Đã kết nối thành công tới Chrome đang mở!")
-        except Exception:
-            print("ℹ️ Chrome debug cổng 9222 không mở. Đang khởi chạy Chrome session mới...")
-            launch_kw = dict(
-                user_data_dir=str(BROWSER_DIR),
-                headless=False,
-                args=["--start-maximized", "--disable-blink-features=AutomationControlled"],
-                viewport=None,
-            )
-            if CHROME_PATH.exists():
-                launch_kw["executable_path"] = str(CHROME_PATH)
-                print("🌐 Dùng Google Chrome thật")
-            else:
-                print("🌐 Dùng Chromium")
-            ctx = await pw.chromium.launch_persistent_context(**launch_kw)
+            print(f"⏳ Kết nối Chrome social của shop tại cổng {session.debug_port}...")
+            browser = await pw.chromium.connect_over_cdp(session.cdp_url)
+        except Exception as exc:
+            print(f"❌ Không kết nối được đúng Chrome social của shop: {exc}")
+            sys.exit(1)
+        if not browser.contexts:
+            print("❌ Chrome social không có browser context.")
+            sys.exit(1)
+        ctx = browser.contexts[0]
 
         page = ctx.pages[0] if ctx.pages else await ctx.new_page()
         
         success = False
+        confirmation_detail = ""
         try:
-            if args.platform == "pinterest":
-                success = await post_pinterest(page, p)
+            if args.platform == "instagram":
+                success = await post_instagram(page, p)
+            elif args.platform == "pinterest":
+                pinterest_result = await post_pinterest(page, p)
+                if isinstance(pinterest_result, tuple):
+                    success, confirmation_detail = pinterest_result
+                else:
+                    success = bool(pinterest_result)
             elif args.platform == "twitter":
                 success = await post_twitter(page, p)
             elif args.platform == "medium":
@@ -722,8 +1441,7 @@ async def main():
             elif args.platform == "reddit":
                 success = await post_reddit(page, p, args.subreddit)
             else:
-                print(f"❌ Nền tảng '{args.platform}' tự động đăng sẽ được cập nhật trong phiên bản tiếp theo.")
-                print(f"👉 Vui lòng sử dụng nút 'Copy Caption' để đăng thủ công lên {args.platform.upper()}!")
+                print(f"❌ Nền tảng '{args.platform}' không được hỗ trợ.")
                 success = False
         except Exception as e:
             print(f"❌ Xảy ra lỗi ngoài ý muốn: {e}")
@@ -731,9 +1449,33 @@ async def main():
             traceback.print_exc()
             success = False
         finally:
-            await ctx.close()
+            # This Chrome is the user's persistent login browser. Leaving the
+            # CDP connection must not close its context or delete lock files.
+            pass
             
     if success:
+        confirmation_url = (
+            confirmation_detail
+            if str(confirmation_detail).startswith(("http://", "https://"))
+            else ""
+        )
+        try:
+            record_social_post(
+                BASE_DIR,
+                args.shop,
+                p["folder"],
+                args.row,
+                args.platform,
+                url=confirmation_url,
+                detail=confirmation_detail
+                or f"{args.platform.upper()} đã xác nhận xuất bản",
+            )
+            print("🧾 Đã lưu trạng thái social theo shop, sản phẩm và kênh.")
+        except Exception as record_error:
+            print(
+                "⚠ Đã đăng thành công nhưng không lưu được trạng thái social: "
+                f"{record_error}"
+            )
         print(f"\n🎉 [HOÀN TẤT] Tự động đăng {args.platform.upper()} thành công!")
         sys.exit(0)
     else:

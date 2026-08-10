@@ -1,0 +1,359 @@
+{
+  "schema": "etsy-image-plan-v1",
+  "shop_key": "temply",
+  "display_name": "Temply Studio",
+  "generated_at": "2026-08-05T05:17:14.680118+00:00",
+  "source": "/Users/aaronnguyen/Downloads/2027-Bundle-Digital-Planner-Goodnotes-153024210/AMETHYST/GOOGLE/(AMETHYST) 2027 PLANNER MONDAY - GOOGLE CALENDAR.pdf",
+  "profile": {
+    "visual_direction": "refined editorial product presentation with generous whitespace, quiet contrast, tactile paper or device context, and source-led color",
+    "typography_direction": "high-legibility serif or restrained sans display type with one subtle secondary accent; never decorative script for essential facts",
+    "mockup_direction": "clean desk, tablet, paper, or studio object mockups with soft natural light and believable scale",
+    "watermark_text": "TEMPLY STUDIO",
+    "logo_anchor": "top-right"
+  },
+  "generation_provenance": {
+    "tool_mode": "built-in-imagegen",
+    "canva_used": false,
+    "art_direction_id": "temply-amethyst-listing-graphic-v2",
+    "art_direction_summary": "A source-led Etsy listing gallery for Temply Studio: exact planner pages dominate clean editorial information graphics, with a quiet generated ivory-and-amethyst paper background and no lifestyle props.",
+    "concept_board": {
+      "hero": "One large exact January 2027 monthly page is the thumbnail subject, with short digital-download disclosure.",
+      "palette": "Warm ivory, muted sage, pale amethyst, mauve, charcoal, and restrained paper texture.",
+      "mockup": "No photographic device mockups in the listing graphics; the PDF pages are shown as clean framed source-page previews.",
+      "gallery_rhythm": "Hero, overview, section map, monthly, daily, wellness, weekly, navigation, extras, and thank-you; each slot answers one buyer question with source evidence.",
+      "iconography": "Small rounded labels and page-count markers only; no invented app icons or compatibility symbols."
+    },
+    "source_fingerprint": "31f4a6efd40f312a77df6d3ebb2bdd43ae33789d6a64c0b2fb7874268c8e5cd1"
+  },
+  "plan": [
+    {
+      "slot": "01",
+      "output": "01-hero.png",
+      "prompt": "Use the generated Temply ivory-amethyst paper background as a quiet composition foundation. Build a square Etsy listing graphic with one large exact PDF page-021 monthly calendar as the product subject; add only deterministic typography and the disclosures DIGITAL DOWNLOAD and NO PHYSICAL ITEM. No lifestyle props, no device, no redrawn planner content.",
+      "buyer_question": "What is the product at a glance?",
+      "source_ref": "PDF page 21 rendered-final-144/page-021.png; January 2027 monthly calendar page.",
+      "composition": "One dominant framed source page centered below a short title block; product page fills most of the canvas.",
+      "scene": "Flat ivory editorial graphic with a subtle amethyst paper texture, no objects.",
+      "factual_claim": "Digital download; January 2027 monthly calendar preview; Monday-start labeling follows the supplied filename and visible page.",
+      "decorative_elements": [
+        "framed source page",
+        "short factual label",
+        "digital-download badge"
+      ],
+      "claim_evidence": [
+        "Source page 21 rendered locally from the inspected PDF.",
+        "Digital download and no-physical-item disclosures are listing information."
+      ],
+      "overlay_text": [
+        "DIGITAL DOWNLOAD",
+        "NO PHYSICAL ITEM"
+      ],
+      "alt_text": "Temply Studio Amethyst 2027 digital planner listing hero showing the January 2027 monthly calendar page.",
+      "file_slot": "01"
+    },
+    {
+      "slot": "02",
+      "output": "02-format-overview.png",
+      "prompt": "Use the same generated Temply flat paper foundation. Create a clean four-card Etsy overview graphic using the exact PDF pages 21, 30, 35, and 28, labeled Monthly, Weekly, Daily, and Wellness. Keep each page as a large readable source preview; no tablet, props, or AI-generated planner content.",
+      "buyer_question": "What core pages are included?",
+      "source_ref": "PDF pages 21, 30, 35, and 28 rendered-final-144; monthly, weekly, daily, and habit/wellness previews.",
+      "composition": "Disciplined four-card editorial grid with large source pages and short labels.",
+      "scene": "Flat ivory paper graphic with sage and mauve accents.",
+      "factual_claim": "The gallery shows exact monthly, weekly, daily, and wellness source-page previews.",
+      "decorative_elements": [
+        "four framed source pages",
+        "section labels",
+        "editorial grid"
+      ],
+      "claim_evidence": [
+        "Source pages 21, 30, 35, and 28 rendered locally from the inspected PDF."
+      ],
+      "alt_text": "Temply Studio digital planner overview with exact monthly, weekly, daily, and wellness page previews.",
+      "file_slot": "02"
+    },
+    {
+      "slot": "03",
+      "output": "03-toolkit.png",
+      "prompt": "Use the generated Temply flat paper foundation. Create a source-led section map with exact PDF pages 26, 28, 740, and 811 labeled Goals, Habits and Hydration, Recipes, and Projects. Use clean cards and short labels; no lifestyle scene, device, or invented feature copy.",
+      "buyer_question": "What planning sections are inside?",
+      "source_ref": "PDF pages 26, 28, 740, and 811 rendered-final-144; goals, wellness, recipes, and projects previews.",
+      "composition": "Four equal source-page cards in a calm editorial grid.",
+      "scene": "Flat ivory paper graphic with muted sage, amethyst, and mauve labels.",
+      "factual_claim": "The source PDF includes goals, habits/hydration, recipes, and projects pages.",
+      "decorative_elements": [
+        "four framed source pages",
+        "section labels",
+        "sage and mauve accents"
+      ],
+      "claim_evidence": [
+        "Source pages 26, 28, 740, and 811 rendered locally from the inspected PDF."
+      ],
+      "alt_text": "Temply Studio planner sections showing goals, habits and hydration, recipes, and projects pages.",
+      "file_slot": "03"
+    },
+    {
+      "slot": "04",
+      "output": "04-monthly-view.png",
+      "prompt": "Use the generated Temply flat paper foundation. Create a product-proof graphic with the exact PDF page 21 enlarged as the dominant monthly overview preview, framed cleanly with one short January 2027 label. No props, device, or decorative lifestyle photography.",
+      "buyer_question": "Can I see the monthly layout clearly?",
+      "source_ref": "PDF page 21 rendered-final-144/page-021.png; January 2027 monthly overview.",
+      "composition": "One large framed page with generous margins and a small page label.",
+      "scene": "Quiet ivory editorial information graphic.",
+      "factual_claim": "January 2027 monthly calendar page preview.",
+      "decorative_elements": [
+        "one dominant framed source page",
+        "January 2027 label",
+        "editorial margin"
+      ],
+      "claim_evidence": [
+        "Source page 21 rendered locally from the inspected PDF."
+      ],
+      "alt_text": "Large exact January 2027 monthly calendar page preview from the Temply Studio digital planner.",
+      "file_slot": "04"
+    },
+    {
+      "slot": "05",
+      "output": "05-daily-page.png",
+      "prompt": "Use the generated Temply flat paper foundation. Create a product-proof graphic with exact PDF page 35 enlarged as the dominant daily planning preview, framed cleanly with a short Daily page label. No tablet, desk, props, or redrawn content.",
+      "buyer_question": "What does a daily page look like?",
+      "source_ref": "PDF page 35 rendered-final-144/page-035.png; January 2027 Friday daily page.",
+      "composition": "One large framed daily source page centered for close inspection.",
+      "scene": "Flat ivory editorial information graphic.",
+      "factual_claim": "Daily planning page preview from the supplied PDF.",
+      "decorative_elements": [
+        "one dominant framed source page",
+        "Daily page label",
+        "editorial margin"
+      ],
+      "claim_evidence": [
+        "Source page 35 rendered locally from the inspected PDF."
+      ],
+      "alt_text": "Large exact daily planning page preview from the Temply Studio Amethyst digital planner.",
+      "file_slot": "05"
+    },
+    {
+      "slot": "06",
+      "output": "06-wellness-pages.png",
+      "prompt": "Use the generated Temply flat paper foundation. Create a two-card source-page showcase with exact PDF pages 28 and 29 labeled Habit tracker and Hydration. Keep both source pages large and crisp; no device mockups or lifestyle props.",
+      "buyer_question": "Are wellness tracking pages included?",
+      "source_ref": "PDF pages 28 and 29 rendered-final-144; habit tracker and hydration pages.",
+      "composition": "Two tall equal framed previews with concise labels.",
+      "scene": "Flat ivory paper graphic with sage and mauve accents.",
+      "factual_claim": "Exact habit-tracker and hydration page previews are shown.",
+      "decorative_elements": [
+        "two tall framed source pages",
+        "wellness labels",
+        "sage and mauve accents"
+      ],
+      "claim_evidence": [
+        "Source pages 28 and 29 rendered locally from the inspected PDF."
+      ],
+      "alt_text": "Temply Studio digital planner wellness spread showing exact habit tracker and hydration pages.",
+      "file_slot": "06"
+    },
+    {
+      "slot": "07",
+      "output": "07-weekly-rhythm.png",
+      "prompt": "Use the generated Temply flat paper foundation. Create a two-card source-page showcase with exact PDF pages 30 and 35 labeled Weekly view and Daily view. The pages are the visual subjects; avoid lifestyle photography, props, and invented claims.",
+      "buyer_question": "How do weekly and daily planning work together?",
+      "source_ref": "PDF pages 30 and 35 rendered-final-144; weekly and daily planning previews.",
+      "composition": "Two tall equal framed previews showing the weekly-to-daily rhythm.",
+      "scene": "Flat ivory editorial graphic with sage and mauve labels.",
+      "factual_claim": "Weekly and daily source-page previews from the supplied PDF.",
+      "decorative_elements": [
+        "two tall framed source pages",
+        "weekly and daily labels",
+        "editorial grid"
+      ],
+      "claim_evidence": [
+        "Source pages 30 and 35 rendered locally from the inspected PDF."
+      ],
+      "alt_text": "Temply Studio planner weekly and daily page previews shown together.",
+      "file_slot": "07"
+    },
+    {
+      "slot": "08",
+      "output": "08-navigation.png",
+      "prompt": "Use the generated Temply flat paper foundation. Create a source-led navigation graphic with exact PDF pages 2 and 23 labeled Index and Calendar section. Show the real page structure without claiming any unverified app compatibility or hyperlink behavior.",
+      "buyer_question": "How is the planner organized?",
+      "source_ref": "PDF pages 2 and 23 rendered-final-144; index and calendar-section previews.",
+      "composition": "Two tall framed source pages with a clear orientation hierarchy.",
+      "scene": "Flat ivory editorial graphic with restrained sage accents.",
+      "factual_claim": "Index and calendar-section page previews are shown; no compatibility claim is made.",
+      "decorative_elements": [
+        "two tall framed source pages",
+        "orientation labels",
+        "restrained sage accents"
+      ],
+      "claim_evidence": [
+        "Source pages 2 and 23 rendered locally from the inspected PDF.",
+        "No compatibility claim is made in the graphic."
+      ],
+      "alt_text": "Temply Studio planner navigation graphic showing the index and calendar section pages.",
+      "file_slot": "08"
+    },
+    {
+      "slot": "09",
+      "output": "09-extras.png",
+      "prompt": "Use the generated Temply flat paper foundation. Create a clean extra-pages showcase with exact PDF pages 740 and 811 labeled Recipe page and Project page. The actual source pages must dominate; no lifestyle scene or invented bonus wording.",
+      "buyer_question": "What additional planning pages are included?",
+      "source_ref": "PDF pages 740 and 811 rendered-final-144; recipe and project previews.",
+      "composition": "Two tall framed source-page previews with concise labels.",
+      "scene": "Flat ivory paper graphic with muted sage and mauve accents.",
+      "factual_claim": "Recipe and project page previews are shown from the supplied PDF.",
+      "decorative_elements": [
+        "two tall framed source pages",
+        "recipe and project labels",
+        "mauve accent"
+      ],
+      "claim_evidence": [
+        "Source pages 740 and 811 rendered locally from the inspected PDF."
+      ],
+      "alt_text": "Temply Studio digital planner extras showing exact recipe and project page previews.",
+      "file_slot": "09"
+    },
+    {
+      "slot": "10",
+      "output": "10-thank-you.png",
+      "prompt": "Use the generated Temply ivory-amethyst paper background as a quiet composition foundation. Build a clean closing Etsy graphic with the exact PDF page 1 thank-you page as the product evidence, plus deterministic personal-use and no-resale copy. No props, device, or redrawn content.",
+      "buyer_question": "What should I know before buying?",
+      "source_ref": "PDF page 1 rendered-final-144/page-001.png; supplied thank-you page.",
+      "composition": "One large framed thank-you source page with a quiet closeout hierarchy.",
+      "scene": "Flat ivory editorial graphic with a soft amethyst paper texture.",
+      "factual_claim": "Personal-use and no-resale wording is a listing limitation, not a PDF feature claim.",
+      "decorative_elements": [
+        "framed thank-you source page",
+        "personal-use badge",
+        "quiet closeout"
+      ],
+      "claim_evidence": [
+        "Source page 1 rendered locally from the inspected PDF.",
+        "Personal-use and no-resale language is a listing limitation, not a PDF feature claim."
+      ],
+      "overlay_text": [
+        "THANK YOU",
+        "FOR PERSONAL USE ONLY \u2022 NO RESALE OR REDISTRIBUTION"
+      ],
+      "alt_text": "Temply Studio closing graphic showing the supplied thank-you page and personal-use reminder.",
+      "file_slot": "10"
+    }
+  ],
+  "branding_receipt": [
+    {
+      "slot": "01",
+      "input": "/Users/aaronnguyen/Developer/Etsy/working/2027-amethyst-google-calendar/temply-v2-drafts/01-hero.png",
+      "output": "/Users/aaronnguyen/Developer/Etsy/working/2027-amethyst-google-calendar/temply-v2-branded/01-hero.png",
+      "output_sha256": "70de5566b7aa0ed3f1063defc97dcf5975484adfba424ae1be7af1d1d42b823c",
+      "logo_sha256": "64024e72722a8269359b3466337ee1b389da771fb25e86bc9b206a1d228c49a2",
+      "watermark_rendered": true,
+      "logo_rendered": true,
+      "exact_overlay_rendered": true,
+      "overlay_text": [
+        "DIGITAL DOWNLOAD",
+        "NO PHYSICAL ITEM"
+      ]
+    },
+    {
+      "slot": "02",
+      "input": "/Users/aaronnguyen/Developer/Etsy/working/2027-amethyst-google-calendar/temply-v2-drafts/02-format-overview.png",
+      "output": "/Users/aaronnguyen/Developer/Etsy/working/2027-amethyst-google-calendar/temply-v2-branded/02-format-overview.png",
+      "output_sha256": "9e369c01ec47fef573051710a4f9eba95edc00ff9135c39df33e9de348456137",
+      "logo_sha256": "64024e72722a8269359b3466337ee1b389da771fb25e86bc9b206a1d228c49a2",
+      "watermark_rendered": true,
+      "logo_rendered": true,
+      "exact_overlay_rendered": false,
+      "overlay_text": []
+    },
+    {
+      "slot": "03",
+      "input": "/Users/aaronnguyen/Developer/Etsy/working/2027-amethyst-google-calendar/temply-v2-drafts/03-toolkit.png",
+      "output": "/Users/aaronnguyen/Developer/Etsy/working/2027-amethyst-google-calendar/temply-v2-branded/03-toolkit.png",
+      "output_sha256": "27e9059b74914bfe9651b1b0dfaea895e8345fed5b762ef7594740b0db1fbfba",
+      "logo_sha256": "64024e72722a8269359b3466337ee1b389da771fb25e86bc9b206a1d228c49a2",
+      "watermark_rendered": true,
+      "logo_rendered": true,
+      "exact_overlay_rendered": false,
+      "overlay_text": []
+    },
+    {
+      "slot": "04",
+      "input": "/Users/aaronnguyen/Developer/Etsy/working/2027-amethyst-google-calendar/temply-v2-drafts/04-monthly-view.png",
+      "output": "/Users/aaronnguyen/Developer/Etsy/working/2027-amethyst-google-calendar/temply-v2-branded/04-monthly-view.png",
+      "output_sha256": "daf8a89fddc55475605e670723606f38add2a14f7d05265bd2b800164e6584a1",
+      "logo_sha256": "64024e72722a8269359b3466337ee1b389da771fb25e86bc9b206a1d228c49a2",
+      "watermark_rendered": true,
+      "logo_rendered": true,
+      "exact_overlay_rendered": false,
+      "overlay_text": []
+    },
+    {
+      "slot": "05",
+      "input": "/Users/aaronnguyen/Developer/Etsy/working/2027-amethyst-google-calendar/temply-v2-drafts/05-daily-page.png",
+      "output": "/Users/aaronnguyen/Developer/Etsy/working/2027-amethyst-google-calendar/temply-v2-branded/05-daily-page.png",
+      "output_sha256": "cb741a125ba861300601e545ba5f16bdec341121938b1148fd9a4cfb55cff450",
+      "logo_sha256": "64024e72722a8269359b3466337ee1b389da771fb25e86bc9b206a1d228c49a2",
+      "watermark_rendered": true,
+      "logo_rendered": true,
+      "exact_overlay_rendered": false,
+      "overlay_text": []
+    },
+    {
+      "slot": "06",
+      "input": "/Users/aaronnguyen/Developer/Etsy/working/2027-amethyst-google-calendar/temply-v2-drafts/06-wellness-pages.png",
+      "output": "/Users/aaronnguyen/Developer/Etsy/working/2027-amethyst-google-calendar/temply-v2-branded/06-wellness-pages.png",
+      "output_sha256": "77a63673c7a2841023e4e8e10af658bf461aa70398dee5f5909ee92e5e463228",
+      "logo_sha256": "64024e72722a8269359b3466337ee1b389da771fb25e86bc9b206a1d228c49a2",
+      "watermark_rendered": true,
+      "logo_rendered": true,
+      "exact_overlay_rendered": false,
+      "overlay_text": []
+    },
+    {
+      "slot": "07",
+      "input": "/Users/aaronnguyen/Developer/Etsy/working/2027-amethyst-google-calendar/temply-v2-drafts/07-weekly-rhythm.png",
+      "output": "/Users/aaronnguyen/Developer/Etsy/working/2027-amethyst-google-calendar/temply-v2-branded/07-weekly-rhythm.png",
+      "output_sha256": "4b2f4933b7454d59b9fd32ad18f015f94d02a5bbc851bb5b26de57171e06e849",
+      "logo_sha256": "64024e72722a8269359b3466337ee1b389da771fb25e86bc9b206a1d228c49a2",
+      "watermark_rendered": true,
+      "logo_rendered": true,
+      "exact_overlay_rendered": false,
+      "overlay_text": []
+    },
+    {
+      "slot": "08",
+      "input": "/Users/aaronnguyen/Developer/Etsy/working/2027-amethyst-google-calendar/temply-v2-drafts/08-navigation.png",
+      "output": "/Users/aaronnguyen/Developer/Etsy/working/2027-amethyst-google-calendar/temply-v2-branded/08-navigation.png",
+      "output_sha256": "c26c5c05d48722a71b063abeac958a7180df76ceb8917048fc6630c41440f473",
+      "logo_sha256": "64024e72722a8269359b3466337ee1b389da771fb25e86bc9b206a1d228c49a2",
+      "watermark_rendered": true,
+      "logo_rendered": true,
+      "exact_overlay_rendered": false,
+      "overlay_text": []
+    },
+    {
+      "slot": "09",
+      "input": "/Users/aaronnguyen/Developer/Etsy/working/2027-amethyst-google-calendar/temply-v2-drafts/09-extras.png",
+      "output": "/Users/aaronnguyen/Developer/Etsy/working/2027-amethyst-google-calendar/temply-v2-branded/09-extras.png",
+      "output_sha256": "4be8be1ac2a47a79cdebb08e7e685aaa47c9f1a557771fd577c912f44750b794",
+      "logo_sha256": "64024e72722a8269359b3466337ee1b389da771fb25e86bc9b206a1d228c49a2",
+      "watermark_rendered": true,
+      "logo_rendered": true,
+      "exact_overlay_rendered": false,
+      "overlay_text": []
+    },
+    {
+      "slot": "10",
+      "input": "/Users/aaronnguyen/Developer/Etsy/working/2027-amethyst-google-calendar/temply-v2-drafts/10-thank-you.png",
+      "output": "/Users/aaronnguyen/Developer/Etsy/working/2027-amethyst-google-calendar/temply-v2-branded/10-thank-you.png",
+      "output_sha256": "7e67b52bd0d513eaa3897e78f7938c5487a5218141ee8f04a6ec77373654ce0c",
+      "logo_sha256": "64024e72722a8269359b3466337ee1b389da771fb25e86bc9b206a1d228c49a2",
+      "watermark_rendered": true,
+      "logo_rendered": true,
+      "exact_overlay_rendered": true,
+      "overlay_text": [
+        "THANK YOU",
+        "FOR PERSONAL USE ONLY \u2022 NO RESALE OR REDISTRIBUTION"
+      ]
+    }
+  ]
+}

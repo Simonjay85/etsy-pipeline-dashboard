@@ -4,11 +4,12 @@
 from __future__ import annotations
 
 import tempfile
+import json
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from etsy_catalog import build_unified_catalog, load_local_catalog
+from etsy_catalog import build_unified_catalog, load_etsy_snapshot, load_local_catalog, normalize_etsy_manager_snapshot
 
 
 class TestEtsyCatalogOrdering(unittest.TestCase):
@@ -214,6 +215,37 @@ class TestEtsyCatalogOrdering(unittest.TestCase):
         self.assertEqual(1, catalog["counts"]["unified_total"])
         self.assertEqual("product-777", catalog["records"][0]["folder"])
 
+    def test_local_listing_absent_from_snapshot_is_marked_for_reconciliation(self) -> None:
+        local_records = [
+            {
+                "record_id": "local:test-shop:product-777",
+                "source": "local",
+                "folder": "product-777",
+                "listing_id": "777",
+                "etsy_url": "https://www.etsy.com/listing/777",
+                "status": "✅ Đã đăng draft",
+                "normalized_title": "local only",
+                "asset_hashes": [],
+            },
+        ]
+        snapshot = {
+            "source": "snapshot.json",
+            "listings": [
+                {"id": "888", "title": "Other listing", "managerStatus": "draft"},
+            ],
+        }
+
+        with patch("etsy_catalog.load_local_catalog", return_value=local_records), patch(
+            "etsy_catalog.load_etsy_snapshot", return_value=snapshot
+        ):
+            catalog = build_unified_catalog(Path("/unused"), "test-shop", Path("/unused/catalog.xlsx"))
+
+        self.assertEqual(1, catalog["counts"]["local_only_total"])
+        local_record = next(record for record in catalog["records"] if record["source"] == "local")
+        self.assertEqual("✅ Đã đăng draft", local_record["status"])
+        self.assertEqual("unmatched_local_listing", local_record["reconciliation_status"])
+        self.assertIn("absent", local_record["reconciliation_note"])
+
     def test_mapped_inactive_or_expired_listings_still_shown_as_both(self) -> None:
         local_records = [
             {
@@ -279,6 +311,65 @@ class TestEtsyCatalogOrdering(unittest.TestCase):
         self.assertEqual(2, catalog["counts"]["mapped_total"])
         self.assertEqual(1, catalog["counts"]["mapped_listing_total"])
         self.assertEqual([["product-22", "product-243"]], [group["folders"] for group in catalog["duplicate_groups"]])
+
+    def test_normalize_etsy_manager_snapshot_prefers_active_and_preserves_malformed_ids(self) -> None:
+        raw_snapshot = {
+            "active": [
+                {"id": "4511087962", "title": "Active first"},
+                {"id": "4511087962", "title": "Active duplicate"},
+                {"id": "   451 ", "title": "Active trimmed"},
+                {"id": "", "title": "Active missing id"},
+                {"id": "not-a-number", "title": "Active malformed id"},
+            ],
+            "draft": [
+                {"id": "4511087962", "title": "Draft duplicate should be ignored"},
+                {"id": "777", "title": "Draft unique"},
+            ],
+            "inactive": [
+                {"id": "777", "title": "Inactive duplicate should be ignored"},
+                {"id": "222", "title": "Inactive unique"},
+            ],
+            "expired": [
+                {"id": "222", "title": "Expired duplicate should be ignored"},
+                {"id": "999", "title": "Expired unique"},
+            ],
+        }
+        normalized = normalize_etsy_manager_snapshot(raw_snapshot)
+
+        self.assertEqual({"active": 5, "draft": 2, "inactive": 2, "expired": 2}, normalized["raw_counts"])
+        self.assertEqual({"active": 4, "draft": 1, "inactive": 1, "expired": 1}, normalized["counts"])
+        self.assertEqual(4, normalized["duplicate_count"])
+        self.assertEqual(7, len(normalized["listings"]))
+
+        listing_map = {listing["listing_id"]: listing["managerStatus"] for listing in normalized["listings"]}
+        self.assertEqual("active", listing_map["4511087962"])
+        self.assertEqual("active", listing_map["451"])
+        self.assertEqual("draft", listing_map["777"])
+        self.assertEqual("inactive", listing_map["222"])
+        self.assertEqual("expired", listing_map["999"])
+        self.assertEqual(1, len([listing for listing in normalized["listings"] if listing["listing_id"] == "451"]))
+        self.assertEqual(1, len([listing for listing in normalized["listings"] if listing["listing_id"] == ""]))
+
+    def test_load_etsy_snapshot_adds_snapshot_diagnostics(self) -> None:
+        raw_snapshot = {
+            "active": [{"id": "11", "title": "Active"}],
+            "draft": [{"id": "11", "title": "Draft duplicate"}],
+            "inactive": [{"id": "12", "title": "Inactive"}],
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scratch_dir = Path(tmpdir) / "scratch"
+            scratch_dir.mkdir(parents=True)
+            snapshot_path = scratch_dir / "etsy_manager_current_shop_20260101_010101.json"
+            snapshot_path.write_text(json.dumps(raw_snapshot), encoding="utf-8")
+
+            snapshot = load_etsy_snapshot(Path(tmpdir), "shop")
+
+        self.assertEqual({"active": 1, "draft": 0, "inactive": 1, "expired": 0, "total": 2}, snapshot["counts"])
+        self.assertEqual({"active": 1, "draft": 1, "inactive": 1, "expired": 0, "total": 3}, snapshot["raw_counts"])
+        self.assertEqual(1, snapshot["duplicate_count"])
+        self.assertEqual(2, snapshot["counts"]["total"])
+        self.assertEqual(3, snapshot["raw_counts"]["total"])
 
 
 if __name__ == "__main__":

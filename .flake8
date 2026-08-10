@@ -1,0 +1,25 @@
+# Minimal flake8 configuration — broad-exception enforcement
+# Flags broad/bare exception handling:
+#   E722   bare `except:` (pycodestyle, built into flake8)
+#   B902   `except Exception:` / `except BaseException:` blind catch
+#          (flake8-blind-except plugin; note: this code is owned by that
+#          plugin here — do not add flake8-bugbear, which reuses B902)
+#
+# Only these rules are enforced; do not widen `select` without expanding
+# the lint/test scope accordingly.
+[flake8]
+select = E722,B902
+exclude =
+    .venv,
+    .git,
+    .migration-backup-*,
+    .browser-session,
+    .playwright-cli,
+    __pycache__,
+    node_modules,
+    output,
+    outputs,
+    scratch,
+    tmp,
+    tmp_pdf_preview_nursery,
+    tmp_pdf_preview_nursery_ranges

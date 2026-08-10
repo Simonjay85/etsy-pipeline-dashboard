@@ -1,0 +1,133 @@
+{
+  "source": "/Users/aaronnguyen/Downloads/PLR-Resell-Digital-Planner-115250858/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER.pdf",
+  "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+  "license_evidence": "/Users/aaronnguyen/Downloads/PLR-Resell-Digital-Planner-115250858/PLR USAGE INSTRUCTIONS.pdf",
+  "license_fingerprint": "0b4b1da030db3d74c0f0c512a35895af52af98a1fd7c9be5596ff2ee8199f3f5",
+  "rights_status": "verified_with_restrictions",
+  "rights_notes": [
+    "The supplied license allows resale as-is, creative changes, own branding, digital sale, and Etsy sale.",
+    "The supplied license prohibits reuse of the seller's original mockups, pictures, descriptions, and titles.",
+    "The item must not be resold as a PLR product.",
+    "PDF page 71 visibly contains Tas Creative Studio attribution; it is not erased, covered, cropped, or regenerated."
+  ],
+  "source_review": {
+    "pdf_pages": 71,
+    "rendered_pages": 71,
+    "page_size": "A4 landscape",
+    "encrypted": false,
+    "visual_review_complete": true,
+    "third_party_mark_pages": [71]
+  },
+  "claims": [
+    {
+      "id": "pdf-page-count",
+      "status": "verified",
+      "value": 71,
+      "approved_wording": ["71 PDF pages", "71-page PDF"],
+      "prohibited_wording": ["71-page planner"],
+      "evidence": ["Complete PDF inventory and 71/71 rendered pages"]
+    },
+    {
+      "id": "pdf-format",
+      "status": "verified",
+      "value": "PDF",
+      "approved_wording": ["PDF format", "Digital PDF"],
+      "evidence": ["PDF header, pdfinfo, and source file extension"]
+    },
+    {
+      "id": "digital-sale-permission",
+      "status": "verified_with_restrictions",
+      "value": true,
+      "approved_wording": ["Digital download"],
+      "prohibited_wording": ["Instant download"],
+      "evidence": ["License evidence page 2 permits digital sale; source is a PDF"]
+    },
+    {
+      "id": "undated-layout",
+      "status": "verified",
+      "value": true,
+      "approved_wording": ["Undated planner"],
+      "evidence": ["Source filename and full page review show undated fill-in layouts"]
+    },
+    {
+      "id": "index-page",
+      "status": "verified",
+      "value": true,
+      "approved_wording": ["Index page included"],
+      "evidence": ["PDF page 2"]
+    },
+    {
+      "id": "four-week-sections",
+      "status": "verified",
+      "value": 4,
+      "approved_wording": ["Four weekly sections"],
+      "evidence": ["PDF pages 5, 17, 29, and 41"]
+    },
+    {
+      "id": "monthly-pages",
+      "status": "verified",
+      "value": ["monthly planner", "monthly goals"],
+      "approved_wording": ["Monthly planning pages"],
+      "evidence": ["PDF pages 3 and 4"]
+    },
+    {
+      "id": "weekly-pages",
+      "status": "verified",
+      "value": 4,
+      "approved_wording": ["Weekly planner pages"],
+      "evidence": ["PDF pages 6, 18, 30, and 42"]
+    },
+    {
+      "id": "daily-pages",
+      "status": "verified",
+      "value": 28,
+      "approved_wording": ["28 daily planner pages"],
+      "evidence": ["Four groups of Sunday-Saturday pages: PDF pages 10-16, 22-28, 34-40, and 46-52"]
+    },
+    {
+      "id": "productivity-templates",
+      "status": "verified",
+      "value": ["study planner", "to-do list", "meeting notes", "goal planner", "project planner"],
+      "approved_wording": ["Productivity templates"],
+      "evidence": ["PDF pages 54-58"]
+    },
+    {
+      "id": "health-trackers",
+      "status": "verified",
+      "value": ["water tracker", "productive life", "vitamin tracker", "doctor visits", "mental health"],
+      "approved_wording": ["Health trackers"],
+      "evidence": ["PDF pages 60-64"]
+    },
+    {
+      "id": "finance-trackers",
+      "status": "verified",
+      "value": ["debt tracker", "sinking funds", "savings tracker", "monthly budget", "bill tracker"],
+      "approved_wording": ["Finance trackers"],
+      "evidence": ["PDF pages 66-70"]
+    },
+    {
+      "id": "resale-license",
+      "status": "verified_with_restrictions",
+      "value": "seller-provided resale terms",
+      "approved_wording": ["Use under the supplied license terms"],
+      "prohibited_wording": ["PLR included", "Commercial use included", "Personal use only", "No resale or redistribution"],
+      "evidence": ["PLR USAGE INSTRUCTIONS.pdf pages 1-3; buyer-facing license terms remain listing-dependent"]
+    },
+    {
+      "id": "unsupported-compatibility",
+      "status": "limitation",
+      "value": true,
+      "approved_wording": ["No app compatibility claim made"],
+      "prohibited_wording": ["Works on any device", "Compatible with every app", "GoodNotes, Notability, Noteshelf & More", "Automatically syncs with Google Calendar"],
+      "evidence": ["No tested app/device compatibility evidence supplied for this gallery"]
+    },
+    {
+      "id": "editable-source-unverified",
+      "status": "limitation",
+      "value": true,
+      "approved_wording": ["PDF format; editable source not verified"],
+      "prohibited_wording": ["Fully editable", "Editable Canva template included"],
+      "evidence": ["Requested SOURCE is a PDF; no editable source was included in the requested source scope"]
+    }
+  ]
+}

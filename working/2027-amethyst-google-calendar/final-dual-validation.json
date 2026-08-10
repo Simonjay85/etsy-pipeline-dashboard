@@ -1,0 +1,286 @@
+{
+  "status": "PASS",
+  "source": "/Users/aaronnguyen/Downloads/2027-Bundle-Digital-Planner-Goodnotes-153024210/AMETHYST/GOOGLE/(AMETHYST) 2027 PLANNER MONDAY - GOOGLE CALENDAR.pdf",
+  "workflow": "dual-shop-direct-images",
+  "temply": {
+    "shop_key": "temply",
+    "display_name": "Temply Studio",
+    "product_folder": "/Users/aaronnguyen/Developer/Etsy/shops/templystudios/product-276",
+    "image_folder": "/Users/aaronnguyen/Developer/Etsy/shops/templystudios/product-276/images",
+    "status": "PASS",
+    "failures": [],
+    "warnings": [],
+    "image_report": {
+      "status": "PASS",
+      "expected_count": 10,
+      "actual_count": 10,
+      "ignored_non_listing_images": [],
+      "expected_size": [
+        2000,
+        2000
+      ],
+      "failures": [],
+      "warnings": [],
+      "images": [
+        {
+          "file": "01-hero.png",
+          "size_bytes": 3171782,
+          "width": 2000,
+          "height": 2000,
+          "mode": "RGB",
+          "grayscale_stddev": 60.33
+        },
+        {
+          "file": "02-format-overview.png",
+          "size_bytes": 2737631,
+          "width": 2000,
+          "height": 2000,
+          "mode": "RGB",
+          "grayscale_stddev": 52.84
+        },
+        {
+          "file": "03-toolkit.png",
+          "size_bytes": 3385835,
+          "width": 2000,
+          "height": 2000,
+          "mode": "RGB",
+          "grayscale_stddev": 63.94
+        },
+        {
+          "file": "04-monthly-view.png",
+          "size_bytes": 2628942,
+          "width": 2000,
+          "height": 2000,
+          "mode": "RGB",
+          "grayscale_stddev": 56.41
+        },
+        {
+          "file": "05-daily-page.png",
+          "size_bytes": 2720404,
+          "width": 2000,
+          "height": 2000,
+          "mode": "RGB",
+          "grayscale_stddev": 60.32
+        },
+        {
+          "file": "06-wellness-pages.png",
+          "size_bytes": 4091680,
+          "width": 2000,
+          "height": 2000,
+          "mode": "RGB",
+          "grayscale_stddev": 52.32
+        },
+        {
+          "file": "07-weekly-rhythm.png",
+          "size_bytes": 2624560,
+          "width": 2000,
+          "height": 2000,
+          "mode": "RGB",
+          "grayscale_stddev": 55.04
+        },
+        {
+          "file": "08-navigation.png",
+          "size_bytes": 3784972,
+          "width": 2000,
+          "height": 2000,
+          "mode": "RGB",
+          "grayscale_stddev": 60.04
+        },
+        {
+          "file": "09-extras.png",
+          "size_bytes": 3680178,
+          "width": 2000,
+          "height": 2000,
+          "mode": "RGB",
+          "grayscale_stddev": 66.95
+        },
+        {
+          "file": "10-thank-you.png",
+          "size_bytes": 3522540,
+          "width": 2000,
+          "height": 2000,
+          "mode": "RGB",
+          "grayscale_stddev": 65.07
+        }
+      ],
+      "manual_checks_required": [
+        "thumbnail clarity and crop safety",
+        "overlay spelling and factual accuracy",
+        "source-faithful product content",
+        "digital/physical disclosure",
+        "AI artifacts, logos, watermarks, and IP risks",
+        "unique accurate alt text for all 10 images"
+      ]
+    },
+    "plan_path": "/Users/aaronnguyen/Developer/Etsy/shops/templystudios/product-276/working/etsy-image-plans/temply-image-plan.json"
+  },
+  "daisy": {
+    "shop_key": "daisy",
+    "display_name": "Daisy Flow Digital",
+    "product_folder": "/Users/aaronnguyen/Developer/Etsy/shops/daisyflowdigital/product-405",
+    "image_folder": "/Users/aaronnguyen/Developer/Etsy/shops/daisyflowdigital/product-405/images",
+    "status": "PASS",
+    "failures": [],
+    "warnings": [],
+    "image_report": {
+      "status": "PASS",
+      "expected_count": 10,
+      "actual_count": 10,
+      "ignored_non_listing_images": [],
+      "expected_size": [
+        2000,
+        2000
+      ],
+      "failures": [],
+      "warnings": [],
+      "images": [
+        {
+          "file": "01-hero.png",
+          "size_bytes": 2986986,
+          "width": 2000,
+          "height": 2000,
+          "mode": "RGB",
+          "grayscale_stddev": 63.19
+        },
+        {
+          "file": "02-format-collage.png",
+          "size_bytes": 2830538,
+          "width": 2000,
+          "height": 2000,
+          "mode": "RGB",
+          "grayscale_stddev": 53.62
+        },
+        {
+          "file": "03-toolkit-pop.png",
+          "size_bytes": 2627481,
+          "width": 2000,
+          "height": 2000,
+          "mode": "RGB",
+          "grayscale_stddev": 46.86
+        },
+        {
+          "file": "04-monthly-color.png",
+          "size_bytes": 2650762,
+          "width": 2000,
+          "height": 2000,
+          "mode": "RGB",
+          "grayscale_stddev": 66.03
+        },
+        {
+          "file": "05-daily-energy.png",
+          "size_bytes": 2534886,
+          "width": 2000,
+          "height": 2000,
+          "mode": "RGB",
+          "grayscale_stddev": 56.17
+        },
+        {
+          "file": "06-wellness-color.png",
+          "size_bytes": 3233224,
+          "width": 2000,
+          "height": 2000,
+          "mode": "RGB",
+          "grayscale_stddev": 56.74
+        },
+        {
+          "file": "07-weekly-pop.png",
+          "size_bytes": 2475147,
+          "width": 2000,
+          "height": 2000,
+          "mode": "RGB",
+          "grayscale_stddev": 58.96
+        },
+        {
+          "file": "08-navigation-tabs.png",
+          "size_bytes": 2926848,
+          "width": 2000,
+          "height": 2000,
+          "mode": "RGB",
+          "grayscale_stddev": 51.74
+        },
+        {
+          "file": "09-extras-color.png",
+          "size_bytes": 3500133,
+          "width": 2000,
+          "height": 2000,
+          "mode": "RGB",
+          "grayscale_stddev": 66.94
+        },
+        {
+          "file": "10-thank-you-color.png",
+          "size_bytes": 2985396,
+          "width": 2000,
+          "height": 2000,
+          "mode": "RGB",
+          "grayscale_stddev": 58.14
+        }
+      ],
+      "manual_checks_required": [
+        "thumbnail clarity and crop safety",
+        "overlay spelling and factual accuracy",
+        "source-faithful product content",
+        "digital/physical disclosure",
+        "AI artifacts, logos, watermarks, and IP risks",
+        "unique accurate alt text for all 10 images"
+      ]
+    },
+    "plan_path": "/Users/aaronnguyen/Developer/Etsy/shops/daisyflowdigital/product-405/working/etsy-image-plans/daisy-image-plan.json"
+  },
+  "cross_set_similarity": {
+    "common_slots": 10,
+    "same_slot_distances": [
+      {
+        "slot": "01",
+        "dhash_distance": 17
+      },
+      {
+        "slot": "02",
+        "dhash_distance": 30
+      },
+      {
+        "slot": "03",
+        "dhash_distance": 31
+      },
+      {
+        "slot": "04",
+        "dhash_distance": 31
+      },
+      {
+        "slot": "05",
+        "dhash_distance": 26
+      },
+      {
+        "slot": "06",
+        "dhash_distance": 29
+      },
+      {
+        "slot": "07",
+        "dhash_distance": 33
+      },
+      {
+        "slot": "08",
+        "dhash_distance": 32
+      },
+      {
+        "slot": "09",
+        "dhash_distance": 27
+      },
+      {
+        "slot": "10",
+        "dhash_distance": 19
+      }
+    ],
+    "average_distance": 27.5,
+    "close_matches_at_most_2": 0,
+    "failures": [],
+    "manual_review_required": true
+  },
+  "manual_checks_required": [
+    "both sets were planned independently rather than recolored",
+    "logo visibility and safe placement at 300x300 thumbnail size",
+    "watermark visibility without hiding source content",
+    "source-faithful text and page layouts",
+    "Image Generation artifacts and IP risks"
+  ],
+  "overall_failures": []
+}

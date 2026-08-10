@@ -1,0 +1,138 @@
+{
+  "schema": "etsy-image-generation-v1",
+  "tool_mode": "built-in-imagegen",
+  "canva_used": false,
+  "shop_key": "daisy",
+  "source": "/Users/aaronnguyen/Downloads/2027-Bundle-Digital-Planner-Goodnotes-153024210/AMETHYST/GOOGLE/(AMETHYST) 2027 PLANNER MONDAY - GOOGLE CALENDAR.pdf",
+  "source_fingerprint": "31f4a6efd40f312a77df6d3ebb2bdd43ae33789d6a64c0b2fb7874268c8e5cd1",
+  "art_direction_id": "daisy-amethyst-color-pop-v1",
+  "art_direction_summary": "A joyful, colorful gallery for Daisy Flow Digital: saturated amethyst, lilac, teal and butter yellow accents, playful but tidy flat-lays, bright device mockups, and source-faithful planner pages presented as an approachable digital download.",
+  "concept_board": {
+    "hero": "A bright tablet hero on a lavender-and-teal desk, framed by playful stationery shapes and a confident color-pop palette.",
+    "palette": "Amethyst purple, lilac, teal, bright cyan, butter yellow, coral accents, white and deep plum.",
+    "mockup": "Colorful tablet, paper and device mockups generated with completely blank displays; exact PDF pages are inserted locally into those displays.",
+    "gallery_rhythm": "Hero, format collage, toolkit, monthly, daily, wellness, weekly, navigation, extras, and thank-you; use varied bright arrangements, cropped device views, and playful prop clusters without duplicating Temply scenes."
+  },
+  "assets": [
+    {
+      "slot": "01",
+      "output": "01-hero.png",
+      "prompt": "Create a square 1:1 bright lifestyle product-photography scene for a colorful digital planner Etsy listing. A landscape tablet with a completely blank light screen sits on a lavender desk mat, surrounded by a teal pen, butter-yellow sticky shapes with no writing, a small coral flower and a glossy purple paperclip. Energetic but tidy, realistic soft studio light, crisp materials, no readable text, no logos, no fake interface, no calendar content, no hands, no watermark. Leave the tablet screen clean and flat so a real planner page can be inserted later.",
+      "buyer_question": "What is the overall look of the planner?",
+      "source_ref": "PDF page 21 rendered-final-144/page-021.png; January 2027 monthly calendar hero page.",
+      "composition": "One large landscape tablet centered on a saturated lavender mat, with colorful accents framing rather than covering the screen.",
+      "scene": "Lavender-and-teal creative desk with butter yellow and coral pops, bright clean studio light.",
+      "factual_claim": "Digital download; 2027 dated planner; January 2027 monthly calendar preview.",
+      "overlay_text": ["DIGITAL DOWNLOAD", "2027 dated planner • Monday start"],
+      "alt_text": "Daisy Flow Digital Amethyst 2027 planner January calendar on a tablet with a bright lavender, teal and yellow desk scene."
+    },
+    {
+      "slot": "02",
+      "output": "02-format-collage.png",
+      "prompt": "Create a square 1:1 playful colorful flat-lay for a digital planner Etsy listing. Arrange four blank landscape tablet and paper mockups in a lively collage on white and lavender surfaces, with teal tape, butter-yellow abstract shapes, coral clips and a purple pen. The display areas must be blank with no readable text, no logos, no fake UI, no calendar content, no hands, no watermark. Bright editorial studio light and clean commercial composition, with separated blank screens ready for real planner pages to be inserted later.",
+      "buyer_question": "How much planning content is included?",
+      "source_ref": "PDF page 2 rendered-final-144/page-002.png for index/navigation concept; PDF page 21 for the dated planner view.",
+      "composition": "Four varied blank displays in a lively diagonal collage, distinct from the single-device hero.",
+      "scene": "White, lavender and teal flat-lay with butter yellow shapes and coral stationery details.",
+      "factual_claim": "The supplied PDF includes a navigation/index page and dated 2027 planner pages.",
+      "overlay_text": ["ONE COLORFUL PLANNING SYSTEM", "Monthly • weekly • daily layouts"],
+      "alt_text": "Colorful collage of blank digital planner mockups in lavender, teal, yellow and coral for the Amethyst 2027 planner."
+    },
+    {
+      "slot": "03",
+      "output": "03-toolkit-pop.png",
+      "prompt": "Create a square 1:1 vibrant creative-desk scene for a digital planner Etsy listing. Top-down white desk with three blank landscape tablet or paper screens in a playful but organized arrangement, surrounded by teal scissors, a purple gel pen, butter-yellow paper, coral clips, a tiny lavender vase and one soft blue notebook. No readable text, no logos, no generated planner content, no fake UI, no hands, no watermark. Keep every display area clean and bright for exact source pages to be composited later; commercial editorial photography with crisp soft shadows.",
+      "buyer_question": "What types of planning can I do with it?",
+      "source_ref": "PDF pages 21, 30, 35, 740 and 811 rendered-final-144; monthly, weekly, daily, recipe and project layouts.",
+      "composition": "Three blank display zones with a playful diagonal path and colorful prop clusters at the corners.",
+      "scene": "Bright white creative desk with teal, purple, yellow, coral and blue accents.",
+      "factual_claim": "Verified source sections include monthly, weekly, daily, recipe and project pages.",
+      "overlay_text": ["MORE WAYS TO PLAN", "Goals • routines • meals • projects"],
+      "alt_text": "Bright creative flat-lay with three Amethyst 2027 digital planner page mockups and colorful teal, purple and yellow stationery."
+    },
+    {
+      "slot": "04",
+      "output": "04-monthly-color.png",
+      "prompt": "Create a square 1:1 colorful close-up product scene for a digital planner Etsy listing. A landscape tablet with a completely blank matte screen rests on a vivid lavender surface, with a teal phone stand, butter-yellow flower and one coral geometric object at the edge. Bright natural studio light, energetic clean styling, crisp screen plane, no readable text, no logos, no fake interface, no calendar content, no hands, no watermark. Keep the screen large and unobstructed for an exact monthly calendar page insertion.",
+      "buyer_question": "Can I see the monthly calendar without extra clutter?",
+      "source_ref": "PDF pages 21 and 22 rendered-final-144; January 2027 monthly calendar and overview pages.",
+      "composition": "Large tablet close-up with a color-blocked prop trio at the margins; display remains the clear focal point.",
+      "scene": "Vivid lavender tabletop with teal, butter-yellow and coral accents.",
+      "factual_claim": "The source contains a January 2027 monthly calendar and monthly overview layout.",
+      "overlay_text": ["SEE THE MONTH AT A GLANCE", "Dated 2027 calendar pages"],
+      "alt_text": "Close-up of the Amethyst 2027 monthly digital planner calendar on a tablet against a vivid lavender and teal setup."
+    },
+    {
+      "slot": "05",
+      "output": "05-daily-energy.png",
+      "prompt": "Create a square 1:1 colorful lifestyle vignette for a digital daily planner Etsy listing. Landscape tablet with a completely blank pale screen on a lavender-and-white desk, next to a teal coffee cup, purple pen, coral sticky shapes with no writing and one butter-yellow notebook. Bright friendly light, tidy commercial styling, realistic materials, no readable text, no logos, no generated planner content, no fake UI, no hands, no watermark. Keep the screen wide, clean and flat for an exact daily planner page to be inserted later.",
+      "buyer_question": "How can the planner help structure a real day?",
+      "source_ref": "PDF pages 35 and 41 rendered-final-144; dated daily layouts with schedule, to-do, priorities, meals and notes.",
+      "composition": "One wide blank display with cheerful props gathered in one corner, leaving a clear reading area.",
+      "scene": "Lavender-and-white desk with teal cup, purple pen, coral and butter-yellow accents.",
+      "factual_claim": "The source includes dated daily pages with schedule, to-do, meals, priorities, gratitude and notes areas.",
+      "overlay_text": ["MAKE TODAY FEEL LIGHTER", "Schedule • priorities • notes"],
+      "alt_text": "Amethyst 2027 digital daily planner page on a tablet with a teal cup, purple pen and cheerful lavender workspace styling."
+    },
+    {
+      "slot": "06",
+      "output": "06-wellness-color.png",
+      "prompt": "Create a square 1:1 upbeat wellness flat-lay for a colorful digital planner Etsy listing. Blank landscape tablet on a clean white desk with a teal water bottle, a clear glass, a small yellow citrus, lavender sprigs and a purple pencil. Bright airy studio light, playful but polished color harmony, realistic soft shadows. The tablet screen must be completely blank with no readable text, no logos, no fake interface, no calendar, no hands, no watermark; leave it ready for exact planner pages to be composited.",
+      "buyer_question": "Are there pages for routines and wellness habits?",
+      "source_ref": "PDF pages 28 and 29 rendered-final-144; habit tracker and hydration tracker layouts.",
+      "composition": "Blank tablet as the center anchor with a colorful wellness ring around the outer edges.",
+      "scene": "Bright white wellness desk with teal, yellow, lavender and purple accents.",
+      "factual_claim": "Verified source pages include a habit tracker and a hydration tracker.",
+      "overlay_text": ["PLAN THE HABITS THAT HELP", "Habit tracker • hydration tracker"],
+      "alt_text": "Colorful Amethyst digital planner wellness pages on a tablet with a teal bottle, yellow citrus and lavender accents."
+    },
+    {
+      "slot": "07",
+      "output": "07-weekly-pop.png",
+      "prompt": "Create a square 1:1 bright editorial scene for a colorful digital weekly planner listing. Two blank landscape tablet screens form a playful offset spread on a white desk, with teal washi tape, a purple keyboard corner, butter-yellow paper and a coral pen. No readable text, no logos, no fake UI, no calendar content, no hands, no watermark. Keep both screens crisp, flat and open for exact weekly and daily source pages to be inserted later. Friendly commercial product photography with clean soft shadows.",
+      "buyer_question": "How do the weekly and daily views work together?",
+      "source_ref": "PDF page 30 rendered-final-144; January 2027 Week 1 layout, plus page 35 for the daily handoff.",
+      "composition": "Offset two-device spread with a clear primary weekly page and a secondary daily page; bold accents only at the margins.",
+      "scene": "White desk with teal tape, purple keyboard, butter yellow paper and coral pen.",
+      "factual_claim": "The source contains weekly planning pages and dated daily pages.",
+      "overlay_text": ["YOUR WEEK, YOUR WAY", "Weekly planning with daily follow-through"],
+      "alt_text": "Two-screen preview of weekly and daily pages from the colorful Amethyst 2027 digital planner on a white and teal desk."
+    },
+    {
+      "slot": "08",
+      "output": "08-navigation-tabs.png",
+      "prompt": "Create a square 1:1 playful stationery flat-lay for a colorful digital planner Etsy listing. Blank landscape tablet beside a fan of bright monthly divider tabs in lavender, teal, cyan, butter yellow and coral, with a purple paperclip and small rounded color blocks. No letters, numbers or readable text, no logos, no fake UI, no calendar content, no hands, no watermark. Bright clean studio light, tidy commercial composition, and a large blank screen ready for exact source navigation pages to be inserted later.",
+      "buyer_question": "Can shoppers understand the organization and navigation?",
+      "source_ref": "PDF page 2 rendered-final-144 for index/navigation; PDF page 21 for visible monthly side tabs.",
+      "composition": "Tablet on the lower left with a colorful fan of tabs sweeping across the upper right; no duplicated device angle from the hero.",
+      "scene": "White and lavender surface with a rainbow-amethyst tab palette and crisp daylight.",
+      "factual_claim": "The supplied source visibly includes an index/navigation page and monthly side tabs.",
+      "overlay_text": ["FIND YOUR NEXT PAGE FAST", "Organized sections with monthly tabs"],
+      "alt_text": "Colorful navigation preview for the Amethyst 2027 digital planner with lavender, teal, yellow and coral monthly tabs."
+    },
+    {
+      "slot": "09",
+      "output": "09-extras-color.png",
+      "prompt": "Create a square 1:1 colorful lifestyle flat-lay for a digital planner Etsy listing. Bright white kitchen surface with a blank landscape tablet, a small teal bowl, purple berries, yellow citrus, coral napkin and a lavender pen. Cheerful editorial food-and-planning mood, clean negative space and soft studio daylight. No readable text, no logos, no fake UI, no generated recipe text, no hands, no watermark; keep the tablet screen open and flat for exact source pages to be composited.",
+      "buyer_question": "Are practical extras included beyond calendar pages?",
+      "source_ref": "PDF page 740 rendered-final-144; recipe layout with ingredients, instructions, rating and notes areas.",
+      "composition": "Blank tablet as the central anchor with colorful ingredients framing the edges and a clear lower area for the listing panel.",
+      "scene": "Bright white kitchen flat-lay with teal, purple, yellow, coral and lavender accents.",
+      "factual_claim": "The source includes recipe pages with ingredients, instructions, rating and notes areas.",
+      "overlay_text": ["PLAN THE GOOD STUFF TOO", "Recipe pages and project planning"],
+      "alt_text": "Colorful recipe-page mockup from the Amethyst 2027 digital planner with citrus, berries, teal bowl and lavender stationery."
+    },
+    {
+      "slot": "10",
+      "output": "10-thank-you-color.png",
+      "prompt": "Create a square 1:1 joyful closing product scene for a colorful digital planner Etsy listing. Bright white and lavender desk, blank landscape tablet, small blank cream thank-you card, purple ribbon, teal pen, butter-yellow flower and coral paperclip. Friendly celebratory but polished styling, realistic soft shadows, generous space, no readable text on the generated card or screen. No logos, no fake UI, no calendar content, no hands, no watermark. Keep the card and tablet blank so exact thank-you copy and license language can be added deterministically later.",
+      "buyer_question": "What should close the product gallery clearly and warmly?",
+      "source_ref": "PDF page 1 rendered-final-144; source opening thank-you page used as visual reference for the closing frame.",
+      "composition": "Blank thank-you card in the foreground with tablet behind it and a bright color-pop prop arc around the edges.",
+      "scene": "White-and-lavender celebratory desk with purple, teal, yellow and coral accents.",
+      "factual_claim": "Digital product delivery; personal-use license language is seller-provided listing guidance, not a source-page feature claim.",
+      "overlay_text": ["THANK YOU", "DIGITAL DOWNLOAD • FOR PERSONAL USE ONLY", "NO RESALE OR REDISTRIBUTION"],
+      "alt_text": "Joyful closing image for the Amethyst 2027 digital planner with a blank tablet, thank-you card and purple, teal and yellow accents."
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "version": "0.2",
+  "overrides": [
+    {
+      "filename": "**/dashboard_app.py",
+      "enabled": false
+    }
+  ]
+}

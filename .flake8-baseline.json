@@ -1,0 +1,660 @@
+{
+  "version": 1,
+  "description": "Reviewed legacy E722/B902 findings. New source fingerprints still fail.",
+  "violations": [
+    {
+      "path": ".codex-tmp/activate_single_sync_fix.py",
+      "code": "B902",
+      "source": "except Exception as exc:",
+      "fingerprint": "171cff8a1f49ba9ff5c5c419f4b2a86b69cc2d0a518057d7d6c573b2879332f6"
+    },
+    {
+      "path": ".codex-tmp/activate_single_sync_fix.py",
+      "code": "B902",
+      "source": "except Exception:",
+      "fingerprint": "7e29407e31ba66e51e7a37eeb2baf36f785e090f373b4d76cf6d2a60ea2090cc"
+    },
+    {
+      "path": "asset_readiness.py",
+      "code": "B902",
+      "source": "except Exception as exc: # pragma: no cover - backend dependent",
+      "fingerprint": "43f6e70ccfb1d720eaee107f73f5e86e77a3c4cf261023902a93a7876a33d9b0"
+    },
+    {
+      "path": "asset_readiness.py",
+      "code": "B902",
+      "source": "except Exception:",
+      "fingerprint": "7d17aaaa6d1f4fadd680d0123d3ecb05f6abb97f3002cd835ffa288308ef1c83"
+    },
+    {
+      "path": "catalog_repository.py",
+      "code": "B902",
+      "source": "except Exception as exc:",
+      "fingerprint": "f31242d782d859c7748ee4d94dfe548bde7ae3c4c84b1419ff938b4b08667d0c"
+    },
+    {
+      "path": "catalog_repository.py",
+      "code": "B902",
+      "source": "except Exception as restore_exc: # pragma: no cover - rare IO issue.",
+      "fingerprint": "18f23cd29478b0a819b3af7750fb5e7092ae969785147a7a0395b9fb0fd33ca2"
+    },
+    {
+      "path": "catalog_repository.py",
+      "code": "B902",
+      "source": "except Exception: # pragma: no cover - optional on non-POSIX.",
+      "fingerprint": "9f4b1e9bbfe48f6976f75ee9161db48d31bc2de3352c70879665b8fbf44460b4"
+    },
+    {
+      "path": "check_and_fix_images.py",
+      "code": "B902",
+      "source": "except Exception as e:",
+      "fingerprint": "dccbb3b0e621216e1258aa1a5c114a23cdb48fc3a7253cf5be167f8379dfcd4d"
+    },
+    {
+      "path": "check_and_fix_images.py",
+      "code": "B902",
+      "source": "except Exception:",
+      "fingerprint": "100174ea9a868efd6d8e4d81de76abba1ed7039c099fb718144dfadd122f6eb5"
+    },
+    {
+      "path": "cloud_asset_store.py",
+      "code": "B902",
+      "source": "except Exception:",
+      "fingerprint": "230dcf088082451427d146519657f19261584675359786d9b58cd81b4f8a038d"
+    },
+    {
+      "path": "copy_products.py",
+      "code": "B902",
+      "source": "except Exception as e:",
+      "fingerprint": "0d01b3edd0603181e5dac45b863dc7656963e9a5b2eaf9d40b2f8d0cb9de1d02"
+    },
+    {
+      "path": "copy_products.py",
+      "code": "B902",
+      "source": "except Exception:",
+      "fingerprint": "63c3bc8d486630c19f44e0cbb3dced2bd72587424e8a26532daf0a64f264c647"
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "source": "except (asyncio.TimeoutError, Exception):",
+      "fingerprint": "c7536b8d135ab30b8c5d605c8140dc8d34642f4e54001ccc7dd4db173a045554"
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "source": "except Exception as e:",
+      "fingerprint": "45ac2afb4e8260b749847b34159fc81a224e6cbe3a0c56193964e138409ae317"
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "source": "except Exception as error:",
+      "fingerprint": "b5225e2b2f359d8a7e2d5910562002437dec0f32b234fd4bdb15db6926d93687"
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "source": "except Exception as exc:",
+      "fingerprint": "fef6566c671e3cc32d99ef32009098855e4db3c13bf6247ed1c405326abeaeba"
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "source": "except Exception as fallback_exc:",
+      "fingerprint": "03109de0d983f311c881e77f978042187a7fca86091f256b81f6b68eb9af6d81"
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "source": "except Exception as restore_error:",
+      "fingerprint": "a57e96532cdfca04ba16b883401ce7286663f81f14c0e93331b6dbf7b9228c4c"
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "source": "except Exception as status_exc:",
+      "fingerprint": "4c462a26e6c2f1f17a5e087033a87bd55663c8dd753c751a27f65df1330c184f"
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "source": "except Exception as status_write_exc:",
+      "fingerprint": "075cd3442a99988580450ff725be24deca4e34d4436e34f346639872787658b4"
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "source": "except Exception:",
+      "fingerprint": "c46e234e55c245aa20b090158be934f36aad8597e93f2954538ae46eeb04fd94"
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "E722",
+      "source": "except:",
+      "fingerprint": "45df36dcc5f3d667d7c91cb1d56f16acacac95d158f5fb568edd627250f980a8"
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "E722",
+      "source": "except: pass",
+      "fingerprint": "05b7837f36de0be58006ec57cae049edcdf914d6f4e583aa9dbe1ddaf72192d6"
+    },
+    {
+      "path": "ebay_wp_dashboard/dashboard_app.py",
+      "code": "B902",
+      "source": "except Exception as e:",
+      "fingerprint": "10f4faa5ba5b2dc2878e2e9ab7965f591c5593961ae5734733fd78404da86dc5"
+    },
+    {
+      "path": "ebay_wp_dashboard/dashboard_app.py",
+      "code": "B902",
+      "source": "except Exception as exc:",
+      "fingerprint": "4fde4b860d574c4423e844b99cc0bbfacfa41be395a3d0c05f2b4671bdc42a66"
+    },
+    {
+      "path": "ebay_wp_dashboard/dashboard_app.py",
+      "code": "B902",
+      "source": "except Exception:",
+      "fingerprint": "97e2d53ca184520f46e22bf16e536a0f0683ef9ff45829ea9a2ccb3947d87b80"
+    },
+    {
+      "path": "ebay_wp_dashboard/ebay_auto_post.py",
+      "code": "B902",
+      "source": "except Exception as e:",
+      "fingerprint": "b4ce9680ffc47e1800925ce296572ef9551c5edd48b1d5997926fc2b542fe87b"
+    },
+    {
+      "path": "ebay_wp_dashboard/ebay_auto_post.py",
+      "code": "B902",
+      "source": "except Exception:",
+      "fingerprint": "9ae67f6738014c4ff849a67d1fa19db757903631060be703228c3f1cd278ff7e"
+    },
+    {
+      "path": "ebay_wp_dashboard/ebay_push_update.py",
+      "code": "B902",
+      "source": "except Exception as e:",
+      "fingerprint": "6c45f3b1614d037598b6e83fa3e77ffcc1b5569cc09ecfc22eda2eac5a26fe4f"
+    },
+    {
+      "path": "ebay_wp_dashboard/ebay_push_update.py",
+      "code": "B902",
+      "source": "except Exception:",
+      "fingerprint": "17d0e129b8446176e5a9189aa7f0c541577749a4f79ac11d3e98acb962a8e981"
+    },
+    {
+      "path": "ebay_wp_dashboard/excel_helpers.py",
+      "code": "B902",
+      "source": "except Exception:",
+      "fingerprint": "ab860ef2e75178251bf1361211fbdf19deeb0998e05fdf741a10ea903cf13995"
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "source": "except Exception as alt_btn_ex:",
+      "fingerprint": "bd6569878db841250d0bb69678386768763ee3d2063110df52ddf4745d2d2fb7"
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "source": "except Exception as chooser_err:",
+      "fingerprint": "ecd276b57f7f7a6da686554b9ebec1b024f907d70aa134b0734ef3ea48132390"
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "source": "except Exception as direct_err:",
+      "fingerprint": "d2d7d6cc26bb720832cbfde7b149e436ff5a724fc0d513030b9c20f6e48acfab"
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "source": "except Exception as e:",
+      "fingerprint": "179b6a4af6739dd1ebf54bea8572ad807197c69d73cd56210dcfe50913298db5"
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "source": "except Exception as e: print(f\" ⚠ tags: {e}\")",
+      "fingerprint": "6c88818977c1020652509d53c5eef140c12546dba7b7d9a5129f6c43dffab2ec"
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "source": "except Exception as err:",
+      "fingerprint": "120edb1a70ccfb7786a9b449512e8fb406320dbff370381cf916c5009149cdf1"
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "source": "except Exception as fc_err:",
+      "fingerprint": "29888312889405464a0ebac3bff56afff519f6ea9589602b5ed30d241ffb2f2b"
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "source": "except Exception as fill_ex:",
+      "fingerprint": "a5bacab25297a914b96e99c173a2cf155b3280c31994a47480eff5f7887b0b5d"
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "source": "except Exception as g_err:",
+      "fingerprint": "77dfc3e4c3019be60ff254aeb319f0adbd2dfdbe42d03397abf9d16f0855d1fb"
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "source": "except Exception as ss_ex:",
+      "fingerprint": "a4637e86f0d9643152583106da65229eccc7ef620a67f37f9f67a3dae240383a"
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "source": "except Exception as tag_clear_ex:",
+      "fingerprint": "260e6dbc5b1c8d24b0cd8e4e7edc17ae4864c68c38810fa59dd88d0c2f2dc5dc"
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "source": "except Exception as te:",
+      "fingerprint": "108acccb9656bc9f0257d6232eb089c084564d5477abdbb52065c5670dab8a42"
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "source": "except Exception:",
+      "fingerprint": "9fef1db09536521f7e61a375b33b7bbd65f395d09c71f01e522fc94f2f15e3e6"
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "source": "except Exception: pass",
+      "fingerprint": "bd814d25fadf310a51ea5a9188400cd4f61e337643e2861535a498bebcae0227"
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "E722",
+      "source": "except:",
+      "fingerprint": "49fa78359a98a7032f31cb8feecdd25c952cbd0bed9c188107b0047626ead152"
+    },
+    {
+      "path": "etsy_catalog.py",
+      "code": "B902",
+      "source": "except Exception as exc:",
+      "fingerprint": "2971241649ad1579c578010fd375788ac3311f6dffbc1b5fd1585848e3db48ca"
+    },
+    {
+      "path": "etsy_clean_duplicates.py",
+      "code": "B902",
+      "source": "except Exception:",
+      "fingerprint": "11ede65be21bce11a80e99bd9ba0bdb4f319791ea79be5ad1c622d4b5f135066"
+    },
+    {
+      "path": "etsy_fill_alt_texts.py",
+      "code": "B902",
+      "source": "except Exception as alt_btn_ex:",
+      "fingerprint": "88af05dab07b213cad83b526fab47d3c481db3455c4863e44d0c267d16d2ccbe"
+    },
+    {
+      "path": "etsy_fill_alt_texts.py",
+      "code": "B902",
+      "source": "except Exception as e:",
+      "fingerprint": "757ba561724d32b7ce5399a5fc4bc5151a751923e102871e887753c3876a2eaf"
+    },
+    {
+      "path": "etsy_fill_alt_texts.py",
+      "code": "B902",
+      "source": "except Exception as ex:",
+      "fingerprint": "44a1c2f43ea4390136a2bd57478c173996de2f09f0f48f5653359f0af3589ce5"
+    },
+    {
+      "path": "etsy_fill_alt_texts.py",
+      "code": "B902",
+      "source": "except Exception as g_err:",
+      "fingerprint": "c5985f0c8faa3d0aebcc694dd1ee4d5132f5beb8f36f73fba31826da3d9366a3"
+    },
+    {
+      "path": "etsy_fill_alt_texts.py",
+      "code": "B902",
+      "source": "except Exception as wait_ex:",
+      "fingerprint": "ff90a5f2c6f210cd4ccdfd39145a4b20638bff412ec8ed762c12d654252ed2a1"
+    },
+    {
+      "path": "etsy_fill_alt_texts.py",
+      "code": "E722",
+      "source": "except:",
+      "fingerprint": "9b9344b243a213fb92117100b1e7f6fbb043b388e11bb685c868f9192e2275d9"
+    },
+    {
+      "path": "etsy_push_update.py",
+      "code": "B902",
+      "source": "except Exception as chooser_err:",
+      "fingerprint": "aec54c6702f04bd30352697b3ad4f2f3d647636c82b63fbec2dc4e71556a628b"
+    },
+    {
+      "path": "etsy_push_update.py",
+      "code": "B902",
+      "source": "except Exception as direct_err:",
+      "fingerprint": "b05f957c3bbb322d3142b3f837680a831a0d729bf362cf35326fcb2ad33d8a64"
+    },
+    {
+      "path": "etsy_push_update.py",
+      "code": "B902",
+      "source": "except Exception as e:",
+      "fingerprint": "4b92f03877aaff0fe365715889186093dbaaa5fc57fba14d086c825b3000893c"
+    },
+    {
+      "path": "etsy_push_update.py",
+      "code": "B902",
+      "source": "except Exception as fc_err:",
+      "fingerprint": "43d9b7472555218d7adc004a0c3e33b8bbcd7403d6ba3240ee66c6028f435ee8"
+    },
+    {
+      "path": "etsy_push_update.py",
+      "code": "B902",
+      "source": "except Exception as ss_ex:",
+      "fingerprint": "f2235a4abf1471c1add6846a00c55ba79cb9e3f9d74f828f78f19c733fe8923e"
+    },
+    {
+      "path": "etsy_push_update.py",
+      "code": "B902",
+      "source": "except Exception:",
+      "fingerprint": "4dd6e7eb5e89162379e509ed2b200af7cf18935f095792a3a46b979b0dfc4fd2"
+    },
+    {
+      "path": "etsy_repair.py",
+      "code": "B902",
+      "source": "except Exception as e:",
+      "fingerprint": "31020a1680df0c904c05d21fce9909b243b0dc7e53810f5a8ed0e575a0bb99a3"
+    },
+    {
+      "path": "etsy_repair.py",
+      "code": "E722",
+      "source": "except: pass",
+      "fingerprint": "88ec26675b2232419094980b1d929a7d83828af89ec3991a91e6d592ee257030"
+    },
+    {
+      "path": "etsy_repair.py",
+      "code": "E722",
+      "source": "except: return tag",
+      "fingerprint": "ea1fa5642962a8cdf0c9d72b1bd4d41bd4040c925bb3881a0aba68476de28ce2"
+    },
+    {
+      "path": "etsy_retry_failed.py",
+      "code": "B902",
+      "source": "except Exception as e:",
+      "fingerprint": "2f0d62b07fe28157055f68ee28b79c7168250d2167d0cf15b1678d7936f92f03"
+    },
+    {
+      "path": "etsy_retry_failed.py",
+      "code": "E722",
+      "source": "except:",
+      "fingerprint": "3a99dba422ccb42c1d3b2f583093f8fd2895487fe85dd6e43df1c3bfc281a199"
+    },
+    {
+      "path": "etsy_scan_errors.py",
+      "code": "B902",
+      "source": "except Exception as e:",
+      "fingerprint": "031154044e25cfd76cc4f2dc3b56d553b72f0f4e7ff1ba2a2fd5ca545c19b8fc"
+    },
+    {
+      "path": "etsy_scan_errors.py",
+      "code": "E722",
+      "source": "except: pass",
+      "fingerprint": "37b7be03064772ab76337d6f651eb7a749acc4b11f1f68e3906a8a774fa22837"
+    },
+    {
+      "path": "etsy_shop_sync.py",
+      "code": "B902",
+      "source": "except Exception:",
+      "fingerprint": "a907b9937a76e1a9d72bb9e2c166dad76aea3baad15a2d61e2091e895f925357"
+    },
+    {
+      "path": "etsy_translate.py",
+      "code": "B902",
+      "source": "except Exception as e:",
+      "fingerprint": "75171f193ed3d317f1ed337927b7003f0be02316dd180c86ab7d75706300621d"
+    },
+    {
+      "path": "etsy_translate.py",
+      "code": "B902",
+      "source": "except Exception as ex:",
+      "fingerprint": "1ae6251c3667c590175f77fe3919ac3b4130863f2706f970daaad59116d75e85"
+    },
+    {
+      "path": "etsy_translate.py",
+      "code": "B902",
+      "source": "except Exception:",
+      "fingerprint": "935d5c08b873a098a886c458d11f4862f6bdfb604302ccba93b7d450d7e9d896"
+    },
+    {
+      "path": "etsy_translate_existing.py",
+      "code": "B902",
+      "source": "except Exception as e:",
+      "fingerprint": "c434485c74e42f4722f50856799127eb89e3151cfe62e6fb7794c18bee2a543c"
+    },
+    {
+      "path": "etsy_translate_existing.py",
+      "code": "B902",
+      "source": "except Exception as te:",
+      "fingerprint": "aab35cc4dafd174435da60fb455eebe76840181e4991ce918c465b761270400a"
+    },
+    {
+      "path": "etsy_translate_existing.py",
+      "code": "E722",
+      "source": "except:",
+      "fingerprint": "505c02caae9e86a15b87d9da442afd36891629c2dba3af1da7456374f9cb0223"
+    },
+    {
+      "path": "fill_english_tags.py",
+      "code": "B902",
+      "source": "except Exception as ex:",
+      "fingerprint": "560eb2667f658933efae7a8f11d8533659ca087c2643483cf1d74cfcf20b1f32"
+    },
+    {
+      "path": "fill_english_tags.py",
+      "code": "B902",
+      "source": "except Exception:",
+      "fingerprint": "14321f216fe081adb3d8a8c33d209b1218265509e6ad40c8ce9dc807bcfb8bbf"
+    },
+    {
+      "path": "fix_seo.py",
+      "code": "B902",
+      "source": "except Exception as e:",
+      "fingerprint": "eb2227d5b95cf924cea2d95a475940a0423952ff02208c089ef195c35047a4ea"
+    },
+    {
+      "path": "gumroad_auto_post.py",
+      "code": "B902",
+      "source": "except Exception as e:",
+      "fingerprint": "d3dce2b19ea18577463ee4f5f55cf0567c018616cefcae292421928b0e5c7542"
+    },
+    {
+      "path": "gumroad_auto_post.py",
+      "code": "B902",
+      "source": "except Exception:",
+      "fingerprint": "c8d9fcf5f1d4d3f1139d27a73832075f4389e327863511b61396d435a8cd6d4b"
+    },
+    {
+      "path": "job_store.py",
+      "code": "B902",
+      "source": "except Exception:",
+      "fingerprint": "cc3790d823cae1c254ea1164ed73b916526870d4e83ade585e1df945532a5290"
+    },
+    {
+      "path": "master_to_shop.py",
+      "code": "B902",
+      "source": "except Exception as exc:",
+      "fingerprint": "fa8822741e779393f4e885ce2a0e4cbe64b6281b6ed0112eaeff14b4945ce3b3"
+    },
+    {
+      "path": "master_to_shop.py",
+      "code": "B902",
+      "source": "except Exception:",
+      "fingerprint": "e53b42aef7c62da1b4cfd20fd06725ebde5c79a119e3c6868fbdc7e0830a0d24"
+    },
+    {
+      "path": "open_chrome_shop.py",
+      "code": "E722",
+      "source": "except:",
+      "fingerprint": "3848c6fdd745f7e9a8716b5c10c43bed78e6f5fd7b6381965248ac6678d678c4"
+    },
+    {
+      "path": "retranslate_para.py",
+      "code": "B902",
+      "source": "except Exception as ex:",
+      "fingerprint": "b80589e0839f4ab991725c21f5b8117eb7f221a4e429ac939381d71d5124baf1"
+    },
+    {
+      "path": "retry_missing_desc.py",
+      "code": "B902",
+      "source": "except Exception as ex:",
+      "fingerprint": "33cda925ec37ce1c1f7664e7a88c0d460a85669fbbc8efea46b91f49051b8633"
+    },
+    {
+      "path": "retry_missing_desc.py",
+      "code": "B902",
+      "source": "except Exception:",
+      "fingerprint": "86025fcee56a679ea6e499d8678116f6f60fce9465d904898c5b0bac3f6bd653"
+    },
+    {
+      "path": "run_translate_only.py",
+      "code": "B902",
+      "source": "except Exception as ex:",
+      "fingerprint": "c4d35c12f9d6752ad305975745130f95a5051b338ad43fe9d0814729ef1487c9"
+    },
+    {
+      "path": "runtime_identity.py",
+      "code": "B902",
+      "source": "except Exception:",
+      "fingerprint": "3e4623375d8f608b59371835fe24e9c65e367990d4d187e2c67f133e48007bd3"
+    },
+    {
+      "path": "scripts/temply_folder_renumber.py",
+      "code": "B902",
+      "source": "except Exception as exc:",
+      "fingerprint": "afb8d714ef6cda5f4ccd4050ba18f311e7a9e052c47fec1a29a109238c5eceab"
+    },
+    {
+      "path": "scripts/temply_folder_renumber.py",
+      "code": "B902",
+      "source": "except Exception as rollback_exc:",
+      "fingerprint": "1e53803310a60f19add4cc554d164ae55777ff6b8eaf4d07b2495f1e5b290183"
+    },
+    {
+      "path": "scripts/temply_folder_renumber.py",
+      "code": "B902",
+      "source": "except Exception:",
+      "fingerprint": "191e69dcb40ef3ec5e1eafa5972b3000d1430f0708369e9c300f92a4ed694313"
+    },
+    {
+      "path": "social_auto_post.py",
+      "code": "B902",
+      "source": "except Exception as alt_err:",
+      "fingerprint": "db5eb0d7dec8b597e6aed44947b1b45e1417cb28e5520c30d98e829967986da0"
+    },
+    {
+      "path": "social_auto_post.py",
+      "code": "B902",
+      "source": "except Exception as board_err:",
+      "fingerprint": "62f0fe2ee665ac18a77661252a1e7e4b2e9c85ab7192b939ecd1bc828f8b39e6"
+    },
+    {
+      "path": "social_auto_post.py",
+      "code": "B902",
+      "source": "except Exception as e:",
+      "fingerprint": "0afa9a9405ca098d7e8b2608768942ab14f8e901b857da7286d47d933d4bb181"
+    },
+    {
+      "path": "social_auto_post.py",
+      "code": "B902",
+      "source": "except Exception as exc:",
+      "fingerprint": "817825431291044736df0ce677eec52ea69faee05e723dbfa4f358e6b3b3f964"
+    },
+    {
+      "path": "social_auto_post.py",
+      "code": "B902",
+      "source": "except Exception as img_err:",
+      "fingerprint": "0c8159a306e215a13f00ca4eeb21ccd6e963586d5aaf83a56c9c5c894316dd56"
+    },
+    {
+      "path": "social_auto_post.py",
+      "code": "B902",
+      "source": "except Exception as record_error:",
+      "fingerprint": "64019e829a4b6971a62167fff77271d6737a514bdc95270642edb0b2c77fba02"
+    },
+    {
+      "path": "social_auto_post.py",
+      "code": "B902",
+      "source": "except Exception as sub_err:",
+      "fingerprint": "7a27fbf07d7aa6c41a604e1f4b34488067073a6f46d93294a7c1257d624b5b70"
+    },
+    {
+      "path": "social_auto_post.py",
+      "code": "B902",
+      "source": "except Exception:",
+      "fingerprint": "ac09156c416f20449ea93f443ac037b0b18ea01543b6209a5bb1c6e50ce9f543"
+    },
+    {
+      "path": "social_auto_post.py",
+      "code": "E722",
+      "source": "except:",
+      "fingerprint": "04024bccd5aa7b2069233588a597116c4e126d871c2876f8ae587d49ddd11e05"
+    },
+    {
+      "path": "social_auto_post.py",
+      "code": "E722",
+      "source": "except: pass",
+      "fingerprint": "3c76775dc291004303a4de95e1ce6f328131f92ca508a9b6bea06d4ef6159582"
+    },
+    {
+      "path": "social_post_store.py",
+      "code": "B902",
+      "source": "except Exception: # pragma: no cover - fallback for non-POSIX test runners",
+      "fingerprint": "b077dab31cecabc534ad4fefd05995103c60fe48f40f4875f97e71020913d283"
+    },
+    {
+      "path": "sync_factory_to_shop.py",
+      "code": "B902",
+      "source": "except Exception as e:",
+      "fingerprint": "4c5a8a91573690f14ed335927f4f232676bd7dadfab44ab03ebf620cf41cbdf7"
+    },
+    {
+      "path": "sync_factory_to_shop.py",
+      "code": "B902",
+      "source": "except Exception:",
+      "fingerprint": "ddf3ebc7788f4f05879652b6e97d6c14b58a30dd0c2295c581c335c5fe920ca2"
+    },
+    {
+      "path": "test_etsy_draft_delete.py",
+      "code": "B902",
+      "source": "except Exception:",
+      "fingerprint": "ffaf0abb3aca91ef296badc9f12a9167e0cc2691cc441408fce6abe631fa9c1a"
+    },
+    {
+      "path": "test_job_store.py",
+      "code": "B902",
+      "source": "except BaseException as error:",
+      "fingerprint": "fffb9c06c9914d3544b208dbac5cb474e810d3b171040af3f67887d02fba2c9f"
+    },
+    {
+      "path": "test_seo_fail.py",
+      "code": "B902",
+      "source": "except Exception as e:",
+      "fingerprint": "0491e90975e115ecb5d3d4c7d36bc035c5bb9d13d3a388bf010c2919d152fd1e"
+    },
+    {
+      "path": "test_social_post_store.py",
+      "code": "B902",
+      "source": "except Exception as exc: # pragma: no cover",
+      "fingerprint": "a1af7634a36f70afad7400d00687daa0e7e80b3fca549dcb6819b5dfe69043ef"
+    },
+    {
+      "path": "together_qwen.py",
+      "code": "B902",
+      "source": "except Exception as e:",
+      "fingerprint": "3e74f8c53f43b6ccdace55205dc57ad40142cfd81d5e3832fa21aba21d733cb4"
+    }
+  ]
+}

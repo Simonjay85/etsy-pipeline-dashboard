@@ -5,33 +5,8 @@ from pathlib import Path
 import inspect
 import tempfile
 import types
-import sys
 import unittest
 from unittest.mock import patch
-
-if "deep_translator" not in sys.modules:
-    _fake_google = types.ModuleType("deep_translator")
-
-    class _FakeGoogleTranslator:
-        def __init__(self, source: str, target: str):
-            self.source = source
-            self.target = target
-
-        def translate(self, text: str):
-            return str(text)
-
-    _fake_google.GoogleTranslator = _FakeGoogleTranslator
-    sys.modules["deep_translator"] = _fake_google
-
-if "google" not in sys.modules:
-    _fake_google_pkg = types.ModuleType("google")
-    _fake_google_genai = types.ModuleType("google.genai")
-    _fake_google_types = types.ModuleType("google.genai.types")
-    _fake_google_genai.types = _fake_google_types
-    _fake_google_pkg.genai = _fake_google_genai
-    sys.modules["google"] = _fake_google_pkg
-    sys.modules["google.genai"] = _fake_google_genai
-    sys.modules["google.genai.types"] = _fake_google_types
 
 import etsy_auto_post
 
@@ -280,7 +255,8 @@ class TestDraftUrlBaselineVerification(unittest.IsolatedAsyncioTestCase):
             "sku": "NEW-394",
             "_draft_ids_before_create": ["101", "202"],
         }
-        page = types.SimpleNamespace(url="https://www.etsy.com/your/shops/me/tools/listings")
+        async def _noop_timeout(ms): pass
+        page = types.SimpleNamespace(url="https://www.etsy.com/your/shops/me/tools/listings", wait_for_timeout=_noop_timeout)
         cards = [
             {"id": "101", "title": "Existing One", "sku": "", "status": "draft"},
             {"id": "202", "title": "Existing Two", "sku": "", "status": "draft"},
@@ -298,7 +274,8 @@ class TestDraftUrlBaselineVerification(unittest.IsolatedAsyncioTestCase):
             "sku": "NEW-394",
             "_draft_ids_before_create": ["101"],
         }
-        page = types.SimpleNamespace(url="https://www.etsy.com/your/shops/me/tools/listings")
+        async def _noop_timeout(ms): pass
+        page = types.SimpleNamespace(url="https://www.etsy.com/your/shops/me/tools/listings", wait_for_timeout=_noop_timeout)
         cards = [
             {"id": "101", "title": "Existing One", "sku": "", "status": "draft"},
             {"id": "202", "title": "", "sku": "", "status": "draft"},
@@ -316,7 +293,8 @@ class TestDraftUrlBaselineVerification(unittest.IsolatedAsyncioTestCase):
             "sku": "NEW-394",
             "_draft_ids_before_create": ["101"],
         }
-        page = types.SimpleNamespace(url="https://www.etsy.com/your/shops/me/tools/listings")
+        async def _noop_timeout(ms): pass
+        page = types.SimpleNamespace(url="https://www.etsy.com/your/shops/me/tools/listings", wait_for_timeout=_noop_timeout)
         cards = [
             {"id": "101", "title": "Existing One", "sku": "", "status": "draft"},
         ]

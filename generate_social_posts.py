@@ -7,6 +7,7 @@ Social Media Content Generator
 """
 import sys, subprocess
 from pathlib import Path
+from medium_content import make_medium_research_article
 
 def ensure_deps():
     for mod, pkg in {"openpyxl": "openpyxl"}.items():
@@ -80,24 +81,8 @@ def make_twitter_post(title, etsy_url):
     return tweet[:280]
 
 def make_medium_intro(title, desc, tags, etsy_url):
-    tag_list = [t.strip() for t in tags.split(",") if t.strip()]
-    keywords_prose = ", ".join(tag_list[:5])
-
-    return f"""# {title}
-
-{desc}
-
----
-
-## Get It Now
-
-This is an **instant digital download** — you'll receive the file immediately after purchase. No waiting, no shipping.
-
-👉 **[Get it on Etsy]({etsy_url})**
-
----
-
-*Tags: {keywords_prose}*"""
+    """Compatibility wrapper for the shared Medium article builder."""
+    return make_medium_research_article(title, desc, tags, etsy_url)
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 def main():
@@ -171,7 +156,7 @@ def main():
         lines.append("\n```\n")
 
         # Medium
-        lines.append("### ✍️ MEDIUM (Blog Post)\n")
+        lines.append("### ✍️ MEDIUM (Research Article)\n")
         lines.append("```\n")
         lines.append(make_medium_intro(p["title"], p["desc"], p["tags"], p["etsy_url"]))
         lines.append("\n```\n")

@@ -1,0 +1,25 @@
+{
+  "source": "/Users/aaronnguyen/Downloads/2027-Bundle-Digital-Planner-Goodnotes-153024210/AMETHYST/GOOGLE/(AMETHYST) 2027 PLANNER MONDAY - GOOGLE CALENDAR.pdf",
+  "root_reviewed": "/Users/aaronnguyen/Developer/Etsy/working/2027-amethyst-google-calendar/source-review/single-source",
+  "file_count": 1,
+  "records": [
+    {
+      "path": "(AMETHYST) 2027 PLANNER MONDAY - GOOGLE CALENDAR.pdf",
+      "size_bytes": 16499393,
+      "sha256": "31f4a6efd40f312a77df6d3ebb2bdd43ae33789d6a64c0b2fb7874268c8e5cd1",
+      "extension": ".pdf",
+      "mime": "application/pdf",
+      "empty": false,
+      "pdf": {
+        "pages": 811,
+        "encrypted": false,
+        "text_chars": null,
+        "rendered_pages": 811,
+        "pdfinfo_ok": true,
+        "pdfinfo_error": null,
+        "text_extract_error": "pdftotext not installed"
+      }
+    }
+  ],
+  "warnings": []
+}

@@ -1,0 +1,102 @@
+{
+  "status": "PASS",
+  "expected_count": 10,
+  "actual_count": 10,
+  "ignored_non_listing_images": [],
+  "expected_size": [
+    2000,
+    2000
+  ],
+  "failures": [],
+  "warnings": [],
+  "images": [
+    {
+      "file": "01-hero.png",
+      "size_bytes": 2986986,
+      "width": 2000,
+      "height": 2000,
+      "mode": "RGB",
+      "grayscale_stddev": 63.19
+    },
+    {
+      "file": "02-format-collage.png",
+      "size_bytes": 2830538,
+      "width": 2000,
+      "height": 2000,
+      "mode": "RGB",
+      "grayscale_stddev": 53.62
+    },
+    {
+      "file": "03-toolkit-pop.png",
+      "size_bytes": 2627481,
+      "width": 2000,
+      "height": 2000,
+      "mode": "RGB",
+      "grayscale_stddev": 46.86
+    },
+    {
+      "file": "04-monthly-color.png",
+      "size_bytes": 2650762,
+      "width": 2000,
+      "height": 2000,
+      "mode": "RGB",
+      "grayscale_stddev": 66.03
+    },
+    {
+      "file": "05-daily-energy.png",
+      "size_bytes": 2534886,
+      "width": 2000,
+      "height": 2000,
+      "mode": "RGB",
+      "grayscale_stddev": 56.17
+    },
+    {
+      "file": "06-wellness-color.png",
+      "size_bytes": 3233224,
+      "width": 2000,
+      "height": 2000,
+      "mode": "RGB",
+      "grayscale_stddev": 56.74
+    },
+    {
+      "file": "07-weekly-pop.png",
+      "size_bytes": 2475147,
+      "width": 2000,
+      "height": 2000,
+      "mode": "RGB",
+      "grayscale_stddev": 58.96
+    },
+    {
+      "file": "08-navigation-tabs.png",
+      "size_bytes": 2926848,
+      "width": 2000,
+      "height": 2000,
+      "mode": "RGB",
+      "grayscale_stddev": 51.74
+    },
+    {
+      "file": "09-extras-color.png",
+      "size_bytes": 3500133,
+      "width": 2000,
+      "height": 2000,
+      "mode": "RGB",
+      "grayscale_stddev": 66.94
+    },
+    {
+      "file": "10-thank-you-color.png",
+      "size_bytes": 2985396,
+      "width": 2000,
+      "height": 2000,
+      "mode": "RGB",
+      "grayscale_stddev": 58.14
+    }
+  ],
+  "manual_checks_required": [
+    "thumbnail clarity and crop safety",
+    "overlay spelling and factual accuracy",
+    "source-faithful product content",
+    "digital/physical disclosure",
+    "AI artifacts, logos, watermarks, and IP risks",
+    "unique accurate alt text for all 10 images"
+  ]
+}

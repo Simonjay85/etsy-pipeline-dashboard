@@ -13,13 +13,20 @@ assert.ok(appJs.includes('⚠ Draft · chưa có link'), 'Unverified draft badge
 assert.ok(appJs.includes('openLinkEtsyFromLocal'), 'openLinkEtsyFromLocal missing');
 assert.ok(appJs.includes('/api/etsy/link-suggestions-for-folder/'), 'Folder link suggestions API call missing');
 assert.ok(appJs.includes('allow_manual: true'), 'Manual link submit must allow map without snapshot');
+assert.ok(
+  appJs.includes("await loadProducts({ throwOnError: true });"),
+  'A newly linked card must reload canonical product data so Sync/Update are rendered immediately',
+);
 
 const helperStart = appJs.indexOf('function productNeedsEtsyLink(p)');
 const helperEnd = appJs.indexOf('\nfunction productCard(p)', helperStart);
+const linkHelperStart = appJs.indexOf('function normalizeEtsyStatus');
+const linkHelperEnd = appJs.indexOf('// ── Init', linkHelperStart);
 assert.ok(helperStart >= 0 && helperEnd > helperStart, 'Unable to isolate productNeedsEtsyLink');
+assert.ok(linkHelperStart >= 0 && linkHelperEnd > linkHelperStart, 'Unable to isolate Etsy link helpers');
 const helperSource = appJs.slice(helperStart, helperEnd);
 const sandbox = { module: { exports: {} }, exports: {} };
-vm.runInNewContext(`${helperSource}\nmodule.exports = { productNeedsEtsyLink };`, sandbox);
+vm.runInNewContext(`${appJs.slice(linkHelperStart, linkHelperEnd)}\n${helperSource}\nmodule.exports = { productNeedsEtsyLink };`, sandbox);
 const { productNeedsEtsyLink } = sandbox.module.exports;
 
 assert.equal(
@@ -32,7 +39,7 @@ assert.equal(
 );
 assert.equal(
   productNeedsEtsyLink({ status: '✅ Đã đăng draft', etsy_url: 'https://www.etsy.com/listing/1' }),
-  false,
+  true,
 );
 assert.equal(
   productNeedsEtsyLink({ status: '⏳ Chờ đăng', etsy_url: '' }),

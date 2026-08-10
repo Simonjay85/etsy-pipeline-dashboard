@@ -11,7 +11,7 @@ _HAS_HTTPX = True  # assume available; will fail gracefully if not
 httpx = None       # lazy-loaded on first use
 from pathlib import Path
 from difflib import SequenceMatcher
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, Callable, Mapping, NoReturn, Optional, cast
 
 import runtime_identity
 import openpyxl
@@ -164,7 +164,7 @@ _DASHBOARD_MUTATION_TOKEN = secrets.token_urlsafe(32)
 
 
 def _env_flag_truthy(name: str) -> bool:
-    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on", "y"}
+    return (os.environ.get(name) or "").strip().lower() in {"1", "true", "yes", "on", "y"}
 
 
 def _dashboard_lan_mode() -> bool:
@@ -173,7 +173,7 @@ def _dashboard_lan_mode() -> bool:
 
 def _dashboard_allowlist_hosts() -> set[str]:
     hosts = set(_DASHBOARD_LOOPBACK_HOSTS)
-    raw = os.environ.get(_DASHBOARD_ALLOWED_HOSTS_ENV, "")
+    raw = os.environ.get(_DASHBOARD_ALLOWED_HOSTS_ENV) or ""
     for item in raw.split(","):
         host = item.strip().lower()
         if host:
@@ -265,7 +265,7 @@ async def _dashboard_security_middleware(request: Request, call_next):
 
 # Active SSE subscribers
 _log_subscribers: list[asyncio.Queue] = []
-_running_processes: dict[str, asyncio.subprocess.Process] = {}
+_running_processes: dict[str, asyncio.subprocess.Process | None] = {}
 _running_tasks: dict[str, asyncio.Task] = {}
 _product_create_lock = asyncio.Lock()
 _etsy_compare_lock = asyncio.Lock()
@@ -408,10 +408,12 @@ def _build_cloud_asset_store(config) -> CloudAssetStore:
 
 def get_cloud_asset_store() -> CloudAssetStore:
     global CLOUD_ASSET_STORE
-    if CLOUD_ASSET_STORE is None:
+    store = CLOUD_ASSET_STORE
+    if store is None:
         config = load_cloud_asset_config(BASE_DIR)
-        CLOUD_ASSET_STORE = _build_cloud_asset_store(config)
-    return CLOUD_ASSET_STORE
+        store = _build_cloud_asset_store(config)
+        CLOUD_ASSET_STORE = store
+    return store
 
 
 async def _get_cloud_asset_mutation_lock(product_key: str) -> asyncio.Lock:
@@ -731,7 +733,7 @@ def _product_folder_number(folder_name: str) -> Optional[int]:
     match = re.fullmatch(r"product-(\d+)", str(folder_name or "").strip())
     return int(match.group(1)) if match else None
 
-def _validate_product_numbered_folder_name(folder: str) -> str:
+def _validate_product_numbered_folder_name(folder: object) -> str:
     normalized = str(folder or "").strip()
     if not normalized:
         raise HTTPException(400, "Tên folder không được để trống")
@@ -780,7 +782,8 @@ def _find_reusable_empty_product_slots(ws, shop_dir: Path) -> list[dict]:
     return sorted(slots, key=lambda slot: slot["number"])
 
 def _next_product_number(ws, shop_dir: Path, used_folders: Optional[set[str]] = None) -> int:
-    used_folders = used_folders or set()
+    if used_folders is None:
+        used_folders = set()
     max_product_num = 0
     for row_num in range(4, ws.max_row + 1):
         number = _product_folder_number(ws.cell(row=row_num, column=2).value)
@@ -805,7 +808,8 @@ def _allocate_product_slot(
     reusable_slots: Optional[list[dict]] = None,
     used_folders: Optional[set[str]] = None,
 ) -> dict:
-    used_folders = used_folders or set()
+    if used_folders is None:
+        used_folders = set()
     reusable_slots = reusable_slots if reusable_slots is not None else _find_reusable_empty_product_slots(ws, shop_dir)
     while reusable_slots:
         slot = reusable_slots.pop(0)
@@ -947,13 +951,15 @@ async def _read_optional_json_payload(request: Request | None) -> dict | None:
 
 def _get_job_store() -> JobStore:
     global _ETSY_JOB_STORE
-    if _ETSY_JOB_STORE is None:
+    store = _ETSY_JOB_STORE
+    if store is None:
         _DIAGNOSTICS_DIR.mkdir(parents=True, exist_ok=True)
-        _ETSY_JOB_STORE = JobStore(_JOB_STORE_PATH)
-        recovered = _ETSY_JOB_STORE.recover_running_jobs()
+        store = JobStore(_JOB_STORE_PATH)
+        _ETSY_JOB_STORE = store
+        recovered = store.recover_running_jobs()
         if recovered:
             broadcast(f"[JOB-STORE] ♻️ Đã đánh dấu {recovered} job đang chạy trước đó là failed")
-    return _ETSY_JOB_STORE
+    return store
 
 
 def _op_status_to_legacy(status: str | None) -> str:
@@ -999,6 +1005,26 @@ def _job_payload_for_frontend(job_record: dict[str, object] | None) -> dict | No
     return payload
 
 
+def _coerce_int(value: object, default: int = 0) -> int:
+    """Convert persisted JSON/SQLite scalar values without widening types."""
+    if isinstance(value, (int, float, str, bytes, bytearray)):
+        try:
+            return int(value)
+        except (TypeError, ValueError, OverflowError):
+            pass
+    return default
+
+
+def _coerce_float(value: object, default: float = 0.0) -> float:
+    """Convert persisted JSON/SQLite scalar values without raising on corrupt data."""
+    if isinstance(value, (int, float, str, bytes, bytearray)):
+        try:
+            return float(value)
+        except (TypeError, ValueError, OverflowError):
+            pass
+    return default
+
+
 def _job_center_payload(job_record: dict[str, object] | None) -> dict | None:
     """Return a compact, path-free record for the operator Job Center."""
     if not job_record:
@@ -1018,7 +1044,7 @@ def _job_center_payload(job_record: dict[str, object] | None) -> dict | None:
         "folder": str(job_record.get("folder") or ""),
         "listing_id": str(job_record.get("listing_id") or ""),
         "status": str(job_record.get("status") or ""),
-        "attempt_count": int(job_record.get("attempt_count") or 1),
+        "attempt_count": _coerce_int(job_record.get("attempt_count"), 1),
         "created_at": job_record.get("created_at"),
         "updated_at": job_record.get("updated_at"),
         "started_at": job_record.get("started_at"),
@@ -1054,7 +1080,7 @@ async def _queue_etsy_update_job(
             "listing_id": context.listing_id,
             "fields": fields,
             "shop_id": context.shop_id,
-            "created_at": float(job_record.get("created_at") or time.time()),
+            "created_at": _coerce_float(job_record.get("created_at"), time.time()),
             "row": context.row,
             "request_id": context.request_id,
             "last_message": "Runtime started; waiting for Chrome marker",
@@ -1094,7 +1120,7 @@ def _validate_product_etsy_identity(
     return context.shop_id, context.folder, context.listing_id
 
 
-def _raise_context_error(error: OperationContextError) -> None:
+def _raise_context_error(error: OperationContextError) -> NoReturn:
     message = str(error)
     if any(
         key in message
@@ -1878,7 +1904,8 @@ def _validate_etsy_image_bytes(image_bytes: bytes) -> tuple[bool, tuple[int, int
         try:
             with Image.open(fp) as img:
                 img.load()
-                return img.size[0] > 0 and img.size[1] > 0, tuple(img.size)
+                width, height = img.size
+                return width > 0 and height > 0, (width, height)
         except Exception:
             return False, None
 
@@ -2028,7 +2055,7 @@ async def _extract_editor_listing_images(
     *,
     timeout_ms: int = 8000,
     poll_ms: int = 250,
-) -> dict:
+) -> dict | list[Any]:
     """Prefer authenticated editor HTML for image URLs, fallback later if empty."""
     await _click_etsy_editor_tab(editor_page, "Photo & Video", "Photos")
     try:
@@ -2222,7 +2249,7 @@ async def _extract_public_listing_images(
     *,
     timeout_ms: int = 8000,
     poll_ms: int = 250,
-) -> dict:
+) -> dict | list[Any]:
     deadline = time.monotonic() + timeout_ms / 1000.0
     last_signature: tuple[int, tuple[str, ...], tuple[str, ...]] | None = None
     stable_count = 0
@@ -2960,6 +2987,10 @@ async def scrape_listing_details(
             "Hãy chờ lượt Sync hiện tại xong hoặc đóng bớt tab Etsy, rồi thử lại."
         )
 
+    if browser_ctx is None:
+        await pw.stop()
+        raise RuntimeError("Không khởi tạo được browser context cho phiên Etsy đã xác thực")
+
     # 3. Dùng profile + cdp này rồi xác nhận không được fallback sang bundled/headless.
     #   (Không mở context local khi CDP chưa sẵn sàng)
     if not connected_cdp:
@@ -3115,7 +3146,7 @@ async def scrape_listing_details(
         scrape_log.info("scrape complete (fields=%s)", sorted(k for k in result if k != "ok"))
         return result
     finally:
-        if not connected_cdp:
+        if browser_ctx is not None and not connected_cdp:
             await browser_ctx.close()
         await pw.stop()
 
@@ -3150,9 +3181,10 @@ def latest_etsy_manager_snapshot() -> dict:
     for listing in normalized.get("listings", []):
         item = dict(listing)
         listings.append(item)
+    snapshot_at = _snapshot_path_timestamp(latest)
     return {
         "source": str(latest),
-        "snapshotAt": _snapshot_path_timestamp(latest).isoformat(timespec="seconds") if _snapshot_path_timestamp(latest) else None,
+        "snapshotAt": snapshot_at.isoformat(timespec="seconds") if snapshot_at else None,
         "counts": counts,
         "raw_counts": raw_counts,
         "duplicate_count": normalized.get("duplicate_count", 0),
@@ -5173,7 +5205,7 @@ async def _sync_local_from_etsy(
     product_path: Path,
     excel_path: Path,
     sync_assets: bool = True,
-) -> tuple[dict, dict, dict, bool, str]:
+) -> tuple[dict, dict, dict, bool, list[str]]:
     """Pull metadata/assets from Etsy for a local row and persist synced fields."""
     sync_log = _ctx_logger("sync_local_from_etsy", shop=shop_id, listing_id=listing_id)
     sync_log.info("sync start (row=%s, product=%s)", row, product_path.name)
@@ -5611,7 +5643,7 @@ async def create_local_product_from_etsy(request: Request):
 
 
 @app.post("/api/products/{row}/sync-from-etsy")
-async def sync_from_etsy(row: int, request: Request = None):
+async def sync_from_etsy(row: int, request: Request = cast(Any, None)):
     p = get_product_by_row(row)
     payload = await _read_optional_json_payload(request)
     context = _resolve_update_context(row, p, payload, operation="etsy_sync_from")
@@ -6155,7 +6187,7 @@ def _job_context_from_record(job: dict[str, object]) -> OperationContext:
     listing_id = str(job.get("listing_id") or "").strip()
     folder = str(job.get("folder") or "").strip()
     shop_id = str(job.get("shop_id") or "").strip()
-    row = int(job.get("row") or 0)
+    row = _coerce_int(job.get("row"), 0)
     if not listing_id or not folder or not shop_id or row < 1:
         raise HTTPException(409, "Job thiếu định danh an toàn để thao tác")
     try:
@@ -6519,6 +6551,8 @@ async def stop_all():
     store = _get_job_store()
     process_cleanup = []
     for key, proc in list(_running_processes.items()):
+        if proc is None:
+            continue
         try:
             proc.kill()
             killed.append(key)

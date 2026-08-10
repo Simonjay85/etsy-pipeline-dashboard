@@ -5,656 +5,2226 @@
     {
       "path": ".codex-tmp/activate_single_sync_fix.py",
       "code": "B902",
+      "scope": "main",
       "source": "except Exception as exc:",
-      "fingerprint": "171cff8a1f49ba9ff5c5c419f4b2a86b69cc2d0a518057d7d6c573b2879332f6"
+      "fingerprint": "5f9bbbc0291ef52399f3f6c089bee76e7bb1aa244bed9f978f246b4769ee23a5",
+      "count": 1
     },
     {
       "path": ".codex-tmp/activate_single_sync_fix.py",
       "code": "B902",
+      "scope": "main",
       "source": "except Exception:",
-      "fingerprint": "7e29407e31ba66e51e7a37eeb2baf36f785e090f373b4d76cf6d2a60ea2090cc"
+      "fingerprint": "fda00e577eb5fe2d82e6b3580cc0d1bb187fe46b8edde558bb8c3dfe42d95f23",
+      "count": 1
     },
     {
       "path": "asset_readiness.py",
       "code": "B902",
+      "scope": "verify_image",
       "source": "except Exception as exc: # pragma: no cover - backend dependent",
-      "fingerprint": "43f6e70ccfb1d720eaee107f73f5e86e77a3c4cf261023902a93a7876a33d9b0"
+      "fingerprint": "9c4db954f3a2fe9e9250c956010bd742c7b24499fa5265809969ae2f154a89f7",
+      "count": 1
     },
     {
       "path": "asset_readiness.py",
       "code": "B902",
+      "scope": "_normalized_path_key",
       "source": "except Exception:",
-      "fingerprint": "7d17aaaa6d1f4fadd680d0123d3ecb05f6abb97f3002cd835ffa288308ef1c83"
+      "fingerprint": "574fdbfca4c64e9dba37566a242235ce983d436782551bed6930d8b90196e825",
+      "count": 1
+    },
+    {
+      "path": "asset_readiness.py",
+      "code": "B902",
+      "scope": "verify_image",
+      "source": "except Exception:",
+      "fingerprint": "7b654624e71f78536b3e35daac439378603ef491679551b53e4d4eed6268ee43",
+      "count": 1
     },
     {
       "path": "catalog_repository.py",
       "code": "B902",
+      "scope": "apply_catalog_update",
       "source": "except Exception as exc:",
-      "fingerprint": "f31242d782d859c7748ee4d94dfe548bde7ae3c4c84b1419ff938b4b08667d0c"
+      "fingerprint": "3eda9c140c55e586d5de37d06fa2160cd614b633adda35babc6ade6b887c4a51",
+      "count": 1
     },
     {
       "path": "catalog_repository.py",
       "code": "B902",
+      "scope": "apply_catalog_update",
       "source": "except Exception as restore_exc: # pragma: no cover - rare IO issue.",
-      "fingerprint": "18f23cd29478b0a819b3af7750fb5e7092ae969785147a7a0395b9fb0fd33ca2"
+      "fingerprint": "53f7e44dc0287449ecbc2029e4108ecb14404515f0fe12007fd230119efabcd8",
+      "count": 1
     },
     {
       "path": "catalog_repository.py",
       "code": "B902",
+      "scope": "<module>",
       "source": "except Exception: # pragma: no cover - optional on non-POSIX.",
-      "fingerprint": "9f4b1e9bbfe48f6976f75ee9161db48d31bc2de3352c70879665b8fbf44460b4"
+      "fingerprint": "725c687ed7f14ad4d1b49f48751625bc4415b5b85f2b8dd3329b6279afa8bfff",
+      "count": 1
     },
     {
       "path": "check_and_fix_images.py",
       "code": "B902",
+      "scope": "main",
       "source": "except Exception as e:",
-      "fingerprint": "dccbb3b0e621216e1258aa1a5c114a23cdb48fc3a7253cf5be167f8379dfcd4d"
+      "fingerprint": "376e00dd23d9ad4124fe7b5f6354a3d73e16b96d7cc33f28747b97f2cf85ac84",
+      "count": 1
     },
     {
       "path": "check_and_fix_images.py",
       "code": "B902",
+      "scope": "count_images_on_page",
       "source": "except Exception:",
-      "fingerprint": "100174ea9a868efd6d8e4d81de76abba1ed7039c099fb718144dfadd122f6eb5"
+      "fingerprint": "cdea0ceb5d8ce308ebe82f20f1c5cc61715a1592c8793c40aaa373d7972d23ff",
+      "count": 2
+    },
+    {
+      "path": "check_and_fix_images.py",
+      "code": "B902",
+      "scope": "try_set_files_by_click",
+      "source": "except Exception:",
+      "fingerprint": "2f174b7da40a00437e369645f3dc2adb75edfddd3150135262bcfc0bf41b9466",
+      "count": 1
+    },
+    {
+      "path": "check_and_fix_images.py",
+      "code": "B902",
+      "scope": "try_set_files_by_input",
+      "source": "except Exception:",
+      "fingerprint": "8c590a65a94db33fd9002a90f9757805283d1fdc24e37b5fe3eca97e1c7b005e",
+      "count": 2
     },
     {
       "path": "cloud_asset_store.py",
       "code": "B902",
+      "scope": "_ensure_cloud_preview",
       "source": "except Exception:",
-      "fingerprint": "230dcf088082451427d146519657f19261584675359786d9b58cd81b4f8a038d"
+      "fingerprint": "148d4a9c4cfad0c86966f94db3e2a77a6a8482bc6d40cd489f6592be13dacaba",
+      "count": 1
+    },
+    {
+      "path": "cloud_asset_store.py",
+      "code": "B902",
+      "scope": "CloudAssetStore._hydrate_product_impl",
+      "source": "except Exception:",
+      "fingerprint": "5b5a9b0d9bfb9f222e0e013b925c1f2db885dbae641af7acdae6c40f2dbdcec0",
+      "count": 2
     },
     {
       "path": "copy_products.py",
       "code": "B902",
+      "scope": "apply_watermark",
       "source": "except Exception as e:",
-      "fingerprint": "0d01b3edd0603181e5dac45b863dc7656963e9a5b2eaf9d40b2f8d0cb9de1d02"
+      "fingerprint": "07ba9872c6c58f01f494de84c68c987132fcba41a6d74e46d63dddfd91fdfd51",
+      "count": 1
     },
     {
       "path": "copy_products.py",
       "code": "B902",
+      "scope": "copy_for_shop",
+      "source": "except Exception as e:",
+      "fingerprint": "8b4e4c7d6a861d15c2a0b514c76e19d76315b9e0cf094be82b029470b71ba5f9",
+      "count": 1
+    },
+    {
+      "path": "copy_products.py",
+      "code": "B902",
+      "scope": "check_excel_entry",
       "source": "except Exception:",
-      "fingerprint": "63c3bc8d486630c19f44e0cbb3dced2bd72587424e8a26532daf0a64f264c647"
+      "fingerprint": "2b448fd8d258df5d34dc077acf1fe7af2d484aa364438ae8f789f65112a560c3",
+      "count": 1
     },
     {
       "path": "dashboard_app.py",
       "code": "B902",
+      "scope": "_service_status_snapshot",
       "source": "except (asyncio.TimeoutError, Exception):",
-      "fingerprint": "c7536b8d135ab30b8c5d605c8140dc8d34642f4e54001ccc7dd4db173a045554"
+      "fingerprint": "60a2c1f39f0f2bc19bf543a24c443931fb193523656e1dd6eacc76ae0d75ef96",
+      "count": 1
     },
     {
       "path": "dashboard_app.py",
       "code": "B902",
+      "scope": "scrape_listing_details",
       "source": "except Exception as e:",
-      "fingerprint": "45ac2afb4e8260b749847b34159fc81a224e6cbe3a0c56193964e138409ae317"
+      "fingerprint": "09c8fa8c5141f468283cce5a05ca739df3eeae3bdff53eb9fe4a5a02bccd4b51",
+      "count": 1
     },
     {
       "path": "dashboard_app.py",
       "code": "B902",
+      "scope": "get_products",
+      "source": "except Exception as e:",
+      "fingerprint": "426138f6e4c7366151ba818ba92f1739fc9ac7771867e9b2807e9ddeff97dea6",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "download_images_background",
+      "source": "except Exception as e:",
+      "fingerprint": "2eb16004acdb637c643d9e46fe2d038204a0d43108547c17f45120feea62a481",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_run_etsy_shop_sync",
+      "source": "except Exception as e:",
+      "fingerprint": "72467bcf882d20d5e87cb83509acfda21cd1250b4b174874722ce1c3c80198d7",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "sync_from_etsy.run_listing_sync",
+      "source": "except Exception as e:",
+      "fingerprint": "ea2edca452c8aede29f7fdd0a2c7e08fa4099488c2790b8d3ae9116408b143f9",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_run_poster",
+      "source": "except Exception as e:",
+      "fingerprint": "c23678695ee8024f4e656e9ceb9b74529941635c5dc780974634052b183120bd",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_run_batch_poster",
+      "source": "except Exception as e:",
+      "fingerprint": "9181a3273b72eab4c616eb8d21458cb4f7685b45364d2c88fc8b360b1f70ca00",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_run_selected_poster",
+      "source": "except Exception as e:",
+      "fingerprint": "f01aa7ad068ffa2c7c8faa8c204b34dd5b576c321d93d4b88e74dbeb26cd0b25",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_run_regenerate",
+      "source": "except Exception as e:",
+      "fingerprint": "1899e15641ddecfb8d41b25f2b39b4c5bb4f74a9ba4e98fbae56dec9537403cd",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_run_seo",
+      "source": "except Exception as e:",
+      "fingerprint": "5b223fb6709bd218bf3fed727a39dc89df5e2d1cd02b900cc71f5289d71c5891",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_run_social_poster",
+      "source": "except Exception as e:",
+      "fingerprint": "1bbe31904517d0f3b999017cd499d4daa45a47554316b0be05cb9a6bc40ff8ed",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_run_social_poster_all",
+      "source": "except Exception as e:",
+      "fingerprint": "6e8354fb60ef862320d0760956ed0df3b7d2103bb38d7cda30b62e42646846d4",
+      "count": 2
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_run_social_bulk_poster",
+      "source": "except Exception as e:",
+      "fingerprint": "95518d229401d580690fe6cca79e610c90ff8412a441a55bb1360ceb088e4a49",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_run_gumroad_setup",
+      "source": "except Exception as e:",
+      "fingerprint": "a05f581e4716275b637d0620565bf2fab662e7e25487d51944022b85fdca17f8",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_run_gumroad_poster",
+      "source": "except Exception as e:",
+      "fingerprint": "28d5a55eb0fbe4bce748db728ae4a1fcb89d877bd636813ed8bab06ec48915e9",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "get_planner_png",
+      "source": "except Exception as e:",
+      "fingerprint": "8d878509900b7d2351982da00869002a98ace95e7a66ad9dede86db95d11b0bf",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "pdf_to_png",
+      "source": "except Exception as e:",
+      "fingerprint": "6763e619796f2e5f9d76f48ba56e400262d186deae8681e2c8e5cfd5ef62651a",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "convert_pdf_to_images",
+      "source": "except Exception as e:",
+      "fingerprint": "23c74e05859304396bf0b1ca6132fea79b688694219e75321c35121bb61191ab",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "imagegen_analyze",
+      "source": "except Exception as e:",
+      "fingerprint": "5584963414df6de46475c0bdef651d8d5a3b1c1733e7e69dba73c5f409fa4ec2",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "imagegen_analyze_bundle",
+      "source": "except Exception as e:",
+      "fingerprint": "2a00cadac68f341e0a9d9b76368f125eb04575d6b2557b081ec7e486841e62b1",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "imagegen_generate.stream",
+      "source": "except Exception as e:",
+      "fingerprint": "905202ca54fc1e67dfd8f88b2e7f6eff1112c612f5bb324c43dbfd500f305602",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "api_repair_listing",
+      "source": "except Exception as e:",
+      "fingerprint": "2cbe7ff18db908bc844c5dabed8df511c964dd2cf7d9b9dc9202b7a937de369b",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_read_delete_payload",
       "source": "except Exception as error:",
-      "fingerprint": "b5225e2b2f359d8a7e2d5910562002437dec0f32b234fd4bdb15db6926d93687"
+      "fingerprint": "87046cbdf689ae23aec183350f12c1bdee48f3ffa025dfd7a5c4e2e8be7bc192",
+      "count": 1
     },
     {
       "path": "dashboard_app.py",
       "code": "B902",
+      "scope": "_read_optional_json_payload",
+      "source": "except Exception as error:",
+      "fingerprint": "ddebf699c6a345fe7d81ac85a76ded2e4e23aab230446349b478fae4a13a01d9",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_set_selected_rows_pending",
+      "source": "except Exception as error:",
+      "fingerprint": "257ee98b0d1d721ebe1d89a16345acf6369667ee6cd2da24eff76eeabcd7ca2c",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "register_local_products",
+      "source": "except Exception as error:",
+      "fingerprint": "eeb7ebe856ffda4c57552bf2c17b78f2c889602c11e3f3382064e52a729ffc5d",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_batch_delete_unlocked",
+      "source": "except Exception as error:",
+      "fingerprint": "caeaad45712c1b7ce71dd75ef2cae85745b156008a445dd1828f04562e8932ce",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_delete_local_products_unlocked",
+      "source": "except Exception as error:",
+      "fingerprint": "e97e4adbc44425002e4ec2e8cc3fc33153b514b10e49945e477135180466c12a",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "run_selected_products",
+      "source": "except Exception as error:",
+      "fingerprint": "445294d4acb63ab8768494adf3ccbe0a8aadf6c6e4b863fd28d093055667a657",
+      "count": 2
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_run_queued_operation",
       "source": "except Exception as exc:",
-      "fingerprint": "fef6566c671e3cc32d99ef32009098855e4db3c13bf6247ed1c405326abeaeba"
+      "fingerprint": "fd94ca4b083bb1820e14cb5923fc45b492585d1c926e99117090f40ff2de8295",
+      "count": 1
     },
     {
       "path": "dashboard_app.py",
       "code": "B902",
+      "scope": "_runtime_prefetch_import_check",
+      "source": "except Exception as exc:",
+      "fingerprint": "59a9b18dd1ed08faa8f047680adc13b8f63f5745b57efeeae0efadd30d14129d",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_sync_listing_assets",
+      "source": "except Exception as exc:",
+      "fingerprint": "a61d1ebd47613992ff458726bdf4fc975e02c5299f6e16d43161df7cae146770",
+      "count": 7
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "scrape_listing_details",
+      "source": "except Exception as exc:",
+      "fingerprint": "0930f780d949b61c91f4e6e5cd77297778db137c6b650f14165083da628f21e9",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_read_cloud_asset_request",
+      "source": "except Exception as exc:",
+      "fingerprint": "01bb9d193f1aca09480881ae7f1961f279487eca6e341a260eefa80b23d9d4fe",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "cloud_assets_status",
+      "source": "except Exception as exc:",
+      "fingerprint": "eaeee05c934c18c36e75eb81ad65c62d9d53b5d6f7743be7603ea95a0fa30dfb",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_run_scheduled_cloud_uploads",
+      "source": "except Exception as exc:",
+      "fingerprint": "901c98e1556b6be1409059a066ebaa37569cd1bddc214e106595f3ae59c525d7",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_schedule_cloud_upload_and_verify.run_upload_verify",
+      "source": "except Exception as exc:",
+      "fingerprint": "74608dd009b592255ec1c2806f38976250f4037234e2877a0cb473403d0bc8ce",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_run_cloud_asset_mutation",
+      "source": "except Exception as exc:",
+      "fingerprint": "bcbc7a01285fd40d031d32be4ade2b4e22de389376935fe42a92cfd0bdd76637",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "cloud_assets_maintain",
+      "source": "except Exception as exc:",
+      "fingerprint": "ab055c92cedd32d85c06cf765b4d8bd427153fb3c463e9ad21596ad0cb80fb96",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "get_aggregate_products",
+      "source": "except Exception as exc:",
+      "fingerprint": "b211600f0f6da7afbb9241feb4efc135124c5e5f129af80dcaca2fc82ba8d339",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "merge_aggregate_duplicates",
+      "source": "except Exception as exc:",
+      "fingerprint": "7f5bc317787b10771e9b71e609032fc4ee90954a16d42097b9223626ff86bdb2",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "create_local_product_from_etsy",
+      "source": "except Exception as exc:",
+      "fingerprint": "2ff392cbc3c87040e7f0f5c52c1ae4cf18e4c83e3299193279561f43ed05b8b2",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "compare_local_product_with_etsy",
+      "source": "except Exception as exc:",
+      "fingerprint": "401ad0c14ae62e77b7d9cc6c27c519549ab7655e04c4270473931a5be63051ce",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_run_etsy_updater",
+      "source": "except Exception as exc:",
+      "fingerprint": "a297db17a2623d988657cfcf9bf9efb32787d86f4f018ff9b522e7b0d2f84b29",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "scrape_listing_details",
       "source": "except Exception as fallback_exc:",
-      "fingerprint": "03109de0d983f311c881e77f978042187a7fca86091f256b81f6b68eb9af6d81"
+      "fingerprint": "e6fa7bf836d5149be5799a44b47a0fee47ae7a54bc8889e4dd71d99b3c8e4f4e",
+      "count": 1
     },
     {
       "path": "dashboard_app.py",
       "code": "B902",
+      "scope": "_set_selected_rows_pending",
       "source": "except Exception as restore_error:",
-      "fingerprint": "a57e96532cdfca04ba16b883401ce7286663f81f14c0e93331b6dbf7b9228c4c"
+      "fingerprint": "7ac23f00ac91c0b68e3b5a789b4d099d0168f47ad68a08abf018dda07af106a9",
+      "count": 1
     },
     {
       "path": "dashboard_app.py",
       "code": "B902",
+      "scope": "_delete_local_products_unlocked",
+      "source": "except Exception as restore_error:",
+      "fingerprint": "666c3aac9f96d518b8cd0cf50e450685e57d99786b24ee9b8e3a52d257b51dd0",
+      "count": 2
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "create_local_product_from_etsy",
       "source": "except Exception as status_exc:",
-      "fingerprint": "4c462a26e6c2f1f17a5e087033a87bd55663c8dd753c751a27f65df1330c184f"
+      "fingerprint": "43b23600a31e523f892d5a4a811d116e253f80f6f19c5569509fe598f75a3816",
+      "count": 2
     },
     {
       "path": "dashboard_app.py",
       "code": "B902",
+      "scope": "create_local_product_from_etsy",
       "source": "except Exception as status_write_exc:",
-      "fingerprint": "075cd3442a99988580450ff725be24deca4e34d4436e34f346639872787658b4"
+      "fingerprint": "498c83cf14d240548e750a8a5c078cc8ac9fa4bca1e4d2c695b3bd2ad2658410",
+      "count": 1
     },
     {
       "path": "dashboard_app.py",
       "code": "B902",
+      "scope": "_terminate_subprocess",
       "source": "except Exception:",
-      "fingerprint": "c46e234e55c245aa20b090158be934f36aad8597e93f2954538ae46eeb04fd94"
+      "fingerprint": "5514a489b0a030b8dde5109fcf55d12637ad9706a4502dea443e7befd8166305",
+      "count": 7
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_read_optional_json_payload",
+      "source": "except Exception:",
+      "fingerprint": "0ecead8417c087fcc9eb01c609cba349863668073188950849624226363fdb7a",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "products_from_excel",
+      "source": "except Exception:",
+      "fingerprint": "7b766381cfb202ebf77fce2549eaa1063723a6df71dea7637318ad8e2226e053",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_is_etsy_auth_required_url",
+      "source": "except Exception:",
+      "fingerprint": "836cd7c7c01de38d56b83649489bbe44e348b6f13cc83dbf4185b211dc6687a8",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_is_etsy_host",
+      "source": "except Exception:",
+      "fingerprint": "17c06b66cc25d509e2905062b11b0f913a033b5ad501291c674f33fe2632df12",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_is_etsy_shop_manager_route",
+      "source": "except Exception:",
+      "fingerprint": "a3c720d3d48d4349eaf51a752a60d2f0b596cd5c3dc821eeae60d812e421653e",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_is_etsy_shop_public_route",
+      "source": "except Exception:",
+      "fingerprint": "9f4dc967d2d8d179161491091fc65ddc06d9a8e962b4b542de19e93a54497eb2",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_is_etsy_access_blocked_url",
+      "source": "except Exception:",
+      "fingerprint": "cbfcd6ff0df9f9c633d13a40c749deda7ec8f5dbf55de08d24ee6f64f19c6282",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_read_visible_text",
+      "source": "except Exception:",
+      "fingerprint": "8541c27d4bdd5159e2591d38dca0bbc4ade5be82de407fd8fed64a1fbe5cc2fa",
+      "count": 2
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_assert_etsy_editor_ready",
+      "source": "except Exception:",
+      "fingerprint": "80f09ab5e78e061ed349f77817572a0da18e29662a55ef67c47e8b08dcd1ee65",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_validate_etsy_image_bytes",
+      "source": "except Exception:",
+      "fingerprint": "a012dfd128dcc5dd0e7e1023a5a083d88cd826e26fb9e3feb815ebdd4e4be277",
+      "count": 2
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_click_etsy_editor_tab",
+      "source": "except Exception:",
+      "fingerprint": "690821d838a2c14a1497244f941685628501b88896708cc99c6c5ce251f17096",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_inspect_etsy_listing_assets",
+      "source": "except Exception:",
+      "fingerprint": "3c8720a39074c8783a9bf76546f662e86aeffdb80533d3efb34f7a10fa697bb5",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_extract_editor_listing_images",
+      "source": "except Exception:",
+      "fingerprint": "7a7a261562413392c808b9f6afe22a6bfd176c2237d3f2142edea12cdab2f499",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_sync_listing_assets._commit_staged_entries",
+      "source": "except Exception:",
+      "fingerprint": "0ed632a9d1cbbc67b269409828e7adaf26eb19114e4a65ca2e3e4735ad978fab",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "latest_etsy_manager_snapshot",
+      "source": "except Exception:",
+      "fingerprint": "6bf4aa18d755c62cf255daaf13a049c9bd98e4d55699a9659a646bcc130072c8",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_snapshot_path_timestamp",
+      "source": "except Exception:",
+      "fingerprint": "c08e5bdf1d6c3465c4dcf5ec7b8404a714bc35fb140278bff168de1e21bfd5f6",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_snapshot_path_timestamp_from_name",
+      "source": "except Exception:",
+      "fingerprint": "51e5b227dcc38f300c0859e1c554d6729f6caaf4d9d96592588711f3f642dc98",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "register_local_products",
+      "source": "except Exception:",
+      "fingerprint": "2b80c2a693c4ce89e946c0d935adaaeb3683fcf010e9b4738fe3d5df1c7213c0",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "download_images_background",
+      "source": "except Exception:",
+      "fingerprint": "cf231bc08c9500c8804bc476a3ed1e311ef2e1b4e586e6f04f8551024925066e",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_check_http_json_identity",
+      "source": "except Exception:",
+      "fingerprint": "f3c23d8bbd3d66ae04eff10f3878c667f621b1649d3a6d795a4dc20b387a1f4b",
+      "count": 2
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "create_local_product_from_etsy",
+      "source": "except Exception:",
+      "fingerprint": "e5e8fcff49b3f62d0dbdb5d2d67e8eb334383aa9cf850679c70c45535b9097ec",
+      "count": 4
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_seo_zip_member_samples",
+      "source": "except Exception:",
+      "fingerprint": "46c6b27336d8c7153f6d16f10cd3c534af4aa18ccf3061f305c26802b0d54c7c",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "run_selected_products",
+      "source": "except Exception:",
+      "fingerprint": "23ba7dfd658ff0db640370858d68b7a866a3750c64a5e7d982e1d7dfe89f0639",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "run_all_pending",
+      "source": "except Exception:",
+      "fingerprint": "9d51da3cb8fbc82bc4bd24393d1b1f27fccae3c6cb6655e81b3e80638a05ac73",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "stop_all",
+      "source": "except Exception:",
+      "fingerprint": "4463290e62b301b73c0d932a7db8759beee738fe20a857802f66d091604ba091",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "pdf_page_count",
+      "source": "except Exception:",
+      "fingerprint": "b98c805647752ffc57f451dfe1cc8b27f6d1e81028cf7adc89f415d422cee25d",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "api_scan_listings.event_stream",
+      "source": "except Exception:",
+      "fingerprint": "bb64b1d8fa9befbefcc83adbe138409084ee71ef0a06735c3ddb57fc0ae5d77a",
+      "count": 2
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "api_clean_duplicates.event_stream",
+      "source": "except Exception:",
+      "fingerprint": "190e6126675ca30f1433d64c7259e92df384e3d42c33332e178e9f80deed089c",
+      "count": 2
     },
     {
       "path": "dashboard_app.py",
       "code": "E722",
+      "scope": "products_from_excel.extract_num",
       "source": "except:",
-      "fingerprint": "45df36dcc5f3d667d7c91cb1d56f16acacac95d158f5fb568edd627250f980a8"
+      "fingerprint": "9f043012def19cf29a3f771f633064787c0947e69d5636d6c7fc7a604f539975",
+      "count": 1
     },
     {
       "path": "dashboard_app.py",
       "code": "E722",
+      "scope": "scrape_listing_details",
+      "source": "except:",
+      "fingerprint": "ae8d0ddef29ade5572b9ee31ab7056686272b7ec2c91d14aa01e55e532e00566",
+      "count": 3
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "E722",
+      "scope": "sync_to_shop",
+      "source": "except:",
+      "fingerprint": "3f3c710ec00d9192f8fc3c4a658100cc7ca823a122ccbda5ea9bbebd2e6d12ad",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "E722",
+      "scope": "_check_watcher_async",
+      "source": "except:",
+      "fingerprint": "3fefa427bca6d0231cebf6d7fa0cc02fb7878f420cc7d8ea4c84d63132530a2a",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "E722",
+      "scope": "regen_seo",
       "source": "except: pass",
-      "fingerprint": "05b7837f36de0be58006ec57cae049edcdf914d6f4e583aa9dbe1ddaf72192d6"
+      "fingerprint": "c00154f803f63b64bbf56399fda540e95b76def49d72791a9ae40bec2dd70276",
+      "count": 1
     },
     {
       "path": "ebay_wp_dashboard/dashboard_app.py",
       "code": "B902",
+      "scope": "_publish_woo_row",
       "source": "except Exception as e:",
-      "fingerprint": "10f4faa5ba5b2dc2878e2e9ab7965f591c5593961ae5734733fd78404da86dc5"
+      "fingerprint": "6d41053c89e4e040347962ea4b31ef3977605d064d2bd0729536db7593f76329",
+      "count": 1
     },
     {
       "path": "ebay_wp_dashboard/dashboard_app.py",
       "code": "B902",
+      "scope": "woo_sync",
+      "source": "except Exception as e:",
+      "fingerprint": "ff5492cb1a80c79fe80d60cd71274428cf4305894efe5c87210a0eae4d611e97",
+      "count": 1
+    },
+    {
+      "path": "ebay_wp_dashboard/dashboard_app.py",
+      "code": "B902",
+      "scope": "_publish_wp_post_row",
+      "source": "except Exception as e:",
+      "fingerprint": "cc4de2864eadd3fcccaaab79a27ed9b107a7b894be4739871ab5ac441e58fdd6",
+      "count": 1
+    },
+    {
+      "path": "ebay_wp_dashboard/dashboard_app.py",
+      "code": "B902",
+      "scope": "sync_posts_from_wp",
+      "source": "except Exception as e:",
+      "fingerprint": "d61600f72bc3d112d44009f7d5ed6f3a90e644c4b7b4b645d90315d1858eb2b4",
+      "count": 1
+    },
+    {
+      "path": "ebay_wp_dashboard/dashboard_app.py",
+      "code": "B902",
+      "scope": "_load_json_config",
       "source": "except Exception as exc:",
-      "fingerprint": "4fde4b860d574c4423e844b99cc0bbfacfa41be395a3d0c05f2b4671bdc42a66"
+      "fingerprint": "e09534a428217ed119052cdf9d90c45bb52ee6c9a542f3089c30b7bcee106a94",
+      "count": 1
     },
     {
       "path": "ebay_wp_dashboard/dashboard_app.py",
       "code": "B902",
+      "scope": "_terminate_process",
       "source": "except Exception:",
-      "fingerprint": "97e2d53ca184520f46e22bf16e536a0f0683ef9ff45829ea9a2ccb3947d87b80"
+      "fingerprint": "87161454d40e0cd418892a36a285cd06bc2e6452b2f54a62e240a89d1a9f7f0e",
+      "count": 2
+    },
+    {
+      "path": "ebay_wp_dashboard/dashboard_app.py",
+      "code": "B902",
+      "scope": "enrich_products",
+      "source": "except Exception:",
+      "fingerprint": "01b9f2fa4b16ec7a6f232776855b988d1abc4ba8e216d3c2db5c46bd7ad3046d",
+      "count": 1
+    },
+    {
+      "path": "ebay_wp_dashboard/dashboard_app.py",
+      "code": "B902",
+      "scope": "stop_all",
+      "source": "except Exception:",
+      "fingerprint": "22feaefde7224c84fe9bb6b62d5aa66e219dd99d22f7fe28e2be38cc62b344cd",
+      "count": 1
+    },
+    {
+      "path": "ebay_wp_dashboard/dashboard_app.py",
+      "code": "B902",
+      "scope": "_port_open",
+      "source": "except Exception:",
+      "fingerprint": "33c0e52b923c5b0dcae0e5aa87d0f20a361957895ab6e5dd2e1c27ab2ab88177",
+      "count": 1
     },
     {
       "path": "ebay_wp_dashboard/ebay_auto_post.py",
       "code": "B902",
+      "scope": "get_browser_context",
       "source": "except Exception as e:",
-      "fingerprint": "b4ce9680ffc47e1800925ce296572ef9551c5edd48b1d5997926fc2b542fe87b"
+      "fingerprint": "b15482fc927f71b557ba5b787992c7c505a6f0980f8b28f9a7d05e5712f10947",
+      "count": 1
     },
     {
       "path": "ebay_wp_dashboard/ebay_auto_post.py",
       "code": "B902",
-      "source": "except Exception:",
-      "fingerprint": "9ae67f6738014c4ff849a67d1fa19db757903631060be703228c3f1cd278ff7e"
-    },
-    {
-      "path": "ebay_wp_dashboard/ebay_push_update.py",
-      "code": "B902",
+      "scope": "post_product",
       "source": "except Exception as e:",
-      "fingerprint": "6c45f3b1614d037598b6e83fa3e77ffcc1b5569cc09ecfc22eda2eac5a26fe4f"
+      "fingerprint": "3079897cf9c4065ea5b8b57fdf4002812ec0ea1519a063c67e8517ab147629af",
+      "count": 1
+    },
+    {
+      "path": "ebay_wp_dashboard/ebay_auto_post.py",
+      "code": "B902",
+      "scope": "get_browser_context",
+      "source": "except Exception:",
+      "fingerprint": "91dcae7046c52a192609daff315050273478ae8e952354f6c88f25bf8f95e8b7",
+      "count": 1
+    },
+    {
+      "path": "ebay_wp_dashboard/ebay_auto_post.py",
+      "code": "B902",
+      "scope": "fill_listing",
+      "source": "except Exception:",
+      "fingerprint": "a79f1df6b1ac9e00411fc87203fccfd945fa76f66187fb383702f06f726bbba9",
+      "count": 1
     },
     {
       "path": "ebay_wp_dashboard/ebay_push_update.py",
       "code": "B902",
+      "scope": "push_product",
+      "source": "except Exception as e:",
+      "fingerprint": "1ab42c8355c69e42c17144ea78cb7c1d739835c84deb2118b1eb0a64a804e9fa",
+      "count": 1
+    },
+    {
+      "path": "ebay_wp_dashboard/ebay_push_update.py",
+      "code": "B902",
+      "scope": "push_product",
       "source": "except Exception:",
-      "fingerprint": "17d0e129b8446176e5a9189aa7f0c541577749a4f79ac11d3e98acb962a8e981"
+      "fingerprint": "fc22bad53f111c53df6dbf9029cbbfd5f2e73b559edd9b22d6e5dd6c74465328",
+      "count": 1
     },
     {
       "path": "ebay_wp_dashboard/excel_helpers.py",
       "code": "B902",
+      "scope": "products_from_excel.folder_num",
       "source": "except Exception:",
-      "fingerprint": "ab860ef2e75178251bf1361211fbdf19deeb0998e05fdf741a10ea903cf13995"
+      "fingerprint": "48147a38633a7a77900d60ee6a2149c84daa8c67c895fbfd73be22396c55571b",
+      "count": 1
     },
     {
       "path": "etsy_auto_post.py",
       "code": "B902",
+      "scope": "fill_image_alt_texts",
       "source": "except Exception as alt_btn_ex:",
-      "fingerprint": "bd6569878db841250d0bb69678386768763ee3d2063110df52ddf4745d2d2fb7"
+      "fingerprint": "56c529854a94212f62e2548bbb6b408e334de90ff08605184c2c15354c545df9",
+      "count": 1
     },
     {
       "path": "etsy_auto_post.py",
       "code": "B902",
+      "scope": "_upload_listing_photos",
       "source": "except Exception as chooser_err:",
-      "fingerprint": "ecd276b57f7f7a6da686554b9ebec1b024f907d70aa134b0734ef3ea48132390"
+      "fingerprint": "173bef3dde0b183eacf07ec8de2ae4446aabe759c735327de1c5916981dce455",
+      "count": 1
     },
     {
       "path": "etsy_auto_post.py",
       "code": "B902",
+      "scope": "_upload_listing_photos",
       "source": "except Exception as direct_err:",
-      "fingerprint": "d2d7d6cc26bb720832cbfde7b149e436ff5a724fc0d513030b9c20f6e48acfab"
+      "fingerprint": "3274932f679a90386da489f13f4ade36fbf1f8013e49d1ff7886fb9f670961ad",
+      "count": 1
     },
     {
       "path": "etsy_auto_post.py",
       "code": "B902",
+      "scope": "translate_text",
       "source": "except Exception as e:",
-      "fingerprint": "179b6a4af6739dd1ebf54bea8572ad807197c69d73cd56210dcfe50913298db5"
+      "fingerprint": "9d826b73225e761d8bad076ffa8c54358ac6b26e59c399b9c7875da10bfa4d83",
+      "count": 1
     },
     {
       "path": "etsy_auto_post.py",
       "code": "B902",
+      "scope": "smart_fill",
+      "source": "except Exception as e:",
+      "fingerprint": "97155bb2232c43d40799114f6876b47013dcae34031bc3eee00bbfe9cd042350",
+      "count": 1
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "scope": "generate_visual_alt_text",
+      "source": "except Exception as e:",
+      "fingerprint": "26e5d1be9d5422f0fa5dd79a86ddf402c1b5a06ba79c4bbe85598e64f3db9cb7",
+      "count": 2
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "scope": "fill_image_alt_texts",
+      "source": "except Exception as e:",
+      "fingerprint": "8972f557f04d041b8c7a0d70e6c095c7b8143636704daf76e0c2a695574d02fd",
+      "count": 1
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "scope": "fill_item_details_tab",
+      "source": "except Exception as e:",
+      "fingerprint": "5fa68a217125c7e98d663166deabaa8c50340ecb507ab0241e78666294fd92f7",
+      "count": 2
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "scope": "fill_item_options_tab",
+      "source": "except Exception as e:",
+      "fingerprint": "d518b390bc8fc87ba6442e5c648e9c4aa240d376ecfc0f0d45223273e6e23849",
+      "count": 5
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "scope": "upload_digital_files",
+      "source": "except Exception as e:",
+      "fingerprint": "73db4b89d273354e613028d5ff402a65907ee215f14387474462c42c5fdb6492",
+      "count": 1
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "scope": "fill_translations",
+      "source": "except Exception as e:",
+      "fingerprint": "cbfae5b54d83029117f6feab57fbdd83a69e39a4dde8bb325595f4961d03fc0d",
+      "count": 1
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "scope": "check_duplicate_draft",
+      "source": "except Exception as e:",
+      "fingerprint": "84fbcde6886b6c4551b7f64f6499fdbe6d4da1f892619a5511bf0b415fcd062b",
+      "count": 1
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "scope": "get_newly_created_listing_url",
+      "source": "except Exception as e:",
+      "fingerprint": "d160b036331402c4530160d8ae5ab7059dc9bbc5a2005a28fd6a76e73c1a31f8",
+      "count": 2
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "scope": "fill_listing",
+      "source": "except Exception as e:",
+      "fingerprint": "dd7fc812aec93b74603aac2764ebf16cc0c590f0da4339ef5a57405112a0ee9d",
+      "count": 1
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "scope": "main",
+      "source": "except Exception as e:",
+      "fingerprint": "233e2bd5e5a858c67750ca9f2bee82405f76124ac4438f3a420e84ca67d75caa",
+      "count": 1
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "scope": "fill_listing",
       "source": "except Exception as e: print(f\" ⚠ tags: {e}\")",
-      "fingerprint": "6c88818977c1020652509d53c5eef140c12546dba7b7d9a5129f6c43dffab2ec"
+      "fingerprint": "f6d2dad465f740881b30df81f5901011eef6d0badb775c278b29ebf3aaaeaef9",
+      "count": 1
     },
     {
       "path": "etsy_auto_post.py",
       "code": "B902",
+      "scope": "_force_draft_filter",
       "source": "except Exception as err:",
-      "fingerprint": "120edb1a70ccfb7786a9b449512e8fb406320dbff370381cf916c5009149cdf1"
+      "fingerprint": "02f30866fc470ac7d2366024703eded238f7d7a6a57bf00fc775e4b7f935b4ab",
+      "count": 1
     },
     {
       "path": "etsy_auto_post.py",
       "code": "B902",
+      "scope": "upload_digital_files",
       "source": "except Exception as fc_err:",
-      "fingerprint": "29888312889405464a0ebac3bff56afff519f6ea9589602b5ed30d241ffb2f2b"
+      "fingerprint": "c75be526502bb5a8c3f3d7bb6205726f588ed2f0c9ce4f46958c101aed35c90b",
+      "count": 1
     },
     {
       "path": "etsy_auto_post.py",
       "code": "B902",
+      "scope": "fill_item_details_tab",
       "source": "except Exception as fill_ex:",
-      "fingerprint": "a5bacab25297a914b96e99c173a2cf155b3280c31994a47480eff5f7887b0b5d"
+      "fingerprint": "86a8a7df67b8fa8299d2e068d195bb2b03a189e38878fb028dbfd6d51719d0d8",
+      "count": 1
     },
     {
       "path": "etsy_auto_post.py",
       "code": "B902",
+      "scope": "fill_translations",
+      "source": "except Exception as fill_ex:",
+      "fingerprint": "39b93c97910142c7ff8bf8b43b75581233ca3a862d2f7239b28c4cc01ecbd298",
+      "count": 1
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "scope": "fill_image_alt_texts",
       "source": "except Exception as g_err:",
-      "fingerprint": "77dfc3e4c3019be60ff254aeb319f0adbd2dfdbe42d03397abf9d16f0855d1fb"
+      "fingerprint": "391f1f7bd20c98e82febe318ff0d8cf05e8887e54d44c5d4085c9de73a8ab01d",
+      "count": 1
     },
     {
       "path": "etsy_auto_post.py",
       "code": "B902",
+      "scope": "fill_listing",
       "source": "except Exception as ss_ex:",
-      "fingerprint": "a4637e86f0d9643152583106da65229eccc7ef620a67f37f9f67a3dae240383a"
+      "fingerprint": "b8861fee0d858399509af696cf91d90b2f21536d6a2fcff7f4e2ef08e26cd59b",
+      "count": 1
     },
     {
       "path": "etsy_auto_post.py",
       "code": "B902",
+      "scope": "fill_item_details_tab",
       "source": "except Exception as tag_clear_ex:",
-      "fingerprint": "260e6dbc5b1c8d24b0cd8e4e7edc17ae4864c68c38810fa59dd88d0c2f2dc5dc"
+      "fingerprint": "b8fa0276cc852555fb0d1a916e61d82f9322ade3e291e05d1ee399cf7d6562e4",
+      "count": 1
     },
     {
       "path": "etsy_auto_post.py",
       "code": "B902",
+      "scope": "fill_translations",
       "source": "except Exception as te:",
-      "fingerprint": "108acccb9656bc9f0257d6232eb089c084564d5477abdbb52065c5670dab8a42"
+      "fingerprint": "c5a2b50616f34fe468ac466d3f68ab7c206c75c86a2dfcdb6ed48d03e21279f7",
+      "count": 1
     },
     {
       "path": "etsy_auto_post.py",
       "code": "B902",
+      "scope": "_load_shop_configs",
       "source": "except Exception:",
-      "fingerprint": "9fef1db09536521f7e61a375b33b7bbd65f395d09c71f01e522fc94f2f15e3e6"
+      "fingerprint": "79527dcd0c9cb859fd7e48cbd29d107ef0998c7669a05c5d4a834be3570ad5ea",
+      "count": 1
     },
     {
       "path": "etsy_auto_post.py",
       "code": "B902",
+      "scope": "_count_listing_image_thumbs",
+      "source": "except Exception:",
+      "fingerprint": "b70f532fe8e851e455d5c519ea9091d9c05d72eab62fb09304710f9158027fc4",
+      "count": 2
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "scope": "_wait_for_expected_image_count",
+      "source": "except Exception:",
+      "fingerprint": "f6daa0463e43a34c738fd6c2ee5d4797dd30d541139b025c14008c8673334189",
+      "count": 1
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "scope": "_editor_product_signature_matches",
+      "source": "except Exception:",
+      "fingerprint": "0f8f7405a9a7fea75f7b227ec6a406f406e65c8d936501cc4be81bc3f5c85fbc",
+      "count": 1
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "scope": "_wait_for_draft_grid_stable",
+      "source": "except Exception:",
+      "fingerprint": "f25fc82e42988561b3f10b45934b3098e31490aa8fc20b3ccfdb9ca26ed3115a",
+      "count": 1
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "scope": "translate_tag",
+      "source": "except Exception:",
+      "fingerprint": "46ee0aa071583c3417b17a1e44082632b3830a0e160da3f548b6ee456a3a8f48",
+      "count": 1
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "scope": "dismiss_alerts",
+      "source": "except Exception:",
+      "fingerprint": "65f45d7972f1d49e5e9d14ec1ea955cf3ed72173afcf966bffd73b82df676f0d",
+      "count": 2
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "scope": "fill_category_tab",
+      "source": "except Exception:",
+      "fingerprint": "2299b8cb6843f676124a053b836798bdd27977c375fc42529f1bfdce8269b49a",
+      "count": 1
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "scope": "upload_digital_files",
+      "source": "except Exception:",
+      "fingerprint": "30b6b47af25dfa68011d1cae6c6196b63f8f745e8411fe844730905e80d39580",
+      "count": 1
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "scope": "fill_translations",
+      "source": "except Exception:",
+      "fingerprint": "75c90577747bdd50f25d1ac737725132f238e6f213a3c92627473b8daa84c833",
+      "count": 3
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "scope": "fill_listing",
+      "source": "except Exception:",
+      "fingerprint": "80457c0b4ea536d49f57e12b4c61d5f3f4d7a3aa7fdd4af2e9ab874252011160",
+      "count": 3
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "scope": "fill_listing",
       "source": "except Exception: pass",
-      "fingerprint": "bd814d25fadf310a51ea5a9188400cd4f61e337643e2861535a498bebcae0227"
+      "fingerprint": "3bf0003156960dbffd4d1e9d82cae3d1a2fd82db23d217277d8ccf6ad7e1464e",
+      "count": 1
     },
     {
       "path": "etsy_auto_post.py",
       "code": "E722",
+      "scope": "fill_image_alt_texts",
       "source": "except:",
-      "fingerprint": "49fa78359a98a7032f31cb8feecdd25c952cbd0bed9c188107b0047626ead152"
+      "fingerprint": "b10a5082df40ac6f02a63cc86936bbe3e5d3ed9cea0fd89431c767bf6fc9cd8f",
+      "count": 2
     },
     {
       "path": "etsy_catalog.py",
       "code": "B902",
+      "scope": "merge_safe_duplicates",
       "source": "except Exception as exc:",
-      "fingerprint": "2971241649ad1579c578010fd375788ac3311f6dffbc1b5fd1585848e3db48ca"
+      "fingerprint": "4d38dc1922713fb176d97d3251960462132c1b477d14d8e73cfdc4624cebb78a",
+      "count": 1
     },
     {
       "path": "etsy_clean_duplicates.py",
       "code": "B902",
+      "scope": "main",
       "source": "except Exception:",
-      "fingerprint": "11ede65be21bce11a80e99bd9ba0bdb4f319791ea79be5ad1c622d4b5f135066"
+      "fingerprint": "15fd3ff892fc96c5e4c74c69c1f4e819bbfb6da3c568d834af54c849dbc6990f",
+      "count": 2
     },
     {
       "path": "etsy_fill_alt_texts.py",
       "code": "B902",
+      "scope": "fill_image_alt_texts",
       "source": "except Exception as alt_btn_ex:",
-      "fingerprint": "88af05dab07b213cad83b526fab47d3c481db3455c4863e44d0c267d16d2ccbe"
+      "fingerprint": "8f19b1834c9c417b954dbe4ae2e8c8f8175696c4bb85496032966f423da8ee2b",
+      "count": 1
     },
     {
       "path": "etsy_fill_alt_texts.py",
       "code": "B902",
+      "scope": "generate_visual_alt_text",
       "source": "except Exception as e:",
-      "fingerprint": "757ba561724d32b7ce5399a5fc4bc5151a751923e102871e887753c3876a2eaf"
+      "fingerprint": "8cef863442310ae6a62b00552ab80a66ba4197f359134bfffc2056a4240a1458",
+      "count": 1
     },
     {
       "path": "etsy_fill_alt_texts.py",
       "code": "B902",
+      "scope": "fill_image_alt_texts",
+      "source": "except Exception as e:",
+      "fingerprint": "b6291886e9025868e3851776d5eccc32555c48107626b58eade2e74dbf0c039e",
+      "count": 1
+    },
+    {
+      "path": "etsy_fill_alt_texts.py",
+      "code": "B902",
+      "scope": "main",
       "source": "except Exception as ex:",
-      "fingerprint": "44a1c2f43ea4390136a2bd57478c173996de2f09f0f48f5653359f0af3589ce5"
+      "fingerprint": "7e045f635bd28c0d9e3aa4f7c68de86e1fa3487386eb6054537a8a7a302c35d1",
+      "count": 1
     },
     {
       "path": "etsy_fill_alt_texts.py",
       "code": "B902",
+      "scope": "fill_image_alt_texts",
       "source": "except Exception as g_err:",
-      "fingerprint": "c5985f0c8faa3d0aebcc694dd1ee4d5132f5beb8f36f73fba31826da3d9366a3"
+      "fingerprint": "2d4ece1f1b1d16fced55eb7480f7fa889a40f7cdea4748f370d12f7795b3d7cc",
+      "count": 1
     },
     {
       "path": "etsy_fill_alt_texts.py",
       "code": "B902",
+      "scope": "main",
       "source": "except Exception as wait_ex:",
-      "fingerprint": "ff90a5f2c6f210cd4ccdfd39145a4b20638bff412ec8ed762c12d654252ed2a1"
+      "fingerprint": "842e7e9280c2ac118cb40a3d6825590326af10f88e4bba9581443d3dfdf00ae8",
+      "count": 1
     },
     {
       "path": "etsy_fill_alt_texts.py",
       "code": "E722",
+      "scope": "fill_image_alt_texts",
       "source": "except:",
-      "fingerprint": "9b9344b243a213fb92117100b1e7f6fbb043b388e11bb685c868f9192e2275d9"
+      "fingerprint": "d4a907b5fc08070b9a984182532a23524e991e756c6c59acddea2f7dcc23a2dc",
+      "count": 2
     },
     {
       "path": "etsy_push_update.py",
       "code": "B902",
+      "scope": "push_images.upload_photo_batch",
       "source": "except Exception as chooser_err:",
-      "fingerprint": "aec54c6702f04bd30352697b3ad4f2f3d647636c82b63fbec2dc4e71556a628b"
+      "fingerprint": "0a1f94cb361e30a738bdcf2f7f7f24b30f83ed7571ece68390bc570ba2eb1878",
+      "count": 1
     },
     {
       "path": "etsy_push_update.py",
       "code": "B902",
+      "scope": "push_images.upload_photo_batch",
       "source": "except Exception as direct_err:",
-      "fingerprint": "b05f957c3bbb322d3142b3f837680a831a0d729bf362cf35326fcb2ad33d8a64"
+      "fingerprint": "6ffde22abf2f18f478321d3f54be5672e515b1dc3a48719957f03c982e082635",
+      "count": 1
     },
     {
       "path": "etsy_push_update.py",
       "code": "B902",
+      "scope": "push_text_fields",
       "source": "except Exception as e:",
-      "fingerprint": "4b92f03877aaff0fe365715889186093dbaaa5fc57fba14d086c825b3000893c"
+      "fingerprint": "ea787eda4033f6a7f7d6e28e30202fd1eedfbf75cd2a152cfaed8af943d54978",
+      "count": 1
     },
     {
       "path": "etsy_push_update.py",
       "code": "B902",
+      "scope": "push_files",
+      "source": "except Exception as e:",
+      "fingerprint": "48a6062763679707b46972f4e4f88fdda74b2ad1deb22aa9bc051bd0a288188e",
+      "count": 2
+    },
+    {
+      "path": "etsy_push_update.py",
+      "code": "B902",
+      "scope": "save_listing",
+      "source": "except Exception as e:",
+      "fingerprint": "93819e58ce1685d74c85401935dec129e599e8f93cfb9e088ec81df9a8d5b4b6",
+      "count": 1
+    },
+    {
+      "path": "etsy_push_update.py",
+      "code": "B902",
+      "scope": "push_all",
+      "source": "except Exception as e:",
+      "fingerprint": "f0c26d9e6c1933da8d3d98bebaef1009d117f0b890ab4af2742d1f28cc597406",
+      "count": 1
+    },
+    {
+      "path": "etsy_push_update.py",
+      "code": "B902",
+      "scope": "main",
+      "source": "except Exception as e:",
+      "fingerprint": "5b76efc54bf42d6ca625a768e0a90cbcfee3488836989d9060b8717fd4b15a2f",
+      "count": 1
+    },
+    {
+      "path": "etsy_push_update.py",
+      "code": "B902",
+      "scope": "push_files",
       "source": "except Exception as fc_err:",
-      "fingerprint": "43d9b7472555218d7adc004a0c3e33b8bbcd7403d6ba3240ee66c6028f435ee8"
+      "fingerprint": "46577a5c48752d9b439900c17e13190096fb7e059abb12ddb48358129d4e1277",
+      "count": 1
     },
     {
       "path": "etsy_push_update.py",
       "code": "B902",
+      "scope": "save_listing",
       "source": "except Exception as ss_ex:",
-      "fingerprint": "f2235a4abf1471c1add6846a00c55ba79cb9e3f9d74f828f78f19c733fe8923e"
+      "fingerprint": "8a0c2a09f0074dc414fd61f71897d04a75ab9b23f5fec39a1daeafc2832e5f04",
+      "count": 1
     },
     {
       "path": "etsy_push_update.py",
       "code": "B902",
+      "scope": "assert_expected_shop",
       "source": "except Exception:",
-      "fingerprint": "4dd6e7eb5e89162379e509ed2b200af7cf18935f095792a3a46b979b0dfc4fd2"
+      "fingerprint": "93fba581ef3f4582ca996162df2af426b2f89bccd72683daa5db425a795cc0d6",
+      "count": 1
+    },
+    {
+      "path": "etsy_push_update.py",
+      "code": "B902",
+      "scope": "dismiss_alerts",
+      "source": "except Exception:",
+      "fingerprint": "725181991a73c2ed21700c48fd52804e11d549d4112c27ef9fa6d2144becb3ce",
+      "count": 2
+    },
+    {
+      "path": "etsy_push_update.py",
+      "code": "B902",
+      "scope": "smart_fill",
+      "source": "except Exception:",
+      "fingerprint": "f996dd39ca89cfdeb5cf1750873e0ebf055caf979c7cef4bd7f36e6abd3e26c4",
+      "count": 1
+    },
+    {
+      "path": "etsy_push_update.py",
+      "code": "B902",
+      "scope": "click_tab",
+      "source": "except Exception:",
+      "fingerprint": "88c3a5b9922a8d4bfff3a19c8184458deb7192f4518fa06504e6bac8485c46bb",
+      "count": 1
+    },
+    {
+      "path": "etsy_push_update.py",
+      "code": "B902",
+      "scope": "detect_form_type",
+      "source": "except Exception:",
+      "fingerprint": "c41bb1b9fd96242c085951886758a9f5775580b10b7a6776c97a6142817e8674",
+      "count": 1
+    },
+    {
+      "path": "etsy_push_update.py",
+      "code": "B902",
+      "scope": "push_text_fields",
+      "source": "except Exception:",
+      "fingerprint": "f0add84f2a6347740babe952a42ff91e3986bedd1a134ccc08fc65e2012ba006",
+      "count": 2
+    },
+    {
+      "path": "etsy_push_update.py",
+      "code": "B902",
+      "scope": "push_images.photo_count",
+      "source": "except Exception:",
+      "fingerprint": "69e6b37aab2c1366eea196cbd595795bfe47e3caec469a98ab6b7c2f7ee31ee3",
+      "count": 1
+    },
+    {
+      "path": "etsy_push_update.py",
+      "code": "B902",
+      "scope": "push_images",
+      "source": "except Exception:",
+      "fingerprint": "e23209fc2e47d618dcafc41a432d3d3997ab503d12fef5b2893923fe3a3a15c9",
+      "count": 1
+    },
+    {
+      "path": "etsy_push_update.py",
+      "code": "B902",
+      "scope": "push_images.upload_photo_batch",
+      "source": "except Exception:",
+      "fingerprint": "4c2e1172ae52cf1143c80e14bd6ded0d8393369761b7aa183f4ec7b798d8fb0f",
+      "count": 1
+    },
+    {
+      "path": "etsy_push_update.py",
+      "code": "B902",
+      "scope": "save_listing",
+      "source": "except Exception:",
+      "fingerprint": "e8caf2bf8781187a92543215bc6ddfe7cbfcf2c4f4a8c01c8a46815fef6a96c9",
+      "count": 8
+    },
+    {
+      "path": "etsy_push_update.py",
+      "code": "B902",
+      "scope": "push_all",
+      "source": "except Exception:",
+      "fingerprint": "2e13949b1b5d592dcf926756067505ad91382917ba309aad943bd9cde6a022a7",
+      "count": 3
+    },
+    {
+      "path": "etsy_push_update.py",
+      "code": "B902",
+      "scope": "main",
+      "source": "except Exception:",
+      "fingerprint": "4a0a849102e080cca5c642e49444b5a39dfc0d6b03e90532ace8aefe0b42929f",
+      "count": 3
     },
     {
       "path": "etsy_repair.py",
       "code": "B902",
+      "scope": "translate_text",
       "source": "except Exception as e:",
-      "fingerprint": "31020a1680df0c904c05d21fce9909b243b0dc7e53810f5a8ed0e575a0bb99a3"
+      "fingerprint": "f222e0b5038ef2ccfd403ac9a5c7758230013d19150507401e9a6afeb916e0cf",
+      "count": 1
+    },
+    {
+      "path": "etsy_repair.py",
+      "code": "B902",
+      "scope": "repair_listing",
+      "source": "except Exception as e:",
+      "fingerprint": "1b0f09d1799b652281d7c95869cc04dda878e51527a9c68809a9c07db7181dae",
+      "count": 2
+    },
+    {
+      "path": "etsy_repair.py",
+      "code": "B902",
+      "scope": "main",
+      "source": "except Exception as e:",
+      "fingerprint": "17a562795a66c32afacc0df44d52d72fd2acbe6132bcfd5b95da514e1e3b5711",
+      "count": 1
     },
     {
       "path": "etsy_repair.py",
       "code": "E722",
+      "scope": "repair_listing",
       "source": "except: pass",
-      "fingerprint": "88ec26675b2232419094980b1d929a7d83828af89ec3991a91e6d592ee257030"
+      "fingerprint": "ec5fc9d765c58f27a6604831d77960e10b432ec3453405fd5fad7351b716b55f",
+      "count": 2
     },
     {
       "path": "etsy_repair.py",
       "code": "E722",
+      "scope": "translate_tag",
       "source": "except: return tag",
-      "fingerprint": "ea1fa5642962a8cdf0c9d72b1bd4d41bd4040c925bb3881a0aba68476de28ce2"
+      "fingerprint": "b07a9efa1128e99f2b2bb7c3631825634d458f9cd4adb488dc938bba11e4b4c3",
+      "count": 1
     },
     {
       "path": "etsy_retry_failed.py",
       "code": "B902",
+      "scope": "main",
       "source": "except Exception as e:",
-      "fingerprint": "2f0d62b07fe28157055f68ee28b79c7168250d2167d0cf15b1678d7936f92f03"
+      "fingerprint": "91e37ef993cd1497202d17e1a1f3e729a00f9ba8ab53d71fe99b938207e1effc",
+      "count": 2
     },
     {
       "path": "etsy_retry_failed.py",
       "code": "E722",
+      "scope": "main._handle_dialog",
       "source": "except:",
-      "fingerprint": "3a99dba422ccb42c1d3b2f583093f8fd2895487fe85dd6e43df1c3bfc281a199"
+      "fingerprint": "8f9fc1c7e5ade8b6c7a2854795526433544614098f0ba189b13f77c9538efc88",
+      "count": 2
     },
     {
       "path": "etsy_scan_errors.py",
       "code": "B902",
+      "scope": "scan_listing",
       "source": "except Exception as e:",
-      "fingerprint": "031154044e25cfd76cc4f2dc3b56d553b72f0f4e7ff1ba2a2fd5ca545c19b8fc"
+      "fingerprint": "52e466c8ec4fe88e83c9e5aaabaf117a86977372d592ebddcd50c12a043f30d2",
+      "count": 1
+    },
+    {
+      "path": "etsy_scan_errors.py",
+      "code": "B902",
+      "scope": "main",
+      "source": "except Exception as e:",
+      "fingerprint": "6239510b40b04909f29cc2a7d019dce1c395791be99563c4049523e8e00c377d",
+      "count": 1
     },
     {
       "path": "etsy_scan_errors.py",
       "code": "E722",
+      "scope": "scan_listing",
       "source": "except: pass",
-      "fingerprint": "37b7be03064772ab76337d6f651eb7a749acc4b11f1f68e3906a8a774fa22837"
+      "fingerprint": "d6e12f90c247766793da2ec0b6f0f716d91895030b58b5893ed57204faf5975b",
+      "count": 2
     },
     {
       "path": "etsy_shop_sync.py",
       "code": "B902",
+      "scope": "configured_shop_slug",
       "source": "except Exception:",
-      "fingerprint": "a907b9937a76e1a9d72bb9e2c166dad76aea3baad15a2d61e2091e895f925357"
+      "fingerprint": "51eab3f8108dcba06db95e653f217d4e77c6483a3763a9f93a4c42e6350738e9",
+      "count": 1
+    },
+    {
+      "path": "etsy_shop_sync.py",
+      "code": "B902",
+      "scope": "choose_status_filter",
+      "source": "except Exception:",
+      "fingerprint": "c16120f2702ba04124e340ce062bff576ba9e0047c4e9936a0f4063b7baecb6c",
+      "count": 1
+    },
+    {
+      "path": "etsy_shop_sync.py",
+      "code": "B902",
+      "scope": "crawl_etsy_shop",
+      "source": "except Exception:",
+      "fingerprint": "8fd9586721c61c2f12459cbaff24c6b7881628e75694a5513d5fa09b4ff73129",
+      "count": 1
     },
     {
       "path": "etsy_translate.py",
       "code": "B902",
+      "scope": "fill_translation.fill_by_heading",
       "source": "except Exception as e:",
-      "fingerprint": "75171f193ed3d317f1ed337927b7003f0be02316dd180c86ab7d75706300621d"
+      "fingerprint": "b4b39b43232afff1edd0e3fe11f6efe87317f28c1f8442e2b0d19027b7d8b687",
+      "count": 1
     },
     {
       "path": "etsy_translate.py",
       "code": "B902",
+      "scope": "fill_translation",
+      "source": "except Exception as e:",
+      "fingerprint": "b9ab09f6ff841e6b973f1f372139ad35cb1bb0631d4941fe116eec0e4f86010b",
+      "count": 1
+    },
+    {
+      "path": "etsy_translate.py",
+      "code": "B902",
+      "scope": "main",
+      "source": "except Exception as e:",
+      "fingerprint": "fa8ec899c37aa8b917f4e9074ac96d7a3a464bfae721debeac1b6e66036aa598",
+      "count": 2
+    },
+    {
+      "path": "etsy_translate.py",
+      "code": "B902",
+      "scope": "build_translations",
       "source": "except Exception as ex:",
-      "fingerprint": "1ae6251c3667c590175f77fe3919ac3b4130863f2706f970daaad59116d75e85"
+      "fingerprint": "6477bbc732a40aa5bdf44a148268b813a45435160b4be81c786742755fcf4b50",
+      "count": 2
     },
     {
       "path": "etsy_translate.py",
       "code": "B902",
+      "scope": "crawl_listing_ids",
       "source": "except Exception:",
-      "fingerprint": "935d5c08b873a098a886c458d11f4862f6bdfb604302ccba93b7d450d7e9d896"
+      "fingerprint": "27b84b428a48d2c3794943475767bbbdfcba820b1761cadfbf27525c068009cd",
+      "count": 1
+    },
+    {
+      "path": "etsy_translate.py",
+      "code": "B902",
+      "scope": "fill_translation",
+      "source": "except Exception:",
+      "fingerprint": "a19cc6b8d598cfc50d527a67875efdc30f40dc85e393b91fca2891377974ecf5",
+      "count": 3
     },
     {
       "path": "etsy_translate_existing.py",
       "code": "B902",
+      "scope": "translate_text",
       "source": "except Exception as e:",
-      "fingerprint": "c434485c74e42f4722f50856799127eb89e3151cfe62e6fb7794c18bee2a543c"
+      "fingerprint": "a0a73f661ae4cd5effe50d9219313e2a168c22b3c71dcc6adea1c57960c95b88",
+      "count": 1
     },
     {
       "path": "etsy_translate_existing.py",
       "code": "B902",
+      "scope": "translate_listing",
+      "source": "except Exception as e:",
+      "fingerprint": "8670546cf2332e6934402376f61cfdf30128c5419e097b87aaa9a05d46845184",
+      "count": 2
+    },
+    {
+      "path": "etsy_translate_existing.py",
+      "code": "B902",
+      "scope": "main",
+      "source": "except Exception as e:",
+      "fingerprint": "8e09a40ac5bb5709c33b058bf8e39c1205e0029c4411ce1c7cb956c0fcfa1b84",
+      "count": 1
+    },
+    {
+      "path": "etsy_translate_existing.py",
+      "code": "B902",
+      "scope": "translate_listing",
       "source": "except Exception as te:",
-      "fingerprint": "aab35cc4dafd174435da60fb455eebe76840181e4991ce918c465b761270400a"
+      "fingerprint": "821a1b8bcb145a23da2d0eaa626447231771ee94abac12ef4dd2e4c3c218fffe",
+      "count": 1
     },
     {
       "path": "etsy_translate_existing.py",
       "code": "E722",
+      "scope": "translate_tag",
       "source": "except:",
-      "fingerprint": "505c02caae9e86a15b87d9da442afd36891629c2dba3af1da7456374f9cb0223"
+      "fingerprint": "5af81ce8c0075e48130afc2e2c8c10c6bcf22f76ef1c95bebcb7be371307fee3",
+      "count": 1
+    },
+    {
+      "path": "etsy_translate_existing.py",
+      "code": "E722",
+      "scope": "translate_listing",
+      "source": "except:",
+      "fingerprint": "dde8e87573e85dbcf1e2f6858b7d199942aa85c006e88d4a489697c0ff6ec99c",
+      "count": 6
+    },
+    {
+      "path": "etsy_translate_existing.py",
+      "code": "E722",
+      "scope": "main._handle_dialog",
+      "source": "except:",
+      "fingerprint": "27f0757e49389918f1dc38efb87da61a46023a4db91787731f2e3afba7effb50",
+      "count": 1
     },
     {
       "path": "fill_english_tags.py",
       "code": "B902",
+      "scope": "generate_tags",
       "source": "except Exception as ex:",
-      "fingerprint": "560eb2667f658933efae7a8f11d8533659ca087c2643483cf1d74cfcf20b1f32"
+      "fingerprint": "a1c5f2586fab853a0991f27eb0322e1dde1a4ababa780e87d0b3eece8ba946c0",
+      "count": 1
     },
     {
       "path": "fill_english_tags.py",
       "code": "B902",
+      "scope": "fill_english_tags",
+      "source": "except Exception as ex:",
+      "fingerprint": "e657bda11f21bc4627814f37d74cb6c55767ecbb9173093b5b5c36fc141eb83b",
+      "count": 1
+    },
+    {
+      "path": "fill_english_tags.py",
+      "code": "B902",
+      "scope": "main",
+      "source": "except Exception as ex:",
+      "fingerprint": "173669b98f478389b4410b2666736f70f62f8072f4d737f2982df044916a8b47",
+      "count": 1
+    },
+    {
+      "path": "fill_english_tags.py",
+      "code": "B902",
+      "scope": "generate_tags",
       "source": "except Exception:",
-      "fingerprint": "14321f216fe081adb3d8a8c33d209b1218265509e6ad40c8ce9dc807bcfb8bbf"
+      "fingerprint": "a3b6b066c1714b5a41d9dc52da10c5f78764bc43746bfed4034400f7e0bd702a",
+      "count": 1
+    },
+    {
+      "path": "fill_english_tags.py",
+      "code": "B902",
+      "scope": "fill_english_tags",
+      "source": "except Exception:",
+      "fingerprint": "b14a1e5b4ab9897c69a01c5e04082de7ccd5d9ca5619619b8b671bfa2dad190d",
+      "count": 3
+    },
+    {
+      "path": "fill_english_tags.py",
+      "code": "B902",
+      "scope": "main.safe_accept_dialog",
+      "source": "except Exception:",
+      "fingerprint": "c1e38ef7d46ed1c0c33fc2980c8331825afa26fc7a6fc200aeec4d82b7cb201e",
+      "count": 1
     },
     {
       "path": "fix_seo.py",
       "code": "B902",
+      "scope": "<module>",
       "source": "except Exception as e:",
-      "fingerprint": "eb2227d5b95cf924cea2d95a475940a0423952ff02208c089ef195c35047a4ea"
+      "fingerprint": "8adca94c67e04d7fdb339ce1de7cd9cf5cfcd4ec6f28e73b5ad39dad9a8db830",
+      "count": 1
     },
     {
       "path": "gumroad_auto_post.py",
       "code": "B902",
+      "scope": "upload_cover",
       "source": "except Exception as e:",
-      "fingerprint": "d3dce2b19ea18577463ee4f5f55cf0567c018616cefcae292421928b0e5c7542"
+      "fingerprint": "a31c34e6d1f58dcd6628f9cc7a63edf286a8f4e5b980bdba3d1e41b3bcca9ab5",
+      "count": 1
     },
     {
       "path": "gumroad_auto_post.py",
       "code": "B902",
+      "scope": "upload_thumbnail",
+      "source": "except Exception as e:",
+      "fingerprint": "a33d6e0a956456190c1e156ebef04b47bd0f76045b7d0fbcbe6ef9f1325ef885",
+      "count": 1
+    },
+    {
+      "path": "gumroad_auto_post.py",
+      "code": "B902",
+      "scope": "upload_previews",
+      "source": "except Exception as e:",
+      "fingerprint": "bb63a566fbb3ea2b20b0d41ae45ec98e81fd8d67ac8c9665135ab548fbcade1d",
+      "count": 1
+    },
+    {
+      "path": "gumroad_auto_post.py",
+      "code": "B902",
+      "scope": "upload_files",
+      "source": "except Exception as e:",
+      "fingerprint": "cdfcf7e5fe8e3c3cf4cd6869d747bd1dbc2f0019f5b532b64369dcceae794fe6",
+      "count": 1
+    },
+    {
+      "path": "gumroad_auto_post.py",
+      "code": "B902",
+      "scope": "fill_product",
+      "source": "except Exception as e:",
+      "fingerprint": "070b969e2d5834c7d4b1e14bf947d9df48328a296f46cc9edcdec5ed777b8a64",
+      "count": 1
+    },
+    {
+      "path": "gumroad_auto_post.py",
+      "code": "B902",
+      "scope": "main",
+      "source": "except Exception as e:",
+      "fingerprint": "3dce861d6785cc901e476558daa3cac2fc3fb35170fc560d24c2988532e6b5f5",
+      "count": 1
+    },
+    {
+      "path": "gumroad_auto_post.py",
+      "code": "B902",
+      "scope": "smart_fill",
       "source": "except Exception:",
-      "fingerprint": "c8d9fcf5f1d4d3f1139d27a73832075f4389e327863511b61396d435a8cd6d4b"
+      "fingerprint": "3e7d3c9252725f5b2b638e4bde6312b7f4a7099c9747fbd6368dee958a9a14c2",
+      "count": 1
+    },
+    {
+      "path": "gumroad_auto_post.py",
+      "code": "B902",
+      "scope": "fill_rich_text",
+      "source": "except Exception:",
+      "fingerprint": "f38e496c017bda19e0e023d5315267c4fbd081b28958db4baaa82e467a375a5d",
+      "count": 3
+    },
+    {
+      "path": "gumroad_auto_post.py",
+      "code": "B902",
+      "scope": "fill_by_label",
+      "source": "except Exception:",
+      "fingerprint": "66c084a6e98286b6d39a9a3124f67f7d820134b258cef7cd219a096b5c87506f",
+      "count": 1
+    },
+    {
+      "path": "gumroad_auto_post.py",
+      "code": "B902",
+      "scope": "try_file_chooser",
+      "source": "except Exception:",
+      "fingerprint": "19a8b39ead43b8284da88e20922c92ef24c135d61f5251949456de844ee39b14",
+      "count": 1
+    },
+    {
+      "path": "gumroad_auto_post.py",
+      "code": "B902",
+      "scope": "upload_previews",
+      "source": "except Exception:",
+      "fingerprint": "350953865ecfdd2dab69f7b06b39612f4cb52512c4560c2443f6c81fd30bdc17",
+      "count": 1
+    },
+    {
+      "path": "gumroad_auto_post.py",
+      "code": "B902",
+      "scope": "fill_product",
+      "source": "except Exception:",
+      "fingerprint": "f642000b3aecf64303fad08ce5ed7f492bf30c38cf534610308bf605bfc6db23",
+      "count": 1
+    },
+    {
+      "path": "gumroad_auto_post.py",
+      "code": "B902",
+      "scope": "main",
+      "source": "except Exception:",
+      "fingerprint": "72c45224440fca9ac0a1091d01a83da6ad6d9769d6d0ba1fd435c6ffd1a8b4ac",
+      "count": 2
     },
     {
       "path": "job_store.py",
       "code": "B902",
+      "scope": "JobRecord.to_dict",
       "source": "except Exception:",
-      "fingerprint": "cc3790d823cae1c254ea1164ed73b916526870d4e83ade585e1df945532a5290"
+      "fingerprint": "af285f92f1b3ce856db443ac4c284733af91c7912224c8d3308b0bdfd9d74444",
+      "count": 1
+    },
+    {
+      "path": "job_store.py",
+      "code": "B902",
+      "scope": "_stable_json",
+      "source": "except Exception:",
+      "fingerprint": "892eacf3c4f26f5613c08d3163d9efb97f4a70949b6871572d13008023e4fe3c",
+      "count": 1
     },
     {
       "path": "master_to_shop.py",
       "code": "B902",
+      "scope": "preflight",
       "source": "except Exception as exc:",
-      "fingerprint": "fa8822741e779393f4e885ce2a0e4cbe64b6281b6ed0112eaeff14b4945ce3b3"
+      "fingerprint": "4c4b56c40b88c3696d0badcda19d98331d8536249af4527e9dac0aa9fe1ea789",
+      "count": 1
     },
     {
       "path": "master_to_shop.py",
       "code": "B902",
+      "scope": "apply",
       "source": "except Exception:",
-      "fingerprint": "e53b42aef7c62da1b4cfd20fd06725ebde5c79a119e3c6868fbdc7e0830a0d24"
+      "fingerprint": "51310d03f760b1a7869369307a18622e231cb2c99463a44269cb1dd49cb69d57",
+      "count": 1
     },
     {
       "path": "open_chrome_shop.py",
       "code": "E722",
+      "scope": "kill_chrome_on_port",
       "source": "except:",
-      "fingerprint": "3848c6fdd745f7e9a8716b5c10c43bed78e6f5fd7b6381965248ac6678d678c4"
+      "fingerprint": "542ee044b82a1cb3ba4e742a112d79435be2c96d34457b69f4bbe2401d98cbad",
+      "count": 1
     },
     {
       "path": "retranslate_para.py",
       "code": "B902",
+      "scope": "translate_tag",
       "source": "except Exception as ex:",
-      "fingerprint": "b80589e0839f4ab991725c21f5b8117eb7f221a4e429ac939381d71d5124baf1"
+      "fingerprint": "9cf7292d3ac5453d5eb9c8fd7020348bbad425e366833f6ebe9bb2efb2575a63",
+      "count": 2
     },
     {
       "path": "retry_missing_desc.py",
       "code": "B902",
+      "scope": "extract_desc",
       "source": "except Exception as ex:",
-      "fingerprint": "33cda925ec37ce1c1f7664e7a88c0d460a85669fbbc8efea46b91f49051b8633"
+      "fingerprint": "233d2dabb7cd4051885ad1b37732c4716a0a72e46df8afcd939dfc8b73c6c535",
+      "count": 1
     },
     {
       "path": "retry_missing_desc.py",
       "code": "B902",
+      "scope": "extract_desc",
       "source": "except Exception:",
-      "fingerprint": "86025fcee56a679ea6e499d8678116f6f60fce9465d904898c5b0bac3f6bd653"
+      "fingerprint": "d90c940378e8df19acbc544a542f46680dbb8e68e5863e65730e1a1ff8b2dfbd",
+      "count": 1
     },
     {
       "path": "run_translate_only.py",
       "code": "B902",
+      "scope": "main",
       "source": "except Exception as ex:",
-      "fingerprint": "c4d35c12f9d6752ad305975745130f95a5051b338ad43fe9d0814729ef1487c9"
+      "fingerprint": "19cbb944a9861de52fa5897897dece66294eeb801e83556cacbbc2d5e0a86b00",
+      "count": 2
     },
     {
       "path": "runtime_identity.py",
       "code": "B902",
+      "scope": "_run_git",
       "source": "except Exception:",
-      "fingerprint": "3e4623375d8f608b59371835fe24e9c65e367990d4d187e2c67f133e48007bd3"
+      "fingerprint": "5dd4d6d91764767467282194bf3d8cdcfaa17a3d2ddd473e2784a366d75a0700",
+      "count": 1
+    },
+    {
+      "path": "runtime_identity.py",
+      "code": "B902",
+      "scope": "_read_launchctl_loaded_labels",
+      "source": "except Exception:",
+      "fingerprint": "f167b6f291feb6417242aa098e53cbb0b824f629326832c0b4ce1e8a3b53d920",
+      "count": 1
+    },
+    {
+      "path": "runtime_identity.py",
+      "code": "B902",
+      "scope": "runtime_process_start_time_iso",
+      "source": "except Exception:",
+      "fingerprint": "56679f43c107c2e615ebf98aa4baaad242b73354abd2cbfa0c062fbbb1f93657",
+      "count": 1
     },
     {
       "path": "scripts/temply_folder_renumber.py",
       "code": "B902",
+      "scope": "apply_plan",
       "source": "except Exception as exc:",
-      "fingerprint": "afb8d714ef6cda5f4ccd4050ba18f311e7a9e052c47fec1a29a109238c5eceab"
+      "fingerprint": "a5532f308f330b97486454c2f47935dc522c0fac22ce886b55b961cfeefc2416",
+      "count": 1
     },
     {
       "path": "scripts/temply_folder_renumber.py",
       "code": "B902",
+      "scope": "apply_plan",
       "source": "except Exception as rollback_exc:",
-      "fingerprint": "1e53803310a60f19add4cc554d164ae55777ff6b8eaf4d07b2495f1e5b290183"
+      "fingerprint": "222cb065afc3d044d15dce6fe31898037c20ae6e471553f3b03f4af3d474c244",
+      "count": 1
     },
     {
       "path": "scripts/temply_folder_renumber.py",
       "code": "B902",
+      "scope": "atomic_write_json",
       "source": "except Exception:",
-      "fingerprint": "191e69dcb40ef3ec5e1eafa5972b3000d1430f0708369e9c300f92a4ed694313"
+      "fingerprint": "3d90d05be1f6dfce83fc2cb01496d02e9de5ee8ee86e34db86b0ed7ddf339c16",
+      "count": 1
+    },
+    {
+      "path": "scripts/temply_folder_renumber.py",
+      "code": "B902",
+      "scope": "atomic_copy",
+      "source": "except Exception:",
+      "fingerprint": "405ad87e775617f3b63760a51f05cfdf18469e3c16965bb371b9a4a6b81ef368",
+      "count": 1
+    },
+    {
+      "path": "scripts/temply_folder_renumber.py",
+      "code": "B902",
+      "scope": "atomic_save_workbook",
+      "source": "except Exception:",
+      "fingerprint": "9178bcf11709402cf87f8cdb12c7ebdf2bd144bf340ebb2435e3d2bb5fa81731",
+      "count": 1
+    },
+    {
+      "path": "scripts/temply_folder_renumber.py",
+      "code": "B902",
+      "scope": "atomic_write_text",
+      "source": "except Exception:",
+      "fingerprint": "bfa856812f2133e987f5262dd833d62469aef51f41670f9a95d033dca79a7214",
+      "count": 1
     },
     {
       "path": "social_auto_post.py",
       "code": "B902",
+      "scope": "post_pinterest",
       "source": "except Exception as alt_err:",
-      "fingerprint": "db5eb0d7dec8b597e6aed44947b1b45e1417cb28e5520c30d98e829967986da0"
+      "fingerprint": "22c3262a955bfa39a275f14f33370d88a68fdf250f7f38f779bb4f00bf298ffb",
+      "count": 1
     },
     {
       "path": "social_auto_post.py",
       "code": "B902",
+      "scope": "post_pinterest",
       "source": "except Exception as board_err:",
-      "fingerprint": "62f0fe2ee665ac18a77661252a1e7e4b2e9c85ab7192b939ecd1bc828f8b39e6"
+      "fingerprint": "ab71f089e44c3b7d618070ac6c6e159a17acc18a6ed09d09b5d1f9ce9948b7cd",
+      "count": 1
     },
     {
       "path": "social_auto_post.py",
       "code": "B902",
+      "scope": "main",
       "source": "except Exception as e:",
-      "fingerprint": "0afa9a9405ca098d7e8b2608768942ab14f8e901b857da7286d47d933d4bb181"
+      "fingerprint": "5ce474368d1b734a984ffcd53d64da3e1699fac92742d18e704fd88f8d7766a7",
+      "count": 1
     },
     {
       "path": "social_auto_post.py",
       "code": "B902",
+      "scope": "post_instagram",
       "source": "except Exception as exc:",
-      "fingerprint": "817825431291044736df0ce677eec52ea69faee05e723dbfa4f358e6b3b3f964"
+      "fingerprint": "97f95947dc98d5d4818b635034fd198beae3935b8b6a5a69c091810323dbe3e6",
+      "count": 2
     },
     {
       "path": "social_auto_post.py",
       "code": "B902",
+      "scope": "main",
+      "source": "except Exception as exc:",
+      "fingerprint": "231b3e1fe69c392417008aedadd40ede52017230a27ed78761131474ecb56768",
+      "count": 1
+    },
+    {
+      "path": "social_auto_post.py",
+      "code": "B902",
+      "scope": "post_facebook",
       "source": "except Exception as img_err:",
-      "fingerprint": "0c8159a306e215a13f00ca4eeb21ccd6e963586d5aaf83a56c9c5c894316dd56"
+      "fingerprint": "510366d88475ea10abf1de0bbe5eebf94505cec66e421b8b9d4380cbaaa8322d",
+      "count": 1
     },
     {
       "path": "social_auto_post.py",
       "code": "B902",
+      "scope": "main",
       "source": "except Exception as record_error:",
-      "fingerprint": "64019e829a4b6971a62167fff77271d6737a514bdc95270642edb0b2c77fba02"
+      "fingerprint": "2afe6ebd4369b07d46df7db045f6c55d289f6c4dd98d5c92f27d483661531269",
+      "count": 1
     },
     {
       "path": "social_auto_post.py",
       "code": "B902",
+      "scope": "post_reddit",
       "source": "except Exception as sub_err:",
-      "fingerprint": "7a27fbf07d7aa6c41a604e1f4b34488067073a6f46d93294a7c1257d624b5b70"
+      "fingerprint": "feb9eee757667b6676f98874eb7ddc0164ee8f7eca11fe4a7322ad83db1584fc",
+      "count": 1
     },
     {
       "path": "social_auto_post.py",
       "code": "B902",
+      "scope": "_wait_for_confirmation",
       "source": "except Exception:",
-      "fingerprint": "ac09156c416f20449ea93f443ac037b0b18ea01543b6209a5bb1c6e50ce9f543"
+      "fingerprint": "af790ec02a91fee911d58fec99340e0f7a751b4374fdc32e0ccf39e84cb59a7b",
+      "count": 1
+    },
+    {
+      "path": "social_auto_post.py",
+      "code": "B902",
+      "scope": "_is_locator_disabled",
+      "source": "except Exception:",
+      "fingerprint": "3cf6e9ca835475b81c06437bc1a660aa7c92cd1dca9176d5fe472ccbf4789a35",
+      "count": 3
+    },
+    {
+      "path": "social_auto_post.py",
+      "code": "B902",
+      "scope": "_wait_for_pinterest_publish_result",
+      "source": "except Exception:",
+      "fingerprint": "a7e60a91bff416cbb2120a128e27820323fcda6f30b8a82405c6c1c97a8a5b6b",
+      "count": 1
+    },
+    {
+      "path": "social_auto_post.py",
+      "code": "B902",
+      "scope": "_fill_pinterest_title_with_dom_events",
+      "source": "except Exception:",
+      "fingerprint": "a3f7f5eaa236939168b0b62ab14ebecb6db1d04e6a728c2740b28f69e1bab9eb",
+      "count": 1
+    },
+    {
+      "path": "social_auto_post.py",
+      "code": "B902",
+      "scope": "_pinterest_board_needs_selection",
+      "source": "except Exception:",
+      "fingerprint": "c9a8ff69d7aeaea32d067f5756a95a459586ed86c9effec61af354266a1787e4",
+      "count": 3
+    },
+    {
+      "path": "social_auto_post.py",
+      "code": "B902",
+      "scope": "post_instagram",
+      "source": "except Exception:",
+      "fingerprint": "16b1117103289d249ea9cae75473e4aaad92d8202f1bb74646482aeeb33ea5ee",
+      "count": 1
+    },
+    {
+      "path": "social_auto_post.py",
+      "code": "B902",
+      "scope": "_dismiss_x_overlays",
+      "source": "except Exception:",
+      "fingerprint": "99aebf5954f827264230036ea0f91da150e215e4a694782089a51c7138fab77c",
+      "count": 1
+    },
+    {
+      "path": "social_auto_post.py",
+      "code": "B902",
+      "scope": "_locators_are_distinct",
+      "source": "except Exception:",
+      "fingerprint": "9353c78bea5ee07b9b2eed36b199aea66ee292e424d356f80a1fa1d31028b347",
+      "count": 1
+    },
+    {
+      "path": "social_auto_post.py",
+      "code": "B902",
+      "scope": "_read_medium_editor_text",
+      "source": "except Exception:",
+      "fingerprint": "6e55c4fd5c6b716fccc8cc49c9bdc9b14099e8fe937b28741c55e6b46682abe7",
+      "count": 1
     },
     {
       "path": "social_auto_post.py",
       "code": "E722",
+      "scope": "read_product_data",
       "source": "except:",
-      "fingerprint": "04024bccd5aa7b2069233588a597116c4e126d871c2876f8ae587d49ddd11e05"
+      "fingerprint": "041adffd0f74dff6593333d5c738201ccdc29e960b2c5a7171bb2c45190a6e84",
+      "count": 1
     },
     {
       "path": "social_auto_post.py",
       "code": "E722",
+      "scope": "post_pinterest",
       "source": "except: pass",
-      "fingerprint": "3c76775dc291004303a4de95e1ce6f328131f92ca508a9b6bea06d4ef6159582"
+      "fingerprint": "6be846846a30fbbf6a82ecd5c933bfe84ca00bb112697e0e2cbda0021a7f5e7a",
+      "count": 3
+    },
+    {
+      "path": "social_auto_post.py",
+      "code": "E722",
+      "scope": "post_facebook",
+      "source": "except: pass",
+      "fingerprint": "5468a1b8511a0979b116439979e6343c62d9479074b8bcecc69f12e943f565fa",
+      "count": 4
+    },
+    {
+      "path": "social_auto_post.py",
+      "code": "E722",
+      "scope": "post_reddit",
+      "source": "except: pass",
+      "fingerprint": "649ffef210a3e675e639c063874831d459be15d8de922337bcb784f29cf9ca8e",
+      "count": 3
     },
     {
       "path": "social_post_store.py",
       "code": "B902",
+      "scope": "<module>",
       "source": "except Exception: # pragma: no cover - fallback for non-POSIX test runners",
-      "fingerprint": "b077dab31cecabc534ad4fefd05995103c60fe48f40f4875f97e71020913d283"
+      "fingerprint": "4154033a3203fec32a7fdca1c5b2ce1a52c971d7cebf1c3ad55d5e93fe321d37",
+      "count": 1
     },
     {
       "path": "sync_factory_to_shop.py",
       "code": "B902",
+      "scope": "watch_folders",
       "source": "except Exception as e:",
-      "fingerprint": "4c5a8a91573690f14ed335927f4f232676bd7dadfab44ab03ebf620cf41cbdf7"
+      "fingerprint": "4b09238ff1c5f41fe7c08768f1c1534c89f768882534cc1c3dc1f5b4f9e359e7",
+      "count": 1
     },
     {
       "path": "sync_factory_to_shop.py",
       "code": "B902",
+      "scope": "is_folder_stable",
       "source": "except Exception:",
-      "fingerprint": "ddf3ebc7788f4f05879652b6e97d6c14b58a30dd0c2295c581c335c5fe920ca2"
+      "fingerprint": "bba747a9f073d90b9e6527ae01c8f94de43d67ac75ab2866e948d0c25f82b1e7",
+      "count": 1
     },
     {
       "path": "test_etsy_draft_delete.py",
       "code": "B902",
+      "scope": "TestEtsyDraftDelete._launch_browser",
       "source": "except Exception:",
-      "fingerprint": "ffaf0abb3aca91ef296badc9f12a9167e0cc2691cc441408fce6abe631fa9c1a"
+      "fingerprint": "c61976819f668dde981f8fe46321f99933d56bed532d09b551ec79b58d104b0e",
+      "count": 1
     },
     {
       "path": "test_job_store.py",
       "code": "B902",
+      "scope": "JobStoreTests.test_concurrent_create_is_idempotent.worker",
       "source": "except BaseException as error:",
-      "fingerprint": "fffb9c06c9914d3544b208dbac5cb474e810d3b171040af3f67887d02fba2c9f"
+      "fingerprint": "3ab95158a54b5ff916d0d6c0e7c588eaf5a056ab477a9a08575bf628e9d8878a",
+      "count": 1
     },
     {
       "path": "test_seo_fail.py",
       "code": "B902",
+      "scope": "<module>",
       "source": "except Exception as e:",
-      "fingerprint": "0491e90975e115ecb5d3d4c7d36bc035c5bb9d13d3a388bf010c2919d152fd1e"
+      "fingerprint": "3afd3794968bb4f551cf2dfae98f7021b373fe0260aed6ae40d2e934a4ded03a",
+      "count": 1
     },
     {
       "path": "test_social_post_store.py",
       "code": "B902",
+      "scope": "test_merge_updates_preserve_other_channels_and_posts_are_atomic.writer",
       "source": "except Exception as exc: # pragma: no cover",
-      "fingerprint": "a1af7634a36f70afad7400d00687daa0e7e80b3fca549dcb6819b5dfe69043ef"
+      "fingerprint": "8488f1c9c30a05e058e3cdeba8240b93eed04d252554d1555b89b6593601d108",
+      "count": 1
     },
     {
       "path": "together_qwen.py",
       "code": "B902",
+      "scope": "call_qwen",
       "source": "except Exception as e:",
-      "fingerprint": "3e74f8c53f43b6ccdace55205dc57ad40142cfd81d5e3832fa21aba21d733cb4"
+      "fingerprint": "fb0930a338a3361a7a41682531f9e73fcf4680cad0e8f272c6e73f673817f9ae",
+      "count": 1
+    },
+    {
+      "path": "together_qwen.py",
+      "code": "B902",
+      "scope": "generate_seo_description",
+      "source": "except Exception as e:",
+      "fingerprint": "2b3086c840d05fc2b2880b7324d07d4832ec1dc0b56ebcd50f0fd8c0da1c8bf1",
+      "count": 2
     }
   ]
 }

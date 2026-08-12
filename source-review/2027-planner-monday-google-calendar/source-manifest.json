@@ -1,0 +1,25 @@
+{
+  "source": "/Users/aaronnguyen/Downloads/2027-Bundle-Digital-Planner-Goodnotes-153024210/BEIGE/GOOGLE/(BEIGE) 2027 PLANNER MONDAY - GOOGLE CALENDAR.pdf",
+  "root_reviewed": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/source-review/2027-planner-monday-google-calendar/single-source",
+  "file_count": 1,
+  "records": [
+    {
+      "path": "(BEIGE) 2027 PLANNER MONDAY - GOOGLE CALENDAR.pdf",
+      "size_bytes": 16356753,
+      "sha256": "7cd32289b445060f6f17d21e8172301495c3a639f216e255561fff3cf31add59",
+      "extension": ".pdf",
+      "mime": "application/pdf",
+      "empty": false,
+      "pdf": {
+        "pages": null,
+        "encrypted": null,
+        "text_chars": null,
+        "rendered_pages": 0,
+        "pdfinfo_error": "pdfinfo not installed",
+        "text_extract_error": "pdftotext not installed",
+        "render_error": "pdftoppm not installed"
+      }
+    }
+  ],
+  "warnings": []
+}

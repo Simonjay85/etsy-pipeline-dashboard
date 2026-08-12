@@ -34,19 +34,6 @@ DEFAULT_RETENTION = int(os.environ.get("ETSY_BACKUP_RETENTION", "30"))
 RCLONE = os.environ.get("ETSY_BACKUP_RCLONE_BIN", "/opt/homebrew/bin/rclone")
 LOCK_PATH = Path(os.environ.get("ETSY_BACKUP_LOCK", "/tmp/etsy-backup.lock"))
 LOG_PATH = ROOT / "output" / "backup" / "backup.log"
-SOURCE_EXCLUDED_NAMES = {
-    ".cloud-assets.lock",
-}
-
-
-def is_excluded_source(path: Path) -> bool:
-    """Return true for known runtime/diagnostic files that should not be backed up."""
-    return path.name in SOURCE_EXCLUDED_NAMES
-
-
-def manifest_digest(manifest: dict[str, object]) -> str:
-    canonical = json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def log(message: str) -> None:
@@ -73,22 +60,15 @@ def is_dataless(path: Path) -> bool:
     return result.returncode == 0 and "dataless" in result.stdout
 
 
-def validate_source_file(path: Path) -> None:
-    if path.stat().st_size <= 0:
-        raise RuntimeError(f"source is zero-byte (hydrate it before backup): {path}")
-    if is_dataless(path):
-        raise RuntimeError(f"source is iCloud dataless (hydrate it before backup): {path}")
-
-
-def copy_file(source: Path, staging: Path, files: list[dict[str, object]], root: Path) -> None:
+def copy_file(source: Path, staging: Path, files: list[dict[str, object]]) -> None:
     if not source.is_file():
         log(f"skip missing file: {source}")
         return
-    if is_excluded_source(source):
-        log(f"skip excluded file: {source}")
-        return
-    validate_source_file(source)
-    relative = Path("files") / source.relative_to(root)
+    if is_dataless(source):
+        raise RuntimeError(
+            f"source is iCloud dataless (hydrate it before backup): {source}"
+        )
+    relative = Path("files") / source.relative_to(ROOT)
     destination = staging / relative
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, destination)
@@ -97,104 +77,52 @@ def copy_file(source: Path, staging: Path, files: list[dict[str, object]], root:
     )
 
 
-def copy_tree(source: Path, staging: Path, files: list[dict[str, object]], root: Path) -> None:
+def copy_tree(source: Path, staging: Path, files: list[dict[str, object]]) -> None:
     if not source.is_dir():
         log(f"skip missing directory: {source}")
         return
-    destination = staging / "files" / source.relative_to(root)
+    destination = staging / "files" / source.relative_to(ROOT)
     for item in sorted(source.rglob("*")):
         if item.is_symlink() or not item.is_file():
             continue
-        if is_excluded_source(item):
-            log(f"skip excluded file: {item}")
-            continue
-        validate_source_file(item)
+        if is_dataless(item):
+            raise RuntimeError(
+                f"source is iCloud dataless (hydrate it before backup): {item}"
+            )
         relative = item.relative_to(source)
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(item, target)
         files.append(
             {
-                "path": (Path("files") / source.relative_to(root) / relative).as_posix(),
+                "path": (Path("files") / source.relative_to(ROOT) / relative).as_posix(),
                 "size": target.stat().st_size,
                 "sha256": sha256(target),
             }
         )
 
 
-def collect_sources(kind: str, staging: Path, files: list[dict[str, object]], root: Path) -> None:
+def collect_sources(kind: str, staging: Path) -> list[dict[str, object]]:
+    files: list[dict[str, object]] = []
+
     # Live catalog workbooks are the authoritative spreadsheet sources.
-    copy_file(root / "Etsy_Listing_Template.xlsx", staging, files, root)
+    copy_file(ROOT / "Etsy_Listing_Template.xlsx", staging, files)
     for shop in ("daisyflowdigital", "templystudios"):
-        copy_file(root / "shops" / shop / "Etsy_SEO_Generator.xlsx", staging, files, root)
+        copy_file(ROOT / "shops" / shop / "Etsy_SEO_Generator.xlsx", staging, files)
 
     # Config, active-shop context, mapping and generated JSON snapshots.
     for name in ("shops_config.json", "product_source_map.json", "active_shop.txt"):
-        copy_file(root / name, staging, files, root)
-    for snapshot in sorted((root / "scratch").rglob("*.json")):
-        copy_file(snapshot, staging, files, root)
-    for report in sorted((root / "shops").glob("*/etsy_shop_sync_report_*.json")):
-        copy_file(report, staging, files, root)
+        copy_file(ROOT / name, staging, files)
+    for snapshot in sorted((ROOT / "scratch").rglob("*.json")):
+        copy_file(snapshot, staging, files)
+    for report in sorted((ROOT / "shops").glob("*/etsy_shop_sync_report_*.json")):
+        copy_file(report, staging, files)
 
     if kind == "weekly":
-        copy_tree(root / "master_products", staging, files, root)
+        copy_tree(ROOT / "master_products", staging, files)
         for shop in ("daisyflowdigital", "templystudios"):
-            copy_tree(root / "shops" / shop, staging, files, root)
-
-
-def make_snapshot_manifest(
-    kind: str,
-    staging: Path,
-    root: Path,
-    now: datetime,
-) -> tuple[Path, dict[str, object]]:
-    if kind not in {"daily", "weekly"}:
-        raise ValueError(kind)
-
-    files: list[dict[str, object]] = []
-    collect_sources(kind, staging, files, root)
-    if not files:
-        raise RuntimeError("no backup sources found")
-
-    snapshot_id = f"{kind}-{now.strftime('%Y%m%dT%H%M%SZ')}"
-    manifest = {
-        "schema": 1,
-        "snapshot_id": snapshot_id,
-        "kind": kind,
-        "created_at": now.isoformat(),
-        "repository": str(root),
-        "file_count": len(files),
-        "files": sorted(files, key=lambda item: str(item["path"])),
-    }
-    manifest_path = staging / "manifest.json"
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    return manifest_path, manifest
-
-
-def verify_snapshot(manifest_path: Path) -> None:
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if not isinstance(manifest, dict):
-        raise RuntimeError("manifest invalid: must be an object")
-
-    files = manifest.get("files")
-    if not isinstance(files, list):
-        raise RuntimeError("manifest invalid: missing file list")
-
-    staging = manifest_path.parent
-    for item in files:
-        if not isinstance(item, dict):
-            raise RuntimeError("manifest file entry invalid")
-        path = Path(str(item.get("path")))
-        expected_size = int(item.get("size", -1))
-        expected_hash = str(item.get("sha256", ""))
-
-        candidate = staging / path
-        if not candidate.is_file():
-            raise RuntimeError(f"manifest file missing: {path}")
-        if candidate.stat().st_size != expected_size:
-            raise RuntimeError(f"manifest size mismatch: {path}")
-        if sha256(candidate) != expected_hash:
-            raise RuntimeError(f"manifest hash mismatch: {path}")
+            copy_tree(ROOT / "shops" / shop, staging, files)
+    return files
 
 
 def run_rclone(args: list[str], dry_run: bool = False) -> None:
@@ -211,87 +139,62 @@ def run_rclone(args: list[str], dry_run: bool = False) -> None:
         raise RuntimeError(f"rclone exited with {completed.returncode}")
 
 
-def list_snapshots(remote: str, parent_id: str, kind: str, root: Path) -> list[str]:
+def retention(remote: str, parent_id: str, kind: str, keep: int, dry_run: bool) -> None:
     base = f"{remote}:{kind}"
     command = [RCLONE, "lsf", "--dirs-only", "--max-depth", "1", base, "--drive-root-folder-id", parent_id]
-    result = subprocess.run(command, cwd=root, text=True, capture_output=True)
+    result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True)
     if result.returncode:
         log("retention listing skipped: " + (result.stderr.strip() or "rclone error"))
-        return []
-    return sorted(line.strip().rstrip("/") for line in result.stdout.splitlines() if line.strip())
+        return
+    snapshots = sorted(line.strip().rstrip("/") for line in result.stdout.splitlines() if line.strip())
+    for old in snapshots[:-keep]:
+        run_rclone(["purge", f"{base}/{old}", "--drive-root-folder-id", parent_id], dry_run=dry_run)
 
 
-def plan_retention(remote: str, parent_id: str, kind: str, keep: int, root: Path) -> list[str]:
-    keep_count = max(1, keep)
-    snapshots = list_snapshots(remote, parent_id, kind, root)
-    return snapshots[:-keep_count]
-
-
-def retention(remote: str, parent_id: str, kind: str, keep: int, dry_run: bool, root: Path) -> None:
-    for old_snapshot in plan_retention(remote, parent_id, kind, keep, root):
-        run_rclone(
-            ["purge", f"{remote}:{kind}/{old_snapshot}", "--drive-root-folder-id", parent_id],
-            dry_run=dry_run,
-        )
-
-
-def make_snapshot(
-    kind: str,
-    remote: str,
-    parent_id: str,
-    keep: int,
-    dry_run: bool,
-    now: datetime | None = None,
-    root: Path | None = None,
-    preserve_staging: bool = False,
-) -> Path:
+def make_snapshot(kind: str, remote: str, parent_id: str, keep: int, dry_run: bool) -> Path:
     if kind not in {"daily", "weekly"}:
         raise ValueError(kind)
-
-    effective_root = root or ROOT
-    effective_now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-
-    snapshot_id = f"{kind}-{effective_now.strftime('%Y%m%dT%H%M%SZ')}"
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    snapshot_id = f"{kind}-{stamp}"
     staging_root = Path(tempfile.mkdtemp(prefix=f"etsy-{snapshot_id}-", dir="/tmp"))
     staging = staging_root / snapshot_id
     staging.mkdir()
     try:
-        manifest_path, manifest = make_snapshot_manifest(
-            kind=kind,
-            staging=staging,
-            root=effective_root,
-            now=effective_now,
-        )
-        verify_snapshot(manifest_path)
-        manifest_sha = manifest_digest(manifest)
-
+        files = collect_sources(kind, staging)
+        if not files:
+            raise RuntimeError("no backup sources found")
+        manifest = {
+            "schema": 1,
+            "snapshot_id": snapshot_id,
+            "kind": kind,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "repository": str(ROOT),
+            "file_count": len(files),
+            "files": sorted(files, key=lambda item: str(item["path"])),
+        }
+        manifest_path = staging / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         if dry_run:
-            retention(remote, parent_id, kind, keep, dry_run=True, root=effective_root)
-            log(
-                f"dry-run {snapshot_id}: {manifest['file_count']} files, "
-                f"manifest={manifest_path}, manifest_sha256={manifest_sha}"
+            log(f"dry-run {snapshot_id}: {len(files)} files, manifest={manifest_path}")
+        else:
+            run_rclone(
+                [
+                    "copy",
+                    str(staging),
+                    f"{remote}:{kind}/{snapshot_id}",
+                    "--drive-root-folder-id",
+                    parent_id,
+                    "--checkers",
+                    "4",
+                    "--transfers",
+                    "2",
+                ]
             )
-            return manifest_path
-
-        run_rclone(
-            [
-                "copy",
-                str(staging),
-                f"{remote}:{kind}/{snapshot_id}",
-                "--drive-root-folder-id",
-                parent_id,
-                "--checkers",
-                "4",
-                "--transfers",
-                "2",
-            ]
-        )
-        retention(remote, parent_id, kind, keep, dry_run=False, root=effective_root)
-        log(f"uploaded {snapshot_id}: {manifest['file_count']} files")
+            retention(remote, parent_id, kind, keep, dry_run=False)
+            log(f"uploaded {snapshot_id}: {len(files)} files")
         return manifest_path
     finally:
-        if not preserve_staging:
-            shutil.rmtree(staging_root, ignore_errors=True)
+        shutil.rmtree(staging_root, ignore_errors=True)
 
 
 def parse_args() -> argparse.Namespace:

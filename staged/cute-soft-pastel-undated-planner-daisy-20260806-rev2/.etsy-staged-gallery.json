@@ -1,0 +1,9 @@
+{
+  "schema": "etsy-staged-gallery-v1",
+  "shop_key": "daisy",
+  "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+  "campaign_id": "cute-soft-pastel-undated-planner-daisy-20260806",
+  "transaction_id": "daisy-cute-soft-pastel-undated-planner-20260806-01",
+  "image_dir": "images",
+  "plan_path": "working/etsy-image-plans/daisy-image-plan.json"
+}

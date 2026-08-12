@@ -1,21 +1,6 @@
 ## Imported Claude Cowork project instructions
 
-At the start of every conversation, immediately read the file /Users/aaronnguyen/Developer/Etsy/CLAUDE.md before doing anything else. This file contains the full workflow, folder structure, and instructions for this Etsy project. After reading it, you will understand the setup completely and won't need to ask clarifying questions for common tasks like "đăng sản phẩm lên Etsy", "generate SEO", "tình trạng sản phẩm", etc.
-
-## Canonical workspace (only root)
-
-This repository is the **only** canonical Etsy project. Resolve paths from the repo root (`Path(__file__).resolve().parent` for Python scripts living at root) — do not invent parallel hardcoded copies.
-
-| Role | Canonical path |
-|------|----------------|
-| Project root | `/Users/aaronnguyen/Developer/Etsy` |
-| Factory source | `/Users/aaronnguyen/Developer/Etsy/master_products` |
-| Shop data | `/Users/aaronnguyen/Developer/Etsy/shops` |
-| Backups | `/Users/aaronnguyen/Developer/Etsy/output/backup` |
-
-`/Users/aaronnguyen/Documents/Claude/Projects/Etsy` is an **obsolete duplicate**. Never use it as a source or destination for reads, writes, imports, syncs, or backups.
-
-Also see `master_products/AGENTS.md` and `shops/AGENTS.md` for factory vs shop rules.
+At the start of every conversation, immediately read the file /Users/aaronnguyen/Documents/Claude/Projects/Etsy/CLAUDE.md before doing anything else. This file contains the full workflow, folder structure, and instructions for this Etsy project. After reading it, you will understand the setup completely and won't need to ask clarifying questions for common tasks like "đăng sản phẩm lên Etsy", "generate SEO", "tình trạng sản phẩm", etc.
 
 ## Model workflow for project changes
 

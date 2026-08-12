@@ -4,11 +4,14 @@ venv/
 ENV/
 env/
 
-# Node modules
+# Local dependency trees
 node_modules
 
 # Browser sessions & caches (from Chrome automation)
 .browser-session/
+.browser-session
+.browser-session*/
+.playwright-cli/
 
 # Python cache
 __pycache__/
@@ -29,7 +32,7 @@ __pycache__/
 ehthumbs.db
 Thumbs.db
 
-# iCloud backup placeholders
+# iCloud recovery placeholders
 *.__icloud_bak
 
 # Logs & temp files
@@ -37,16 +40,15 @@ Thumbs.db
 *.tmp
 .~lock.*
 
-# Runtime state
-shops_config.json
+# Runtime state and private local configuration
 active_shop.txt
+shops_config.json
+*secrets*.json
+!*secrets*.example.json
 
-# Runtime diagnostics and cache artifacts (future runtime diagnostics/staging target)
+# Runtime diagnostics and generated failure artifacts
 .etsy-dashboard-diagnostics/
 diagnostics/
-output/backup/staging/
-
-# Screenshot/failure artifacts
 *failure*.png
 *screenshot*.png
 *error*.png
@@ -58,28 +60,20 @@ output/backup/staging/
 # Scratch / sandbox folder
 scratch/
 
-# Secrets & credentials
-*secrets*.json
-!*secrets*.example.json
-
-# Shop data (heavy assets: PDFs, ZIPs, images, spreadsheets)
-shops/
-shops/**/product-*/
-
-# WordPress shop data
-shops_wp/
-
-# Master product assets (large binaries)
-master_products/
-
-# Migration backups
+# Codex and migration scratch areas (kept locally for recovery)
+.codex-tmp/
+.tmp_restore_product_mapping/
 .migration-backup-*/
 
-# Tool/automation artifacts
-.playwright-cli/
-.qoder/
+# Local shop catalogs and heavy product assets
+shops/
+shops_wp/
+master_products/
 
-# Generated output
+# Ignore shop product asset folders (which contain heavy PDFs, ZIPs, images)
+shops/**/product-*/
+
+# Generated and intermediate output
 output/
 outputs/
 tmp/

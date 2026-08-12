@@ -20,40 +20,46 @@ from shop_asset_workflow import (
 )
 
 BASE_DIR = Path(__file__).parent
+ACTIVE_SHOP_FILE = BASE_DIR / "active_shop.txt"
 FACTORY_SHOP_ID = "templystudios"
 SRC_DIR = BASE_DIR / "shops" / FACTORY_SHOP_ID
-ACTIVE_SHOP_FILE = BASE_DIR / "active_shop.txt"
 IMG_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
-CONFIG_FILE = BASE_DIR / "shops_config.json"
-_FACTORY_IMAGE_DIR_NAME = "etsy-images-chatgpt-final"
-_FACTORY_ZIP_DIR_NAME = "source-zip"
-_FACTORY_PRODUCT_RE = re.compile(r"^product-\d+$")
-_FACTORY_SOURCE_EXCLUDE_DIRS = {
+SRC_IMAGE_DIR = "etsy-images-chatgpt-final"
+SRC_ZIP_DIR = "source-zip"
+FACTORY_EXCLUDED_SOURCE_NAMES = {
     "_deleted_products",
     "_asset_quarantine",
     "_failed_local_imports",
     "master_products",
 }
+PRODUCT_FOLDER_RE = re.compile(r"^product-(\d+)$")
+CONFIG_FILE = BASE_DIR / "shops_config.json"
 
 
-def is_supported_factory_source(folder: Path) -> bool:
-    if folder.is_symlink() or not folder.is_dir():
-        return False
-    if folder.name.startswith(".") or folder.name.startswith("_"):
-        return False
-    if _FACTORY_PRODUCT_RE.fullmatch(folder.name) or folder.name in _FACTORY_SOURCE_EXCLUDE_DIRS:
-        return False
-    image_dir = folder / _FACTORY_IMAGE_DIR_NAME
-    zip_dir = folder / _FACTORY_ZIP_DIR_NAME
-    return (
-        not image_dir.is_symlink()
-        and image_dir.is_dir()
-        and not zip_dir.is_symlink()
-        and zip_dir.is_dir()
-    )
+def load_active_shop_id() -> str:
+    try:
+        return ACTIVE_SHOP_FILE.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
 
-def _factory_asset_is_usable(path: Path, allowed_suffixes: set[str]) -> bool:
-    if path.is_symlink() or not path.is_file() or path.suffix.lower() not in allowed_suffixes:
+
+def get_active_shop_id() -> str:
+    shop_id = load_active_shop_id()
+    if shop_id in {"templystudios", "daisyflowdigital"}:
+        return shop_id
+    return ""
+
+
+def assert_temple_shop_active() -> bool:
+    return get_active_shop_id() == FACTORY_SHOP_ID
+
+
+def _factory_file_is_usable(path: Path, suffixes: set[str] | None = None) -> bool:
+    if path.is_symlink():
+        return False
+    if not path.is_file() or path.name == ".DS_Store":
+        return False
+    if suffixes is not None and path.suffix.lower() not in suffixes:
         return False
     try:
         stat = path.stat()
@@ -61,21 +67,19 @@ def _factory_asset_is_usable(path: Path, allowed_suffixes: set[str]) -> bool:
         return False
     return stat.st_size > 0 and getattr(stat, "st_blocks", 1) > 0
 
-def _collect_image_nodes(parent: Path) -> list[Path]:
-    if not parent.is_dir():
-        return []
-    return sorted([
-        f for f in parent.iterdir()
-        if _factory_asset_is_usable(f, IMG_EXTS)
-    ], key=lambda p: (p.name != "01_hero_image.png", p.name.lower()))
 
-def _collect_download_nodes(parent: Path) -> list[Path]:
-    if not parent.is_dir():
-        return []
-    return sorted([
-        f for f in parent.iterdir()
-        if _factory_asset_is_usable(f, {".zip"})
-    ], key=lambda p: p.name.lower())
+def _is_supported_factory_source_dir(source_dir: Path) -> bool:
+    if (
+        not source_dir.is_dir()
+        or source_dir.is_symlink()
+        or source_dir.name.startswith(".")
+        or source_dir.name in FACTORY_EXCLUDED_SOURCE_NAMES
+        or PRODUCT_FOLDER_RE.fullmatch(source_dir.name) is not None
+    ):
+        return False
+    images_dir = source_dir / SRC_IMAGE_DIR
+    zip_dir = source_dir / SRC_ZIP_DIR
+    return images_dir.is_dir() and zip_dir.is_dir()
 
 
 def load_shop_config(shop_id: str) -> dict:
@@ -95,27 +99,27 @@ def normalize_name(name: object) -> str:
     return re.sub(r"\s+", " ", text)
 
 def get_factory_images(folder: Path) -> list[Path]:
-    candidates = _collect_image_nodes(folder / _FACTORY_IMAGE_DIR_NAME)
-    # Deduplicate paths
-    seen = set()
-    deduped = []
-    for p in candidates:
-        if p.name not in seen:
-            seen.add(p.name)
-            deduped.append(p)
-    return sorted(deduped, key=lambda p: (p.name != "01_hero_image.png", p.name.lower()))
+    images_dir = folder / SRC_IMAGE_DIR
+    if not images_dir.is_dir():
+        return []
+    return sorted(
+        [f for f in images_dir.iterdir() if _factory_file_is_usable(f, IMG_EXTS)],
+        key=lambda p: (p.name != "01_hero_image.png", p.name.lower())
+    )
 
 def get_factory_files(folder: Path) -> list[Path]:
-    return _collect_download_nodes(folder / _FACTORY_ZIP_DIR_NAME)
+    files_dir = folder / SRC_ZIP_DIR
+    if not files_dir.is_dir():
+        return []
+    return sorted(
+        [f for f in files_dir.iterdir() if _factory_file_is_usable(f, {".zip"})],
+        key=lambda p: p.name.lower()
+    )
 
 def is_folder_stable(folder: Path, wait_secs: int = 5) -> bool:
     """Checks if files size/mtime haven't changed for wait_secs seconds."""
     def snapshot(f):
-        assets = get_factory_images(f) + get_factory_files(f)
-        return {
-            str(p.relative_to(f)): (p.stat().st_size, p.stat().st_mtime_ns)
-            for p in assets
-        }
+        return {str(p): (p.stat().st_size, p.stat().st_mtime) for p in f.rglob("*") if p.is_file()}
     try:
         s1 = snapshot(folder)
         time.sleep(wait_secs)
@@ -124,20 +128,10 @@ def is_folder_stable(folder: Path, wait_secs: int = 5) -> bool:
     except Exception:
         return False
 
-def _read_active_shop_id() -> str:
-    try:
-        return ACTIVE_SHOP_FILE.read_text(encoding="utf-8").strip()
-    except OSError:
-        return ""
-
-def sync_shop(shop_id: str) -> bool:
-    if shop_id != FACTORY_SHOP_ID:
-        print(f"❌ Sync only supports Temply Studio: {FACTORY_SHOP_ID}")
-        return False
-    active_shop = _read_active_shop_id()
-    if active_shop != FACTORY_SHOP_ID:
-        print(f"❌ Sync blocked: active_shop.txt must be {FACTORY_SHOP_ID!r}, got {active_shop!r}")
-        return False
+def sync_shop(shop_id: str):
+    if not assert_temple_shop_active() or shop_id != FACTORY_SHOP_ID:
+        print(f"❌ Refusing sync: factory can only sync for shop {FACTORY_SHOP_ID}")
+        return
     dst_dir = BASE_DIR / "shops" / shop_id
     shop_config = load_shop_config(shop_id)
     factory_dir = SRC_DIR
@@ -145,13 +139,13 @@ def sync_shop(shop_id: str) -> bool:
 
     if not dst_dir.exists():
         print(f"❌ Shop directory not found: {dst_dir}")
-        return False
+        return
     if not excel_path.exists():
         print(f"❌ Excel file not found: {excel_path}")
-        return False
+        return
     if not factory_dir.exists():
         print(f"❌ Source directory not found: {factory_dir}")
-        return False
+        return
 
     print(f"🔄 Starting sync for shop {shop_id}...")
     print(f"   Source: {factory_dir}")
@@ -163,23 +157,26 @@ def sync_shop(shop_id: str) -> bool:
     wb = openpyxl.load_workbook(excel_path)
     ws = wb["Listings"]
 
-    # Build mapping only from catalog-backed product folders in this Temply
-    # shop. Raw source slugs and unrelated folders never participate.
+    # Build mapping of existing products by their keyword only for valid product folders.
     imported_map = {}
     for r in range(4, ws.max_row + 1):
         folder = ws.cell(row=r, column=2).value
         kw = ws.cell(row=r, column=3).value
-        folder_name = str(folder or "").strip()
-        product_dir = dst_dir / folder_name
+        if not PRODUCT_FOLDER_RE.fullmatch(str(folder or "")):
+            continue
+        folder = str(folder).strip()
+        product_dir = dst_dir / folder
         if (
-            not _FACTORY_PRODUCT_RE.fullmatch(folder_name)
+            not product_dir.is_dir()
             or product_dir.is_symlink()
-            or not product_dir.is_dir()
             or product_dir.resolve().parent != dst_dir.resolve()
         ):
             continue
-        if kw:
-            imported_map[normalize_name(kw)] = (folder_name, r)
+        if kw and str(kw).strip():
+            # Match by normalized keyword (Column C)
+            key = normalize_name(kw)
+            if key not in imported_map:
+                imported_map[normalize_name(kw)] = (str(folder), r)
 
     existing_numbers = []
     for item in dst_dir.glob("product-*"):
@@ -191,33 +188,32 @@ def sync_shop(shop_id: str) -> bool:
             continue
     next_product_num = max(existing_numbers, default=0) + 1
 
-    # Scan factory directories
-    factory_folders = [
-        d for d in sorted(factory_dir.iterdir(), key=lambda d: d.name.lower())
-        if is_supported_factory_source(d)
-    ]
+    # Scan factory directories with exact source layout
+    factory_folders = [d for d in factory_dir.iterdir() if _is_supported_factory_source_dir(d)]
 
     wb_modified = False
 
-    for src_folder in factory_folders:
+    for src_folder in sorted(factory_folders, key=lambda d: d.name.lower()):
         images = get_factory_images(src_folder)
         files = get_factory_files(src_folder)
 
         if not images or not files:
-            continue  # incomplete factory folder, skip
+            continue  # empty factory folder, skip
 
-        # The downloadable filename is the stable product identity used in the
-        # dashboard keyword column.
-        source_keyword = files[0].stem.replace("-", " ").replace("_", " ").strip()
+        if files:
+            source_keyword = files[0].stem.replace("-", " ").replace("_", " ").strip()
+        else:
+            source_keyword = src_folder.name.replace("-", " ").replace("_", " ").strip()
         folder_keyword = normalize_name(source_keyword)
 
         matched = imported_map.get(folder_keyword)
         if matched:
             folder_name, row_num = matched
-            print(f"  ⏭ Skipped {src_folder.name}: already cataloged as {folder_name} (row {row_num})")
+            print(f"  ⏭ Already imported {src_folder.name} as {folder_name} (row {row_num}); skipping to avoid overwrite.")
             continue
         else:
             # Always allocate a collision-free folder number in the target shop.
+            # Never reuse the generic master_products folder ID.
             while (dst_dir / f"product-{next_product_num:02d}").exists():
                 next_product_num += 1
             folder_name = f"product-{next_product_num:02d}"
@@ -274,74 +270,66 @@ def sync_shop(shop_id: str) -> bool:
         print("💾 Excel spreadsheet updated and saved.")
     else:
         print("✅ Sync completed. No spreadsheet changes needed.")
-    return True
+
+def _collect_source_signature(source_dir: Path) -> tuple[tuple[str, int, int], ...]:
+    signature: list[tuple[str, int, int]] = []
+    for f in get_factory_images(source_dir) + get_factory_files(source_dir):
+        try:
+            s = f.stat()
+            signature.append((f.name, int(s.st_size), int(s.st_mtime_ns)))
+        except OSError:
+            continue
+    return tuple(sorted(signature))
+
 
 def get_dir_fingerprint(directory: Path) -> dict:
-    """Return exact direct asset fingerprints for complete Temply sources."""
+    """Return map of source slug -> (name,size,mtime_ns) tuples for strict layout only."""
     fingerprint = {}
     if not directory.exists():
         return fingerprint
     for item in directory.iterdir():
-        if is_supported_factory_source(item):
-            assets = get_factory_images(item) + get_factory_files(item)
-            fingerprint[item.name] = tuple(
-                (
-                    str(path.relative_to(item)),
-                    path.stat().st_size,
-                    path.stat().st_mtime_ns,
-                )
-                for path in sorted(assets, key=lambda p: str(p.relative_to(item)))
-            )
+        if not _is_supported_factory_source_dir(item):
+            continue
+        fingerprint[item.name] = _collect_source_signature(item)
     return fingerprint
 
 def watch_folders(shop_id: str, poll_interval: int):
-    if shop_id != FACTORY_SHOP_ID:
-        print(f"❌ Watcher only supports Temply Studio: {FACTORY_SHOP_ID}")
+    if not assert_temple_shop_active() or shop_id != FACTORY_SHOP_ID:
+        print(f"❌ Refusing watcher: factory can only watch for shop {FACTORY_SHOP_ID}")
         return
     factory_dir = SRC_DIR
     print(f"👁 Watcher started. Monitoring: {factory_dir}")
     print(f"   Press Ctrl+C to stop.")
     
-    # If the active shop is not Temply, keep the state empty so a later switch
-    # back to Temply re-evaluates all complete source folders.
-    last_active_shop = _read_active_shop_id()
-    known_state = get_dir_fingerprint(factory_dir) if last_active_shop == FACTORY_SHOP_ID else {}
+    # Pre-populate fingerprint
+    known_state = get_dir_fingerprint(factory_dir)
     
     while True:
         try:
             time.sleep(poll_interval)
-            active_shop = _read_active_shop_id()
-            if active_shop != FACTORY_SHOP_ID:
-                known_state = {}
-                last_active_shop = active_shop
+            if not assert_temple_shop_active() or shop_id != FACTORY_SHOP_ID:
+                print(f"⚠️ Active shop is no longer {FACTORY_SHOP_ID}; waiting for switch back before syncing...")
                 continue
-            if last_active_shop != FACTORY_SHOP_ID:
-                known_state = {}
-            last_active_shop = active_shop
             current_state = get_dir_fingerprint(factory_dir)
             
             # Check for additions or modifications
             changed = False
-            blocked = False
-            for folder, fingerprint in current_state.items():
-                if known_state.get(folder) != fingerprint:
+            for folder, mtime in current_state.items():
+                if folder not in known_state or mtime != known_state[folder]:
                     # Folder is new or has new files
                     folder_path = factory_dir / folder
                     print(f"🔔 Detected change in Image Factory folder: {folder} — waiting to stabilize...")
                     if is_folder_stable(folder_path, wait_secs=5):
                         print(f"📈 Folder {folder} is stable. Triggering sync...")
-                        if sync_shop(shop_id):
-                            changed = True
-                        else:
-                            blocked = True
+                        sync_shop(shop_id)
+                        changed = True
                     else:
                         print(f"⏳ Folder {folder} is still writing/copying files...")
             
             if changed:
                 known_state = get_dir_fingerprint(factory_dir)
-            elif not blocked:
-                # Update known state for stable-check failures only when sync was
-                # not blocked; blocked changes must remain pending for Temply.
+            else:
+                # Update known state to avoid looping alerts if stable check fails once
                 known_state = current_state
                 
         except KeyboardInterrupt:
@@ -357,12 +345,16 @@ def main():
     parser.add_argument("--watch", action="store_true", help="Run in daemon watcher mode")
     parser.add_argument("--poll", type=int, default=5, help="Poll interval in seconds")
     args = parser.parse_args()
-
-    if args.shop != FACTORY_SHOP_ID:
-        print(f"❌ Unsupported shop '{args.shop}'. This sync helper is Temply-only: {FACTORY_SHOP_ID}")
+    requested_shop = (args.shop or "").strip().lower()
+    if requested_shop != FACTORY_SHOP_ID:
+        print(f"❌ Không cho phép --shop khác {FACTORY_SHOP_ID} cho workflow này.")
         return
 
     # Initial sync
+    if not assert_temple_shop_active():
+        print("❌ Active shop mismatch: active shop must be templystudios before sync.")
+        return
+
     sync_shop(args.shop)
 
     if args.watch:

@@ -1,0 +1,332 @@
+{
+  "schema": "etsy-post-composite-visual-qa-v1",
+  "status": "passed",
+  "shop_key": "daisy",
+  "campaign_id": "cute-soft-pastel-undated-planner-daisy-20260806",
+  "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+  "finalized_at": "2026-08-06T10:49:50.136599+00:00",
+  "reviewer": "Codex visual QA",
+  "reviewed_at": "2026-08-06T10:52:20.279974+00:00",
+  "slots": [
+    {
+      "slot": "01",
+      "final_filename": "01-foundation.png",
+      "final_sha256": "aa36bef6e8b846de4b427faf226ea7402113cd8167c6b6c67a88e5ad0f7f41ad",
+      "final_dimensions": [
+        2000,
+        2000
+      ],
+      "thumbnails": {
+        "1000": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806-rev2/qa/thumbnails/01-1000.png",
+          "sha256": "81a28ebf96df639b7129a6dd567bfcc2a2e020d7e62026c566f2248a0a05067d",
+          "dimensions": [
+            1000,
+            1000
+          ]
+        },
+        "300": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806-rev2/qa/thumbnails/01-300.png",
+          "sha256": "cd15e9ac1b5bbc6edeb9f9792db6df986dc418b6572406c9b09d6f586819bdc6",
+          "dimensions": [
+            300,
+            300
+          ]
+        }
+      },
+      "product_dominant": true,
+      "blank_lifestyle_mockup": false,
+      "source_theme_faithful": true,
+      "etsy_merchandising_ready": true,
+      "notes": "Page 01 cover is large and readable; source pastel/kawaii theme is faithful; CTA panel does not obscure the cover headline."
+    },
+    {
+      "slot": "02",
+      "final_filename": "02-foundation.png",
+      "final_sha256": "b45feb691299b0db4a352390ad51be8f459a86743bb3b5d1d7edbebcbdb1f367",
+      "final_dimensions": [
+        2000,
+        2000
+      ],
+      "thumbnails": {
+        "1000": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806-rev2/qa/thumbnails/02-1000.png",
+          "sha256": "256e257c7d39ea6331c2ed113b34d08f1fec8190e08572bd69144fe145c16b80",
+          "dimensions": [
+            1000,
+            1000
+          ]
+        },
+        "300": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806-rev2/qa/thumbnails/02-300.png",
+          "sha256": "ab77febd6dca269aa63fed391149dc85d77eceb65aa27fba460c86053939d0f3",
+          "dimensions": [
+            300,
+            300
+          ]
+        }
+      },
+      "product_dominant": true,
+      "blank_lifestyle_mockup": false,
+      "source_theme_faithful": true,
+      "etsy_merchandising_ready": true,
+      "notes": "Page 02 index is large and legible; the gallery communicates the planner sections without inventing additional features."
+    },
+    {
+      "slot": "03",
+      "final_filename": "03-foundation.png",
+      "final_sha256": "d1cb612dc3c307a7996c51e2c9dc19fed83a00d96e288fd0db5634d94096bce7",
+      "final_dimensions": [
+        2000,
+        2000
+      ],
+      "thumbnails": {
+        "1000": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806-rev2/qa/thumbnails/03-1000.png",
+          "sha256": "d1a9d9308d74b177d9e7eff189660b0184b75473a9ed11a1ef4874f6a22dc460",
+          "dimensions": [
+            1000,
+            1000
+          ]
+        },
+        "300": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806-rev2/qa/thumbnails/03-300.png",
+          "sha256": "78266c2feb03cb7425489a460549b2c9209776b0fcd573cab65adb5d4bebb9e0",
+          "dimensions": [
+            300,
+            300
+          ]
+        }
+      },
+      "product_dominant": true,
+      "blank_lifestyle_mockup": false,
+      "source_theme_faithful": true,
+      "etsy_merchandising_ready": true,
+      "notes": "Page 03 monthly planner is dominant and readable; the pastel frame supports the product preview without becoming the subject."
+    },
+    {
+      "slot": "04",
+      "final_filename": "04-foundation.png",
+      "final_sha256": "2804b4f15a26567c583142f7885748e408d75af841be95e79d33ce6a89e84dd9",
+      "final_dimensions": [
+        2000,
+        2000
+      ],
+      "thumbnails": {
+        "1000": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806-rev2/qa/thumbnails/04-1000.png",
+          "sha256": "017782babe04d3157cd1e3e624c4949434df8d1a64bf40ecd4f070ce9dd5c3a8",
+          "dimensions": [
+            1000,
+            1000
+          ]
+        },
+        "300": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806-rev2/qa/thumbnails/04-300.png",
+          "sha256": "de3fea8138cd257db8dc53feee4cc196989d139ea42c35ecfaedf1b5f2f94a99",
+          "dimensions": [
+            300,
+            300
+          ]
+        }
+      },
+      "product_dominant": true,
+      "blank_lifestyle_mockup": false,
+      "source_theme_faithful": true,
+      "etsy_merchandising_ready": true,
+      "notes": "Page 10 Sunday planner is dominant and readable; daily planning evidence is clear at listing-thumbnail scale."
+    },
+    {
+      "slot": "05",
+      "final_filename": "05-foundation.png",
+      "final_sha256": "36de255933d2bac91c398a75d83676bca6af27debd57bc479d443bac7ea12518",
+      "final_dimensions": [
+        2000,
+        2000
+      ],
+      "thumbnails": {
+        "1000": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806-rev2/qa/thumbnails/05-1000.png",
+          "sha256": "7fd0633ba52fe7c37e01fa065ed7c7881d3fdbcb29d3261cc19b937d7bec91b5",
+          "dimensions": [
+            1000,
+            1000
+          ]
+        },
+        "300": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806-rev2/qa/thumbnails/05-300.png",
+          "sha256": "6fe839fb8730a35362d55b40027283f7e0d2a7c667f61bfc4195e404c78c3979",
+          "dimensions": [
+            300,
+            300
+          ]
+        }
+      },
+      "product_dominant": true,
+      "blank_lifestyle_mockup": false,
+      "source_theme_faithful": true,
+      "etsy_merchandising_ready": true,
+      "notes": "Page 08 self-care routine is dominant and readable; wellness framing matches the source page and stays product-led."
+    },
+    {
+      "slot": "06",
+      "final_filename": "06-foundation.png",
+      "final_sha256": "af69ecfba182c6b62963821ac285faabf49672f9af213abc81619920c2336fbc",
+      "final_dimensions": [
+        2000,
+        2000
+      ],
+      "thumbnails": {
+        "1000": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806-rev2/qa/thumbnails/06-1000.png",
+          "sha256": "891e648972549bb106ddf189086660712cfeb7b2aa6e5f3e2715b370ff87bf22",
+          "dimensions": [
+            1000,
+            1000
+          ]
+        },
+        "300": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806-rev2/qa/thumbnails/06-300.png",
+          "sha256": "a8a08701ff8ccee2ec31cfd15f79848444b813d9004dcb9a006378405a7e9d53",
+          "dimensions": [
+            300,
+            300
+          ]
+        }
+      },
+      "product_dominant": true,
+      "blank_lifestyle_mockup": false,
+      "source_theme_faithful": true,
+      "etsy_merchandising_ready": true,
+      "notes": "Page 55 to-do list is dominant and readable; productivity preview remains clear against the pastel desk scene."
+    },
+    {
+      "slot": "07",
+      "final_filename": "07-foundation.png",
+      "final_sha256": "e847467331c13db2d283e44b74a19527b63fc1bce1a17036cfe5114f05108a76",
+      "final_dimensions": [
+        2000,
+        2000
+      ],
+      "thumbnails": {
+        "1000": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806-rev2/qa/thumbnails/07-1000.png",
+          "sha256": "92ae6ff870883de46af3eafb1a84f94b1a74ac64b2aea168c357bc16930b71aa",
+          "dimensions": [
+            1000,
+            1000
+          ]
+        },
+        "300": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806-rev2/qa/thumbnails/07-300.png",
+          "sha256": "1da8f618282f295b58339f682c047c10c025ff104aaa476f741ad3529046b54c",
+          "dimensions": [
+            300,
+            300
+          ]
+        }
+      },
+      "product_dominant": true,
+      "blank_lifestyle_mockup": false,
+      "source_theme_faithful": true,
+      "etsy_merchandising_ready": true,
+      "notes": "Page 69 monthly budget is dominant and readable; finance section is shown with no invented values or claims."
+    },
+    {
+      "slot": "08",
+      "final_filename": "08-foundation.png",
+      "final_sha256": "7b7225f878c89bc9407411d22aa66f0c1808b27b991e217f27ed6263b68652da",
+      "final_dimensions": [
+        2000,
+        2000
+      ],
+      "thumbnails": {
+        "1000": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806-rev2/qa/thumbnails/08-1000.png",
+          "sha256": "ea3af03ccac4a561b7036915024b4a64489767ae5e00be1cbc2744181b89740c",
+          "dimensions": [
+            1000,
+            1000
+          ]
+        },
+        "300": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806-rev2/qa/thumbnails/08-300.png",
+          "sha256": "a680aabefa9a2e570527f729b6faf68c03b5963ab42b9360568935a55fe7d2dc",
+          "dimensions": [
+            300,
+            300
+          ]
+        }
+      },
+      "product_dominant": true,
+      "blank_lifestyle_mockup": false,
+      "source_theme_faithful": true,
+      "etsy_merchandising_ready": true,
+      "notes": "Page 61 30-day productive life challenge is dominant and readable; challenge/routine feature is visibly source-led."
+    },
+    {
+      "slot": "09",
+      "final_filename": "09-foundation.png",
+      "final_sha256": "496556c6fb94ed4683d40a605870bc2ccf19fbf6bf8db157d0c85ed33993042d",
+      "final_dimensions": [
+        2000,
+        2000
+      ],
+      "thumbnails": {
+        "1000": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806-rev2/qa/thumbnails/09-1000.png",
+          "sha256": "66e3f8e0ecc32f4e0257d0a3a6f0fa73e7a10fa6bb1a2d062e6a34c96cfaae09",
+          "dimensions": [
+            1000,
+            1000
+          ]
+        },
+        "300": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806-rev2/qa/thumbnails/09-300.png",
+          "sha256": "70a652c00676e3b9be2d2c5ca0922faa1d62da3d01b89bb809d3b7f3398b2ef7",
+          "dimensions": [
+            300,
+            300
+          ]
+        }
+      },
+      "product_dominant": true,
+      "blank_lifestyle_mockup": false,
+      "source_theme_faithful": true,
+      "etsy_merchandising_ready": true,
+      "notes": "Page 57 goal planner is dominant and readable; goal/action-plan structure is clear in the product preview."
+    },
+    {
+      "slot": "10",
+      "final_filename": "10-foundation.png",
+      "final_sha256": "90de9ab9298bb30ffc6259e49fa1a243999ad49fefcb7d468a31bbc4d44d947b",
+      "final_dimensions": [
+        2000,
+        2000
+      ],
+      "thumbnails": {
+        "1000": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806-rev2/qa/thumbnails/10-1000.png",
+          "sha256": "d9806b4ff890684e6720ad2e212c8c7dab61894ee9073bb7f92a0cf392e6a66a",
+          "dimensions": [
+            1000,
+            1000
+          ]
+        },
+        "300": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806-rev2/qa/thumbnails/10-300.png",
+          "sha256": "858b973cf7940753abfa2ccc01fa59811482008374f114b471eab083e5eb3b55",
+          "dimensions": [
+            300,
+            300
+          ]
+        }
+      },
+      "product_dominant": true,
+      "blank_lifestyle_mockup": false,
+      "source_theme_faithful": true,
+      "etsy_merchandising_ready": true,
+      "notes": "Page 71 certificate is visible above the THANK YOU panel; closing message is readable and the source page remains identifiable."
+    }
+  ]
+}

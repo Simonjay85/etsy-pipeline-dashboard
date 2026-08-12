@@ -7,11 +7,11 @@
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/python3</string>
-    <string>/Users/aaronnguyen/Developer/Etsy/backup_etsy_to_drive.py</string>
+    <string>/Users/aaronnguyen/Documents/Claude/Projects/Etsy/backup_etsy_to_drive.py</string>
     <string>weekly</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>/Users/aaronnguyen/Developer/Etsy</string>
+  <string>/Users/aaronnguyen/Documents/Claude/Projects/Etsy</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
@@ -29,8 +29,8 @@
   </dict>
   <key>RunAtLoad</key><false/>
   <key>StandardOutPath</key>
-  <string>/Users/aaronnguyen/Developer/Etsy/output/backup/launchd-weekly.log</string>
+  <string>/Users/aaronnguyen/Documents/Claude/Projects/Etsy/output/backup/launchd-weekly.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/aaronnguyen/Developer/Etsy/output/backup/launchd-weekly.err.log</string>
+  <string>/Users/aaronnguyen/Documents/Claude/Projects/Etsy/output/backup/launchd-weekly.err.log</string>
 </dict>
 </plist>

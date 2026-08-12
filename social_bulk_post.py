@@ -47,13 +47,7 @@ async def run_single_post(shop: str, platform: str, row: int) -> int:
 async def main():
     parser = argparse.ArgumentParser(description="Social Media Bulk Auto Poster Helper")
     parser.add_argument("--shop", type=str, required=True, help="ID của shop (ví dụ: templystudios)")
-    parser.add_argument(
-        "--platform",
-        type=str,
-        required=True,
-        choices=["instagram", "pinterest", "facebook", "twitter", "medium"],
-        help="Nền tảng muốn đăng",
-    )
+    parser.add_argument("--platform", type=str, required=True, choices=["pinterest", "twitter", "medium"], help="Nền tảng muốn đăng")
     parser.add_argument("--start", type=int, required=True, help="Dòng bắt đầu trong Excel (ví dụ: 4)")
     parser.add_argument("--end", type=int, required=True, help="Dòng kết thúc trong Excel (ví dụ: 10)")
     parser.add_argument("--delay", type=int, default=180, help="Thời gian chờ giữa các lần đăng thành công (giây, mặc định 180)")

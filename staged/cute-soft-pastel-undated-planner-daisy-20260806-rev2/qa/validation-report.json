@@ -1,0 +1,123 @@
+{
+  "status": "PASS",
+  "source": "/Users/aaronnguyen/Downloads/PLR-Resell-Digital-Planner-115250858/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER.pdf",
+  "workflow": "single-shop-staged-validation",
+  "shop": {
+    "shop_key": "daisy",
+    "display_name": "Daisy Flow Digital",
+    "product_folder": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806-rev2",
+    "image_folder": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806-rev2/images",
+    "status": "PASS",
+    "source": "/Users/aaronnguyen/Downloads/PLR-Resell-Digital-Planner-115250858/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER.pdf",
+    "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+    "failures": [],
+    "warnings": [],
+    "image_report": {
+      "status": "PASS",
+      "expected_count": 10,
+      "actual_count": 10,
+      "ignored_non_listing_images": [],
+      "expected_size": [
+        2000,
+        2000
+      ],
+      "failures": [],
+      "warnings": [],
+      "images": [
+        {
+          "file": "01-foundation.png",
+          "size_bytes": 2018929,
+          "width": 2000,
+          "height": 2000,
+          "mode": "RGB",
+          "grayscale_stddev": 44.2
+        },
+        {
+          "file": "02-foundation.png",
+          "size_bytes": 1832368,
+          "width": 2000,
+          "height": 2000,
+          "mode": "RGB",
+          "grayscale_stddev": 40.9
+        },
+        {
+          "file": "03-foundation.png",
+          "size_bytes": 1637708,
+          "width": 2000,
+          "height": 2000,
+          "mode": "RGB",
+          "grayscale_stddev": 41.66
+        },
+        {
+          "file": "04-foundation.png",
+          "size_bytes": 1453204,
+          "width": 2000,
+          "height": 2000,
+          "mode": "RGB",
+          "grayscale_stddev": 38.56
+        },
+        {
+          "file": "05-foundation.png",
+          "size_bytes": 1852239,
+          "width": 2000,
+          "height": 2000,
+          "mode": "RGB",
+          "grayscale_stddev": 42.65
+        },
+        {
+          "file": "06-foundation.png",
+          "size_bytes": 1651987,
+          "width": 2000,
+          "height": 2000,
+          "mode": "RGB",
+          "grayscale_stddev": 43.62
+        },
+        {
+          "file": "07-foundation.png",
+          "size_bytes": 2033443,
+          "width": 2000,
+          "height": 2000,
+          "mode": "RGB",
+          "grayscale_stddev": 40.59
+        },
+        {
+          "file": "08-foundation.png",
+          "size_bytes": 2240869,
+          "width": 2000,
+          "height": 2000,
+          "mode": "RGB",
+          "grayscale_stddev": 48.19
+        },
+        {
+          "file": "09-foundation.png",
+          "size_bytes": 1607645,
+          "width": 2000,
+          "height": 2000,
+          "mode": "RGB",
+          "grayscale_stddev": 44.13
+        },
+        {
+          "file": "10-foundation.png",
+          "size_bytes": 1792296,
+          "width": 2000,
+          "height": 2000,
+          "mode": "RGB",
+          "grayscale_stddev": 36.55
+        }
+      ],
+      "manual_checks_required": [
+        "thumbnail clarity and crop safety",
+        "overlay spelling and factual accuracy",
+        "source-faithful product content",
+        "digital/physical disclosure",
+        "AI artifacts, logos, watermarks, and IP risks",
+        "unique accurate alt text for all 10 images"
+      ]
+    },
+    "plan_path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806-rev2/working/etsy-image-plans/daisy-image-plan.json",
+    "qa_receipt": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806-rev2/qa/daisy-post-composite-visual-qa.json",
+    "validation_scope": "staged_only"
+  },
+  "technical_floor_note": "0.40 union and 0.25 largest-preview ratios are geometry floors, not automatic proof of product dominance",
+  "overall_failures": []
+}

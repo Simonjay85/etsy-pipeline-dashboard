@@ -3,109 +3,32 @@ Etsy Pipeline Dashboard — port 8090
 Quản lý & điều khiển pipeline tạo/đăng Etsy listing.
 Chạy: python3 dashboard_app.py
 """
-import asyncio, hashlib, html, io, json, logging, os, re, secrets, shutil, socket, subprocess, sys, tempfile, time, urllib.parse
-from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+import asyncio, hashlib, html, io, json, os, re, shutil, socket, subprocess, sys, time, urllib.parse
 # httpx lazy-imported to avoid hanging at startup on macOS (SSL init issue)
 _HAS_HTTPX = True  # assume available; will fail gracefully if not
 httpx = None       # lazy-loaded on first use
 from pathlib import Path
 from difflib import SequenceMatcher
-from typing import Any, Callable, Mapping, NoReturn, Optional, cast
+from typing import Optional
 
-import runtime_identity
 import openpyxl
-from job_store import (
-    JOB_STATUS_CANCELLED,
-    JOB_STATUS_FAILED,
-    JOB_STATUS_QUEUED,
-    JOB_STATUS_RUNNING,
-    JOB_STATUS_SUCCEEDED,
-    JobStore,
-)
-from operation_context import OperationContext, OperationContextError
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from etsy_catalog import build_unified_catalog, merge_safe_duplicates, normalize_etsy_manager_snapshot
-from shops_config_validation import (
-    DEFAULT_EXAMPLE_NAME,
-    ShopsConfigError,
-    load_shops_config as validate_and_load_shops_config,
-)
+from etsy_catalog import build_unified_catalog, merge_safe_duplicates
 from shop_asset_workflow import copy_image_with_watermark, get_watermark_text
-from etsy_browser_session import (
-    EtsyProfileLockedError,
-    is_session_ready as is_etsy_session_ready,
-    SHOP_MANAGER_URL,
-    open_etsy_login_browser,
-    resolve_etsy_session,
-)
-from social_browser_session import (
-    SOCIAL_URLS,
-    is_session_ready,
-    open_social_browser,
-    resolve_social_session,
-)
-from social_post_store import get_product_social_statuses, load_social_post_records
-from medium_content import make_medium_research_article
-from cloud_asset_store import (
-    AssetValidationError,
-    PREVIEW_FILE_NAME as CLOUD_PREVIEW_FILE_NAME,
-    CloudAssetError,
-    CloudAssetStore,
-    discover_product_roots,
-    load_local_state,
-    resolve_product,
-)
-from cloud_asset_store_config import load_config as load_cloud_asset_config
-import catalog_repository
-from asset_readiness import AssetReadinessEngine, AssetReadinessError
-from catalog_repository import (
-    CatalogRepositoryError,
-    CatalogWriteConflict,
-    workbook_path as catalog_workbook_path,
-)
-
-# ── Logging ─────────────────────────────────────────────────────────────────────
-logger = logging.getLogger("etsy_dashboard")
-if not logger.handlers:
-    _stream_handler = logging.StreamHandler()
-    _stream_handler.setFormatter(
-        logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
-    )
-    logger.addHandler(_stream_handler)
-    logger.setLevel(logging.INFO)
-
-
-class _CorrelationLogAdapter(logging.LoggerAdapter):
-    """Prefix log records with correlation context (shop, listing_id, operation)."""
-
-    def process(self, msg, kwargs):
-        ctx = " ".join(f"{key}={value}" for key, value in (self.extra or {}).items())
-        return f"[{ctx}] {msg}", kwargs
-
-
-def _ctx_logger(operation: str, **context) -> logging.LoggerAdapter:
-    return _CorrelationLogAdapter(logger, {"operation": operation, **context})
 
 # ── Paths ───────────────────────────────────────────────────────────────────────
-BASE_DIR       = runtime_identity.current_runtime_root(__file__)
+BASE_DIR       = Path(__file__).parent
 # ── Multi-Shop Config ───────────────────────────────────────────────────────────
 CONFIG_FILE = BASE_DIR / "shops_config.json"
 
-def load_shops(config_path: str | Path = CONFIG_FILE) -> dict[str, dict]:
-    """Load and validate shops config with non-secret, actionable failures."""
-
-    try:
-        return validate_and_load_shops_config(config_path=config_path, base_dir=BASE_DIR)
-    except FileNotFoundError as exc:
-        raise RuntimeError(
-            "Missing required local config file: shops_config.json. "
-            f"Copy {DEFAULT_EXAMPLE_NAME} to shops_config.json before starting."
-        ) from exc
-    except ShopsConfigError as exc:
-        raise RuntimeError(f"Malformed local shop config: {exc}") from exc
+def load_shops():
+    if CONFIG_FILE.exists():
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
 
 SHOPS = load_shops()
 ACTIVE_SHOP_FILE = BASE_DIR / "active_shop.txt"
@@ -137,12 +60,12 @@ def EXCEL_FILE() -> Path:
 # ── Paths ───────────────────────────────────────────────────────────────────────
 STATIC_DIR     = BASE_DIR / "dashboard_static"
 _OVERRIDDEN_PYTHON_BIN = os.environ.get("ETSY_AUTOMATION_PYTHON", "").strip()
-_PROJECT_VENV_BIN = BASE_DIR / ".venv" / "bin" / "python"
+_VERIFIED_RUNTIME_BIN = Path("/Users/aaronnguyen/.cache/etsy-dashboard-runtime-312/bin/python")
 PYTHON_BIN     = (
     _OVERRIDDEN_PYTHON_BIN
     if _OVERRIDDEN_PYTHON_BIN
-    else str(_PROJECT_VENV_BIN)
-    if _PROJECT_VENV_BIN.is_file()
+    else str(_VERIFIED_RUNTIME_BIN)
+    if _VERIFIED_RUNTIME_BIN.is_file()
     else str(sys.executable)
 )
 ETSY_POSTER    = str(BASE_DIR / "etsy_auto_post.py")
@@ -155,274 +78,23 @@ VERTEX_IMG_URL    = "http://127.0.0.1:8080"         # Vertex Etsy Listing Studio
 VERTEX_OUTPUT_DIR = Path("/Users/aaronnguyen/vertex_etsy_listing/output")
 VERTEX_INPUT_DIR  = Path("/Users/aaronnguyen/vertex_etsy_listing/input")
 
-# ── Security boundary ───────────────────────────────────────────────────────────
-_DASHBOARD_MUTATION_TOKEN_HEADER = "x-dashboard-mutation-token"
-_DASHBOARD_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "127.0.0.1:8090", "localhost:8090", "::1"}
-_DASHBOARD_LAN_MODE_ENV = "ETSY_DASHBOARD_ALLOW_LAN"
-_DASHBOARD_ALLOWED_HOSTS_ENV = "ETSY_DASHBOARD_ALLOWED_HOSTS"
-_DASHBOARD_MUTATION_TOKEN = secrets.token_urlsafe(32)
-
-
-def _env_flag_truthy(name: str) -> bool:
-    return (os.environ.get(name) or "").strip().lower() in {"1", "true", "yes", "on", "y"}
-
-
-def _dashboard_lan_mode() -> bool:
-    return _env_flag_truthy(_DASHBOARD_LAN_MODE_ENV)
-
-
-def _dashboard_allowlist_hosts() -> set[str]:
-    hosts = set(_DASHBOARD_LOOPBACK_HOSTS)
-    raw = os.environ.get(_DASHBOARD_ALLOWED_HOSTS_ENV) or ""
-    for item in raw.split(","):
-        host = item.strip().lower()
-        if host:
-            hosts.add(host)
-    if os.environ.get("PYTEST_CURRENT_TEST"):
-        hosts.add("testserver")
-    return hosts
-
-
-def _normalize_host(raw: str) -> str:
-    host = (raw or "").strip().lower()
-    if not host:
-        return ""
-    host = host.split("/", 1)[0]
-    if host.startswith("[") and "]" in host:
-        host = host[1 : host.index("]")]
-        return host
-    if host.count(":") > 1:
-        return host
-    return host.split(":", 1)[0]
-
-
-def _request_host(request: Request) -> str:
-    return _normalize_host(request.headers.get("host") or (request.url.hostname or ""))
-
-
-def _origin_host(request: Request) -> str:
-    return _normalize_host(urllib.parse.urlparse(request.headers.get("origin", "")).hostname or "")
-
-
-def _host_allowed(request: Request) -> bool:
-    return _request_host(request) in _dashboard_allowlist_hosts()
-
-
-def _origin_allowed(request: Request) -> bool:
-    origin = request.headers.get("origin")
-    if not origin:
-        return True
-    return _origin_host(request) in _dashboard_allowlist_hosts() and _origin_host(request) == _request_host(request)
-
-
-def _mutation_token_matches(request: Request) -> bool:
-    token = request.headers.get(_DASHBOARD_MUTATION_TOKEN_HEADER, "")
-    if not token:
-        return False
-    return secrets.compare_digest(token, _DASHBOARD_MUTATION_TOKEN)
-
-
-def _dashboard_listen_host() -> str:
-    return "0.0.0.0" if _dashboard_lan_mode() else "127.0.0.1"
-
-
-def _dashboard_index_html() -> str:
-    index_html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
-    marker = '<meta name="etsy-dashboard-mutation-token"'
-    token = html.escape(_DASHBOARD_MUTATION_TOKEN, quote=True)
-    if marker in index_html:
-        token_tag = f'<meta name="etsy-dashboard-mutation-token" content="{token}">'
-        return re.sub(
-            r'<meta\s+name="etsy-dashboard-mutation-token"\s+content="[^"]*"\s*>',
-            token_tag,
-            index_html,
-            count=1,
-        )
-    return index_html.replace(
-        "</head>",
-        f'  <meta name="etsy-dashboard-mutation-token" content="{token}">\n</head>',
-        1,
-    )
-
-
 # ── App ─────────────────────────────────────────────────────────────────────────
 app = FastAPI(title="Etsy Dashboard")
-@app.middleware("http")
-async def _dashboard_security_middleware(request: Request, call_next):
-    if not _host_allowed(request):
-        return JSONResponse({"detail": "host not allowed"}, status_code=403)
-    if not _origin_allowed(request):
-        return JSONResponse({"detail": "origin not allowed"}, status_code=403)
-    if request.method in {"POST", "PATCH", "DELETE"}:
-        if not _mutation_token_matches(request):
-            return JSONResponse({"detail": "missing or invalid mutation token"}, status_code=403)
-    response = await call_next(request)
-    try:
-        del response.headers["access-control-allow-origin"]
-    except KeyError:
-        pass
-    return response
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 # Active SSE subscribers
 _log_subscribers: list[asyncio.Queue] = []
-_running_processes: dict[str, asyncio.subprocess.Process | None] = {}
+_running_processes: dict[str, asyncio.subprocess.Process] = {}
 _running_tasks: dict[str, asyncio.Task] = {}
 _product_create_lock = asyncio.Lock()
 _etsy_compare_lock = asyncio.Lock()
 _etsy_draft_delete_lock = asyncio.Lock()
 _batch_delete_lock = asyncio.Lock()
-_etsy_post_run_lock = asyncio.Lock()
 _etsy_update_jobs: dict[str, dict] = {}
-_etsy_single_sync_busy_shops: set[str] = set()
-_DIAGNOSTICS_DIR = BASE_DIR / ".etsy-dashboard-diagnostics"
-_JOB_STORE_PATH = _DIAGNOSTICS_DIR / "etsy_jobs.sqlite"
-_ETSY_JOB_STORE: JobStore | None = None
-_ETSY_POST_LOCK_PREFIX = "__ETSY_POST__"
 _RUNTIME_PRECHECK_MODULES_POSTER = ("openpyxl", "playwright.async_api", "deep_translator", "google.genai.types")
 _RUNTIME_PRECHECK_MODULES_UPDATER = ("openpyxl", "playwright.async_api")
 
 _RUNTIME_PRECHECK_TIMEOUT = 15
-
-# Cloud asset operations are deliberately lazy so importing the dashboard does
-# not contact Drive or require an rclone invocation. Tests and local tooling
-# can replace this public seam with a deterministic LocalRemote-backed store.
-CLOUD_ASSET_STORE: CloudAssetStore | None = None
-_CLOUD_ASSET_MUTATION_LOCKS: dict[str, asyncio.Lock] = {}
-_CLOUD_ASSET_MUTATION_LOCKS_GUARD = asyncio.Lock()
-_CLOUD_ASSET_UPLOAD_SCHEDULES: dict[str, dict[str, Any]] = {}
-_CLOUD_ASSET_UPLOAD_QUEUE_BY_SHOP: dict[str, list[str]] = {}
-_CLOUD_ASSET_UPLOAD_WORKERS: dict[str, asyncio.Task] = {}
-_CLOUD_ASSET_UPLOAD_QUEUE_GUARD = asyncio.Lock()
-_CLOUD_ASSET_UPLOAD_IDLE_POLL_SECONDS = 0.75
-
-# One FIFO for commands that touch Etsy's shared Chrome profile or mutate the
-# cloud asset copy.  The previous implementation had separate locks for
-# listing sync, posting, updating and cloud uploads; that meant a valid new
-# command was rejected merely because another type of command was active.
-# Keep this queue in memory deliberately: after a dashboard restart we must not
-# silently resume a browser/cloud mutation without the operator seeing it.
-_OPERATION_QUEUE_LOCK = asyncio.Lock()
-_OPERATION_QUEUE_GUARD = asyncio.Lock()
-_OPERATION_QUEUE_COMMANDS: dict[str, dict[str, Any]] = {}
-_OPERATION_QUEUE_DEDUPE: dict[str, str] = {}
-_OPERATION_QUEUE_TASK_PREFIX = "__OPERATION_QUEUE__:"
-
-
-def _operation_queue_public(command: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in command.items() if key not in {"callback", "dedupe_key"}}
-
-
-async def _enqueue_operation(
-    *,
-    operation: str,
-    shop_id: str,
-    target: str,
-    callback: Callable[[], Any],
-) -> tuple[dict[str, Any], bool]:
-    """Accept an explicit operator command and run it in global FIFO order."""
-    dedupe_key = f"{operation}:{shop_id}:{target}"
-    async with _OPERATION_QUEUE_GUARD:
-        existing_id = _OPERATION_QUEUE_DEDUPE.get(dedupe_key)
-        existing = _OPERATION_QUEUE_COMMANDS.get(existing_id or "")
-        if existing and existing.get("status") in {"queued", "running"}:
-            return existing, False
-
-        command_id = secrets.token_hex(8)
-        command = {
-            "command_id": command_id,
-            "operation": operation,
-            "shop_id": shop_id,
-            "target": target,
-            "status": "queued",
-            "enqueued_at": time.time(),
-            "updated_at": time.time(),
-            "dedupe_key": dedupe_key,
-            "callback": callback,
-        }
-        _OPERATION_QUEUE_COMMANDS[command_id] = command
-        _OPERATION_QUEUE_DEDUPE[dedupe_key] = command_id
-        task = asyncio.create_task(_run_queued_operation(command_id))
-        _register_background_task(f"{_OPERATION_QUEUE_TASK_PREFIX}{command_id}", task)
-        queued_before = sum(1 for item in _OPERATION_QUEUE_COMMANDS.values() if item.get("status") == "queued") - 1
-        command["position"] = max(0, queued_before) + 1
-
-    broadcast(f"[QUEUE] 🗓️ Đã thêm {operation}: {target} (vị trí {command['position']})")
-    return command, True
-
-
-async def _run_queued_operation(command_id: str) -> None:
-    command = _OPERATION_QUEUE_COMMANDS.get(command_id)
-    if command is None:
-        return
-    try:
-        async with _OPERATION_QUEUE_LOCK:
-            async with _OPERATION_QUEUE_GUARD:
-                if command.get("status") != "queued":
-                    return
-                command.update({"status": "running", "started_at": time.time(), "updated_at": time.time()})
-            broadcast(f"[QUEUE] ▶ Đang chạy {command['operation']}: {command['target']}")
-            result = command["callback"]()
-            if asyncio.iscoroutine(result):
-                await result
-            async with _OPERATION_QUEUE_GUARD:
-                command.update({"status": "succeeded", "finished_at": time.time(), "updated_at": time.time()})
-            broadcast(f"[QUEUE] ✅ Hoàn tất {command['operation']}: {command['target']}")
-    except asyncio.CancelledError:
-        async with _OPERATION_QUEUE_GUARD:
-            command.update({"status": "cancelled", "finished_at": time.time(), "updated_at": time.time()})
-        broadcast(f"[QUEUE] ⚠️ Đã hủy {command['operation']}: {command['target']}")
-        raise
-    except Exception as exc:
-        async with _OPERATION_QUEUE_GUARD:
-            command.update({"status": "failed", "error": str(exc), "finished_at": time.time(), "updated_at": time.time()})
-        broadcast(f"[QUEUE] ❌ Lỗi {command['operation']}: {command['target']}: {exc}")
-    finally:
-        async with _OPERATION_QUEUE_GUARD:
-            _OPERATION_QUEUE_DEDUPE.pop(str(command.get("dedupe_key") or ""), None)
-        _pop_background_task(f"{_OPERATION_QUEUE_TASK_PREFIX}{command_id}")
-
-
-@app.get("/api/operation-queue")
-async def operation_queue_status():
-    async with _OPERATION_QUEUE_GUARD:
-        active = [item for item in _OPERATION_QUEUE_COMMANDS.values() if item.get("status") in {"queued", "running"}]
-        active.sort(key=lambda item: float(item.get("enqueued_at") or 0))
-        return {"ok": True, "commands": [_operation_queue_public(item) for item in active]}
-
-
-def _build_cloud_asset_store(config) -> CloudAssetStore:
-    """Build the configured store without performing any remote operation."""
-
-    return CloudAssetStore(
-        repo_root=config.repo_root,
-        remote=config.remote,
-        parent_id=config.parent_id,
-        rclone_bin=config.rclone_bin,
-        cache_root=config.cache_root,
-        lock_timeout_seconds=config.lock_timeout_seconds,
-        success_ttl_seconds=config.success_ttl_seconds,
-        failure_ttl_seconds=config.failure_ttl_seconds,
-        offload_age_days=config.offload_age_days,
-    )
-
-
-def get_cloud_asset_store() -> CloudAssetStore:
-    global CLOUD_ASSET_STORE
-    store = CLOUD_ASSET_STORE
-    if store is None:
-        config = load_cloud_asset_config(BASE_DIR)
-        store = _build_cloud_asset_store(config)
-        CLOUD_ASSET_STORE = store
-    return store
-
-
-async def _get_cloud_asset_mutation_lock(product_key: str) -> asyncio.Lock:
-    async with _CLOUD_ASSET_MUTATION_LOCKS_GUARD:
-        lock = _CLOUD_ASSET_MUTATION_LOCKS.get(product_key)
-        if lock is None:
-            lock = asyncio.Lock()
-            _CLOUD_ASSET_MUTATION_LOCKS[product_key] = lock
-        return lock
 
 
 async def _terminate_subprocess(process: asyncio.subprocess.Process | None) -> None:
@@ -478,56 +150,10 @@ def _register_background_task(key: str, task: asyncio.Task):
 def _pop_background_task(key: str):
     _running_tasks.pop(key, None)
 
-
-def _etsy_post_lock_key(shop_id: str) -> str:
-    return f"{_ETSY_POST_LOCK_PREFIX}:{shop_id}"
-
-
-def _is_poster_locked_for_shop(shop_id: str) -> bool:
-    lock_key = _etsy_post_lock_key(shop_id)
-    return lock_key in _running_processes or lock_key in _running_tasks
-
-
-def _acquire_poster_lock(shop_id: str) -> str:
-    lock_key = _etsy_post_lock_key(shop_id)
-    if _is_poster_locked_for_shop(shop_id):
-        raise HTTPException(409, f"Một bài đăng đang chạy cho shop {shop_id}. Vui lòng đợi hoàn tất rồi thử lại")
-    _running_processes[lock_key] = None
-    return lock_key
-
-
-def _release_poster_lock(shop_id: str):
-    lock_key = _etsy_post_lock_key(shop_id)
-    _running_processes.pop(lock_key, None)
-    _running_tasks.pop(lock_key, None)
-
-
-_LISTING_URL_RE = re.compile(r"/(?:listing/|listing-editor/edit/)(\d+)")
-_LISTING_ID_RE = re.compile(r"^\s*\d+\s*$")
-_ETSY_PUBLIC_LISTING_RE = re.compile(r"^https://(?:www\.)?etsy\.com/listing/(\d+)(?:[/?#].*)?$", re.IGNORECASE)
-_ETSY_MANAGER_LISTING_RE = re.compile(r"^https://(?:www\.)?etsy\.com/(?:your/shops/me/)?listing-editor/edit/(\d+)(?:[/?#].*)?$", re.IGNORECASE)
-
-
-def _listing_url_has_id(value: str) -> bool:
-    text = str(value or "").strip()
-    return bool(_LISTING_URL_RE.search(text) or _LISTING_ID_RE.fullmatch(text))
-
-
-def _safe_etsy_public_url(value: object, listing_id: str) -> str:
-    match = _ETSY_PUBLIC_LISTING_RE.fullmatch(str(value or "").strip())
-    return str(value).strip() if match and match.group(1) == listing_id else ""
-
-
-def _safe_etsy_manager_url(value: object, listing_id: str) -> str:
-    match = _ETSY_MANAGER_LISTING_RE.fullmatch(str(value or "").strip())
-    return str(value).strip() if match and match.group(1) == listing_id else ""
-
 def broadcast(msg: str):
     for q in _log_subscribers:
-        try:
-            q.put_nowait(msg)
-        except asyncio.QueueFull:
-            logger.warning("broadcast message dropped (subscriber queue full): %s", msg)
+        try: q.put_nowait(msg)
+        except asyncio.QueueFull: pass
 
 
 async def _runtime_prefetch_import_check(python_bin: str, label: str, modules: tuple[str, ...]) -> tuple[bool, str]:
@@ -616,55 +242,6 @@ def _renderable_image_url(folder: str, image_path: Path) -> dict | None:
 
     return None
 
-
-def _cloud_preview_descriptor(
-    folder: str,
-    folder_path: Path,
-    cloud_manifest: dict | None = None,
-) -> dict | None:
-    """Describe the retained root preview without hydrating full assets.
-
-    ``full_url`` points at a read-only image endpoint.  The endpoint hydrates
-    only the requested manifest-verified image into the Phase 2 cache when the
-    product is cloud-only; it never installs bytes back into ``images/``.
-    """
-
-    preview_path = folder_path / CLOUD_PREVIEW_FILE_NAME
-    try:
-        stat_result = preview_path.stat()
-        if preview_path.is_symlink() or stat_result.st_size <= 0 or getattr(stat_result, "st_blocks", 1) <= 0:
-            return None
-    except OSError:
-        return None
-
-    encoded_folder = urllib.parse.quote(str(folder), safe="")
-    preview_url = f"/api/cloud-assets/preview/{encoded_folder}"
-    full_url = preview_url
-    image_name = CLOUD_PREVIEW_FILE_NAME
-    files = cloud_manifest.get("files", []) if isinstance(cloud_manifest, dict) else []
-    image_records = []
-    for item in files if isinstance(files, list) else []:
-        if not isinstance(item, dict) or item.get("role") != "image":
-            continue
-        relative = str(item.get("path") or "").replace("\\", "/").strip("/")
-        parts = relative.split("/")
-        if not relative or not parts or parts[0] != "images" or any(part in {"", ".", ".."} for part in parts):
-            continue
-        image_records.append(relative)
-    if image_records:
-        relative = sorted(image_records)[0]
-        encoded_relative = urllib.parse.quote(relative, safe="/")
-        full_url = f"/api/cloud-assets/image/{encoded_folder}/{encoded_relative}"
-        image_name = Path(relative).name
-    return {
-        "url": preview_url,
-        "full_url": full_url,
-        "name": image_name,
-        "preview_only": True,
-        "hydration_needed": full_url != preview_url,
-        "availability": "cloud_preview",
-    }
-
 def set_cell_value(ws, row_num: int, col_num: int, val):
     cell = ws.cell(row=row_num, column=col_num)
     if hasattr(cell, "value"):
@@ -733,7 +310,7 @@ def _product_folder_number(folder_name: str) -> Optional[int]:
     match = re.fullmatch(r"product-(\d+)", str(folder_name or "").strip())
     return int(match.group(1)) if match else None
 
-def _validate_product_numbered_folder_name(folder: object) -> str:
+def _validate_product_numbered_folder_name(folder: str) -> str:
     normalized = str(folder or "").strip()
     if not normalized:
         raise HTTPException(400, "Tên folder không được để trống")
@@ -782,8 +359,7 @@ def _find_reusable_empty_product_slots(ws, shop_dir: Path) -> list[dict]:
     return sorted(slots, key=lambda slot: slot["number"])
 
 def _next_product_number(ws, shop_dir: Path, used_folders: Optional[set[str]] = None) -> int:
-    if used_folders is None:
-        used_folders = set()
+    used_folders = used_folders or set()
     max_product_num = 0
     for row_num in range(4, ws.max_row + 1):
         number = _product_folder_number(ws.cell(row=row_num, column=2).value)
@@ -808,8 +384,7 @@ def _allocate_product_slot(
     reusable_slots: Optional[list[dict]] = None,
     used_folders: Optional[set[str]] = None,
 ) -> dict:
-    if used_folders is None:
-        used_folders = set()
+    used_folders = used_folders or set()
     reusable_slots = reusable_slots if reusable_slots is not None else _find_reusable_empty_product_slots(ws, shop_dir)
     while reusable_slots:
         slot = reusable_slots.pop(0)
@@ -839,457 +414,6 @@ def _clear_catalog_row(ws, row_num: int):
     for column in range(2, 19):
         set_cell_value(ws, row_num, column, None)
 
-
-def _quarantine_root(shop_dir: Path) -> Path:
-    """Recoverable folder for removed local product folders."""
-    root = shop_dir / ".deleted_local_products"
-    root.mkdir(parents=True, exist_ok=True)
-    return root
-
-
-def _quarantine_destination(shop_dir: Path, folder: str) -> Path:
-    root = _quarantine_root(shop_dir)
-    safe_folder = re.sub(r"[^A-Za-z0-9._-]+", "_", folder)
-    marker = f"{time.strftime('%Y%m%d_%H%M%S')}_{time.time_ns()}"
-    return root / f"{safe_folder}_deleted_{marker}"
-
-
-def _build_local_delete_metadata(row: int, folder: str, target_folder: Path) -> dict[str, int | str]:
-    return {
-        "row": row,
-        "folder": folder,
-        "quarantine_folder": str(target_folder),
-    }
-
-
-def _parse_delete_request_payload(data: dict, *, require_folder: bool = True) -> tuple[str, str]:
-    if not isinstance(data, dict):
-        raise HTTPException(400, "Payload phải là JSON object")
-    shop = str(data.get("shop") or "").strip()
-    if not shop:
-        raise HTTPException(400, "Thiếu thông tin shop")
-    try:
-        _assert_shop_identity(shop)
-    except RuntimeError as error:
-        raise HTTPException(409, str(error)) from error
-    folder = str(data.get("folder") or "").strip() if require_folder else ""
-    if require_folder:
-        folder = _validate_product_numbered_folder_name(folder)
-    return shop, folder
-
-
-async def _read_delete_payload(req: Request) -> dict:
-    try:
-        data = await req.json()
-    except Exception as error:
-        raise HTTPException(400, "Payload phải là JSON object") from error
-    if not isinstance(data, dict):
-        raise HTTPException(400, "Payload phải là JSON object")
-    return data
-
-
-def _parse_run_selected_request_payload(data: dict) -> tuple[str, list[tuple[int, str]]]:
-    if not isinstance(data, dict):
-        raise HTTPException(400, "Payload phải là JSON object")
-
-    shop = str(data.get("shop") or "").strip()
-    if not shop:
-        raise HTTPException(400, "Thiếu thông tin shop")
-    try:
-        _assert_shop_identity(shop)
-    except RuntimeError as error:
-        raise HTTPException(409, str(error)) from error
-
-    raw_items = data.get("items")
-    if not isinstance(raw_items, list) or not raw_items:
-        raise HTTPException(400, "items phải là danh sách không rỗng")
-
-    normalized: list[tuple[int, str]] = []
-    seen_rows: set[int] = set()
-    seen_folders: set[str] = set()
-    for item in raw_items:
-        if not isinstance(item, dict):
-            raise HTTPException(400, "Mỗi phần tử trong items phải có dạng {row, folder}")
-        row = item.get("row")
-        if isinstance(row, bool) or not isinstance(row, int):
-            raise HTTPException(400, "Mỗi item phải có row dạng số nguyên")
-        if row < 4:
-            raise HTTPException(400, f"Row {row} không hợp lệ (phải >= 4)")
-        if row in seen_rows:
-            raise HTTPException(400, f"row {row} bị lặp trong danh sách")
-        folder = _validate_product_numbered_folder_name(item.get("folder"))
-        if folder in seen_folders:
-            raise HTTPException(400, f"folder bị lặp trong danh sách: {folder}")
-
-        normalized.append((row, folder))
-        seen_rows.add(row)
-        seen_folders.add(folder)
-
-    return shop, normalized
-
-
-async def _read_optional_json_payload(request: Request | None) -> dict | None:
-    """Read an optional JSON body while keeping older body-less callers working."""
-    if request is None:
-        return None
-    try:
-        data = await request.json()
-    except Exception as error:
-        try:
-            raw_body = await request.body()
-        except Exception:
-            raw_body = b""
-        if not raw_body:
-            return None
-        raise HTTPException(400, "Payload phải là JSON object") from error
-    if data is None:
-        return None
-    if not isinstance(data, dict):
-        raise HTTPException(400, "Payload phải là JSON object")
-    return data
-
-
-def _get_job_store() -> JobStore:
-    global _ETSY_JOB_STORE
-    store = _ETSY_JOB_STORE
-    if store is None:
-        _DIAGNOSTICS_DIR.mkdir(parents=True, exist_ok=True)
-        store = JobStore(_JOB_STORE_PATH)
-        _ETSY_JOB_STORE = store
-        recovered = store.recover_running_jobs()
-        if recovered:
-            broadcast(f"[JOB-STORE] ♻️ Đã đánh dấu {recovered} job đang chạy trước đó là failed")
-    return store
-
-
-def _op_status_to_legacy(status: str | None) -> str:
-    normalized = str(status or "").strip().lower()
-    if normalized in {"queued", "starting", "preflight"}:
-        return "starting"
-    if normalized in {"running"}:
-        return "running"
-    if normalized in {"succeeded", "success"}:
-        return "success"
-    if normalized in {"failed", "error"}:
-        return "error"
-    if normalized == "cancelled":
-        return "cancelled"
-    return normalized
-
-
-def _cache_job_status(job_id: str, update: dict | None = None) -> None:
-    if update is None:
-        return
-    existing = _etsy_update_jobs.get(job_id, {})
-    merged = dict(existing)
-    merged.update(update)
-    merged["job_id"] = job_id
-    merged.setdefault("logs", [])
-    merged.setdefault("fields", [])
-    _etsy_update_jobs[job_id] = merged
-
-
-def _job_payload_for_frontend(job_record: dict[str, object] | None) -> dict | None:
-    if not job_record:
-        return None
-    payload = dict(job_record)
-    legacy_status = _op_status_to_legacy(str(payload.get("status")))
-    payload["status"] = legacy_status
-    payload["last_message"] = str(
-        payload.get("last_message") or payload.get("latest_log_excerpt") or ""
-    )
-    logs = payload.get("logs")
-    if not isinstance(logs, list):
-        logs = [value for value in [payload.get("last_message")] if value]
-    payload["logs"] = logs[-12:]
-    return payload
-
-
-def _coerce_int(value: object, default: int = 0) -> int:
-    """Convert persisted JSON/SQLite scalar values without widening types."""
-    if isinstance(value, (int, float, str, bytes, bytearray)):
-        try:
-            return int(value)
-        except (TypeError, ValueError, OverflowError):
-            pass
-    return default
-
-
-def _coerce_float(value: object, default: float = 0.0) -> float:
-    """Convert persisted JSON/SQLite scalar values without raising on corrupt data."""
-    if isinstance(value, (int, float, str, bytes, bytearray)):
-        try:
-            return float(value)
-        except (TypeError, ValueError, OverflowError):
-            pass
-    return default
-
-
-def _job_center_payload(job_record: dict[str, object] | None) -> dict | None:
-    """Return a compact, path-free record for the operator Job Center."""
-    if not job_record:
-        return None
-    fields = job_record.get("fields")
-    if not isinstance(fields, list):
-        fields = []
-    message = str(job_record.get("last_message") or job_record.get("latest_log_excerpt") or "")
-    # Job Center messages are intentionally one-line excerpts; never expose
-    # operation receipts, raw logs, or local filesystem paths in this endpoint.
-    message = re.sub(r"(?:/Users|/private/var|/tmp)/[^\s]+", "[local path]", message)
-    return {
-        "job_id": str(job_record.get("job_id") or ""),
-        "shop_id": str(job_record.get("shop_id") or ""),
-        "operation": str(job_record.get("operation") or ""),
-        "row": job_record.get("row"),
-        "folder": str(job_record.get("folder") or ""),
-        "listing_id": str(job_record.get("listing_id") or ""),
-        "status": str(job_record.get("status") or ""),
-        "attempt_count": _coerce_int(job_record.get("attempt_count"), 1),
-        "created_at": job_record.get("created_at"),
-        "updated_at": job_record.get("updated_at"),
-        "started_at": job_record.get("started_at"),
-        "finished_at": job_record.get("finished_at"),
-        "pid": job_record.get("pid"),
-        "exit_code": job_record.get("exit_code"),
-        "retry_parent_job_id": job_record.get("retry_parent_job_id"),
-        "fields": [str(field) for field in fields if isinstance(field, str)],
-        "last_message": message[:500],
-    }
-
-
-async def _queue_etsy_update_job(
-    context: OperationContext,
-    fields: list[str],
-    job_record: dict[str, object],
-) -> str:
-    """Attach one durable job to the existing updater runtime."""
-    job_id = str(job_record["job_id"])
-    if len(_etsy_update_jobs) > 100:
-        oldest = sorted(
-            _etsy_update_jobs,
-            key=lambda key: _etsy_update_jobs[key].get("created_at", 0),
-        )[:25]
-        for old_job_id in oldest:
-            _etsy_update_jobs.pop(old_job_id, None)
-    _cache_job_status(
-        job_id,
-        {
-            "status": "starting",
-            "operation": context.operation,
-            "folder": context.folder,
-            "listing_id": context.listing_id,
-            "fields": fields,
-            "shop_id": context.shop_id,
-            "created_at": _coerce_float(job_record.get("created_at"), time.time()),
-            "row": context.row,
-            "request_id": context.request_id,
-            "last_message": "Runtime started; waiting for Chrome marker",
-            "logs": [],
-        },
-    )
-    async def run_update():
-        await _run_etsy_updater(context=context, fields=fields, job_id=job_id)
-
-    command, _ = await _enqueue_operation(
-        operation="etsy-update",
-        shop_id=context.shop_id,
-        target=f"{context.row}:{context.folder}:{context.listing_id}:{','.join(fields)}",
-        callback=run_update,
-    )
-    _cache_job_status(job_id, {"queue_command_id": command["command_id"], "last_message": "Đã thêm vào hàng chờ chung"})
-    return job_id
-
-
-def _validate_product_etsy_identity(
-    row: int,
-    product: dict,
-    payload: dict | None,
-) -> tuple[str, str, str]:
-    """Fail closed when a caller supplies a stale shop/folder/listing mapping."""
-    try:
-        context = OperationContext.from_request(
-            operation="etsy_sync_from",
-            row=row,
-            payload=payload or {},
-            active_shop_id=_active_shop_id,
-            current_folder=product.get("folder"),
-            current_etsy_url=product.get("etsy_url"),
-        )
-    except OperationContextError as error:
-        _raise_context_error(error)
-    return context.shop_id, context.folder, context.listing_id
-
-
-def _raise_context_error(error: OperationContextError) -> NoReturn:
-    message = str(error)
-    if any(
-        key in message
-        for key in (
-            "Payload định danh phải có đủ",
-            "Sản phẩm chưa có Etsy listing ID hợp lệ",
-            "không hợp lệ",
-            "dữ liệu listing_id",
-            "Row không hợp lệ",
-            "Dữ liệu sản phẩm thiếu folder",
-        )
-    ):
-        raise HTTPException(400, message) from error
-    raise HTTPException(409, message) from error
-
-
-def _resolve_update_context(
-    row: int,
-    product: dict,
-    payload: dict | None,
-    operation: str = "etsy_push_update",
-) -> OperationContext:
-    try:
-        return OperationContext.from_request(
-            operation=operation,
-            row=row,
-            payload=payload or {},
-            active_shop_id=_active_shop_id,
-            current_folder=product.get("folder"),
-            current_etsy_url=product.get("etsy_url"),
-        )
-    except OperationContextError as error:
-        _raise_context_error(error)
-        raise  # pragma: no cover
-
-
-def _etsy_update_shop_is_busy(shop_id: str) -> bool:
-    requested_shop_id = str(shop_id)
-    active_jobs = _get_job_store().get_active_jobs_for_shop(shop_id)
-    if any(
-        str(job.get("shop_id")) == requested_shop_id
-        and str(job.get("status")) in {JOB_STATUS_QUEUED, JOB_STATUS_RUNNING}
-        for job in active_jobs
-    ):
-        return True
-
-    # Keep the legacy in-memory cache as a compatibility overlay for callers
-    # and older tests that still populate it directly.  ``starting`` is the
-    # legacy representation of a queued durable job.
-    return any(
-        str(job.get("shop_id")) == requested_shop_id
-        and str(job.get("status")) in {JOB_STATUS_QUEUED, JOB_STATUS_RUNNING, "starting"}
-        for job in _etsy_update_jobs.values()
-    )
-
-
-def _partition_selected_local_products(
-    shop_id: str,
-    selected_items: list[tuple[int, str]],
-) -> tuple[list[tuple[int, str]], list[dict]]:
-    """Split selected items into (valid, rejected).
-
-    Per-item problems (đã có URL, Đã đăng, thiếu title, ...) are rejected with a
-    reason so the batch can continue with the remaining products.
-    """
-    excel_path = EXCEL_FILE()
-    if not excel_path.exists():
-        raise HTTPException(404, "Chưa có file Excel của shop đang hoạt động")
-    wb = openpyxl.load_workbook(excel_path)
-    ws = wb["Listings"]
-    shop_dir = SHOP_DIR()
-    valid: list[tuple[int, str]] = []
-    rejected: list[dict] = []
-    for row, folder in selected_items:
-        current_folder = str(ws.cell(row=row, column=2).value or "").strip()
-        if current_folder != folder:
-            rejected.append({
-                "row": row,
-                "folder": folder,
-                "reason": (
-                    f"Row {row} bị thay đổi: folder hiện tại "
-                    f"'{current_folder or '[trống]'}' không khớp '{folder}'"
-                ),
-            })
-            continue
-        title = ws.cell(row=row, column=8).value
-        if not str(title or "").strip():
-            rejected.append({
-                "row": row,
-                "folder": folder,
-                "reason": f"Row {row} chưa có đủ dữ liệu: thiếu title",
-            })
-            continue
-        status = str(ws.cell(row=row, column=14).value or "").strip()
-        if "Đã đăng" in status:
-            rejected.append({
-                "row": row,
-                "folder": folder,
-                "reason": f"Row {row} đang có trạng thái '{status}', không nên đăng lại",
-            })
-            continue
-        if _listing_url_has_id(str(ws.cell(row=row, column=16).value or "")):
-            rejected.append({
-                "row": row,
-                "folder": folder,
-                "reason": f"Row {row} đã có Etsy URL/listing ID tại cột P, không nên đăng lại",
-            })
-            continue
-        folder_path = shop_dir / folder
-        if not folder_path.exists():
-            rejected.append({
-                "row": row,
-                "folder": folder,
-                "reason": f"Không tìm thấy folder local: {folder}",
-            })
-            continue
-        valid.append((row, folder))
-    return valid, rejected
-
-
-def _validate_selected_local_products(
-    shop_id: str,
-    selected_items: list[tuple[int, str]],
-) -> list[tuple[int, str]]:
-    """Legacy hard-fail wrapper — prefer _partition_selected_local_products."""
-    valid, rejected = _partition_selected_local_products(shop_id, selected_items)
-    if rejected:
-        raise HTTPException(400, rejected[0]["reason"])
-    return valid
-
-
-def _mark_selected_row_errors(excel_path: Path, rejected: list[dict]) -> None:
-    """Write ❌ Lỗi status for skipped batch items so the card shows the reason."""
-    if not rejected:
-        return
-    wb = openpyxl.load_workbook(excel_path)
-    ws = wb["Listings"]
-    for item in rejected:
-        reason = str(item.get("reason") or "Không đủ điều kiện đăng").strip()
-        set_cell_value(ws, int(item["row"]), 14, f"❌ Lỗi: {reason}")
-    wb.save(excel_path)
-
-
-def _set_selected_rows_pending(excel_path: Path, selected_rows: list[int]) -> None:
-    if not selected_rows:
-        return
-    backup = excel_path.with_name(f"{excel_path.stem}.run_selected_backup_{time.strftime('%Y%m%d_%H%M%S')}{excel_path.suffix}")
-    wb = openpyxl.load_workbook(excel_path)
-    ws = wb["Listings"]
-
-    backup_created = False
-    try:
-        shutil.copy2(excel_path, backup)
-        backup_created = True
-        for row in selected_rows:
-            set_cell_value(ws, row, 14, "⏳ Chờ đăng")
-        wb.save(excel_path)
-    except Exception as error:
-        if backup_created:
-            try:
-                shutil.copy2(backup, excel_path)
-            except Exception as restore_error:
-                raise HTTPException(
-                    500,
-                    "Đặt trạng thái Chờ đăng thất bại và không khôi phục được workbook",
-                ) from restore_error
-        raise HTTPException(500, "Đặt trạng thái Chờ đăng thất bại, đã rollback workbook") from error
-
-
 def products_from_excel() -> list[dict]:
     wb = openpyxl.load_workbook(EXCEL_FILE(), data_only=True)
     ws = wb["Listings"]
@@ -1299,9 +423,6 @@ def products_from_excel() -> list[dict]:
     # Cache directory listing to avoid hundreds of disk I/O calls
     shop_dir = SHOP_DIR()
     existing_folders = set()
-    social_products = load_social_post_records(
-        BASE_DIR, _active_shop_id
-    ).get("products", {})
     if shop_dir.exists():
         try:
             existing_folders = {d.name for d in shop_dir.iterdir() if d.is_dir()}
@@ -1362,21 +483,7 @@ def products_from_excel() -> list[dict]:
 
         renderable_images = [resolved for img in images
                              if (resolved := _renderable_image_url(str(folder), img_dir / img))]
-        cloud_manifest = None
-        cloud_state_path = folder_path / ".cloud-assets.json"
-        if cloud_state_path.is_file() and not cloud_state_path.is_symlink():
-            try:
-                cloud_state = load_local_state(folder_path)
-                candidate_manifest = cloud_state.get("current_manifest")
-                if isinstance(candidate_manifest, dict):
-                    cloud_manifest = candidate_manifest
-            except (OSError, ValueError, TypeError, KeyError):
-                cloud_manifest = None
-        cloud_preview = _cloud_preview_descriptor(str(folder), folder_path, cloud_manifest)
         thumb_image = next((image for image in renderable_images if image.get("availability") != "hydration_required"), None)
-        gallery_images = renderable_images
-        if thumb_image is None and cloud_preview:
-            gallery_images = [cloud_preview, *renderable_images]
         products.append({
             "row":         row_num,
             "folder":      str(folder),
@@ -1392,13 +499,12 @@ def products_from_excel() -> list[dict]:
             "status":      status,
             "section":     str(row[14] or "").strip() or "Digital Planner",
             "image_count": len(images),
-            "thumb":       thumb_image["url"] if thumb_image else (cloud_preview["url"] if cloud_preview else (renderable_images[0]["url"] if renderable_images else None)),
+            "thumb":       thumb_image["url"] if thumb_image else (renderable_images[0]["url"] if renderable_images else None),
             "all_images":  [
                 image["url"] for image in renderable_images
                 if image.get("availability") != "hydration_required"
             ],
-            "image_previews": gallery_images,
-            "cloud_preview": cloud_preview,
+            "image_previews": renderable_images,
             "pdf_count":   len(dig_files),
             "has_planner": len(planner_files) > 0,
             "needs_seo":   not bool(title),
@@ -1406,11 +512,6 @@ def products_from_excel() -> list[dict]:
             "etsy_url":    str(row[15] or "") if len(row) > 15 else "",
             "extra":       str(row[16] or "") if len(row) > 16 else "",
             "sku":         sku_val,
-            "social_statuses": (
-                social_products.get(str(folder), {}).get("channels", {})
-                if isinstance(social_products.get(str(folder)), dict)
-                else {}
-            ),
         })
 
     # Sắp xếp theo số thứ tự của folder (VD: product-01 -> 1)
@@ -1425,82 +526,22 @@ def products_from_excel() -> list[dict]:
     return products
 
 
-_CATALOG_UPDATE_COLUMNS = {
-    "title": 8, "description": 9, "tags": 10, "keywords": 3,
-    "price": 5, "qty": 11, "status": 14, "section": 15,
-    "category": 6, "when_made": 13, "etsy_url": 16, "extra": 17,
-    "sku": 18,
-}
-
-
-def _apply_excel_updates(workbook: openpyxl.Workbook, row_num: int, updates: dict) -> None:
-    ws = workbook["Listings"]
+def save_to_excel(row_num: int, updates: dict, excel_path: Optional[Path] = None):
+    target_excel = excel_path or EXCEL_FILE()
+    wb = openpyxl.load_workbook(target_excel)
+    ws = wb["Listings"]
+    col_map = {
+        "title": 8, "description": 9, "tags": 10, "keywords": 3,
+        "price": 5, "qty": 11, "status": 14, "section": 15,
+        "category": 6, "when_made": 13, "etsy_url": 16, "extra": 17,
+        "sku": 18,
+    }
     for field, val in updates.items():
-        if field in _CATALOG_UPDATE_COLUMNS:
+        if field in col_map:
             if field == "title" and val and str(val).startswith("[Cần SEO]"):
                 val = ""
-            set_cell_value(ws, row_num, _CATALOG_UPDATE_COLUMNS[field], val)
-
-
-def _is_canonical_catalog_workbook(target_excel: Path) -> bool:
-    try:
-        return target_excel.resolve() == catalog_workbook_path(BASE_DIR, _active_shop_id).resolve()
-    except (OSError, ValueError, CatalogRepositoryError):
-        return False
-
-
-def save_to_excel(
-    row_num: int,
-    updates: dict,
-    excel_path: Optional[Path] = None,
-    *,
-    expected_version: str | None = None,
-    expected_hash: str | None = None,
-):
-    """Persist product fields, using the atomic repository for the active catalog.
-
-    Explicit non-canonical workbook paths retain the legacy writer for callers
-    that operate on imported/snapshot workbooks.  Preconditions are accepted as
-    keyword-only arguments so older callers remain source-compatible.
-    """
-    target_excel = Path(excel_path) if excel_path is not None else EXCEL_FILE()
-    if _is_canonical_catalog_workbook(target_excel):
-        return catalog_repository.apply_catalog_update(
-            BASE_DIR,
-            _active_shop_id,
-            "dashboard_product_update",
-            lambda workbook: _apply_excel_updates(workbook, row_num, updates),
-            expected_version=expected_version,
-            expected_hash=expected_hash,
-            workbook_name=target_excel.name,
-        )
-
-    wb = openpyxl.load_workbook(target_excel)
-    try:
-        _apply_excel_updates(wb, row_num, updates)
-        wb.save(target_excel)
-    finally:
-        wb.close()
-
-
-def _catalog_preconditions(data: dict, request: Request) -> tuple[dict, str | None, str | None]:
-    updates = dict(data)
-    expected_version = updates.pop("_expected_version", None)
-    expected_hash = updates.pop("_expected_hash", None)
-    if expected_version is None:
-        expected_version = request.headers.get("x-catalog-expected-version")
-    if expected_hash is None:
-        expected_hash = request.headers.get("x-catalog-expected-hash")
-    if expected_hash is None:
-        expected_hash = request.headers.get("if-match")
-
-    def _normalize(value: object) -> str | None:
-        if value is None:
-            return None
-        normalized = str(value).strip().strip('"')
-        return normalized or None
-
-    return updates, _normalize(expected_version), _normalize(expected_hash)
+            set_cell_value(ws, row_num, col_map[field], val)
+    wb.save(target_excel)
 
 
 def _safe_asset_filename(value: str, fallback: str) -> str:
@@ -1520,8 +561,8 @@ def _to_il_fullxfull_url(value: str) -> str | None:
         return None
 
     normalized = re.sub(
-        r"il_[^/.]+(?P<suffix>\.[^/.]+)?\.(?P<ext>jpe?g|png|webp|gif)(?![^/]*\.)",
-        lambda m: f"il_fullxfull{m.group('suffix') or ''}.{m.group('ext')}",
+        r"(il_)[^/.]+\.(jpe?g|png|webp|gif)",
+        r"il_fullxfull.\2",
         cleaned,
         flags=re.IGNORECASE,
         count=1,
@@ -1548,348 +589,22 @@ def _assert_shop_identity(target_shop_id: str) -> None:
         )
 
 
-def _etsy_session_payload(shop_id: str) -> dict:
-    session = resolve_etsy_session(BASE_DIR, SHOPS, shop_id)
-    return {
-        "shop_id": shop_id,
-        "shop_name": SHOPS.get(shop_id, {}).get("name", shop_id),
-        "profile_dir": str(session.profile_dir),
-        "debug_port": session.debug_port,
-        "browser_ready": is_etsy_session_ready(session),
-        "purpose": "etsy_posting",
-    }
-
-
-def _extract_manager_listing_id(value: str) -> str:
-    match = _ETSY_MANAGER_LISTING_RE.fullmatch(str(value or "").strip())
-    return match.group(1) if match else ""
-
-
-def _normalize_etsy_shop_slug(raw: str) -> str:
-    slug = str(raw or "").strip().lower().strip("/")
-    if not slug:
-        return ""
-    slug = re.sub(r"\?.*$", "", slug)
-    slug = re.sub(r"/.*$", "", slug)
-    return slug.strip()
-
-
-def _expected_shop_slug(target_shop_id: str) -> str:
-    shop_url = str(SHOPS.get(target_shop_id, {}).get("etsy_link") or "").strip()
-    match = re.search(r"/shop/([^/?#]+)", shop_url, re.I)
-    return _normalize_etsy_shop_slug(match.group(1)) if match else ""
-
-
-def _dedupe_preserve_order(values: list[str]) -> list[str]:
-    seen: set[str] = set()
-    deduped: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        deduped.append(value)
-    return deduped
-
-
-def _parse_visible_shop_slugs(values: list[str] | None) -> list[str]:
-    normalized: list[str] = []
-    for raw in values or []:
-        slug = _normalize_etsy_shop_slug(raw)
-        if not slug or slug == "me":
-            continue
-        normalized.append(slug)
-    return _dedupe_preserve_order(normalized)
-
-
-def _is_etsy_auth_required_text(value: str) -> bool:
-    normalized = str(value or "").lower()
-    return any(
-        token in normalized
-        for token in (
-            "sign in to continue",
-            "please sign in",
-            "create an account",
-            "đăng nhập để",
-            "you need to sign in",
-        )
-    )
-
-
-def _is_etsy_access_blocked_text(value: str) -> bool:
-    normalized = str(value or "").lower()
-    return any(
-        token in normalized
-        for token in (
-            "verify you are human",
-            "access denied",
-            "unusual activity",
-            "hcaptcha",
-            "recaptcha",
-        )
-    )
-
-
-def _is_etsy_auth_required_url(url: str) -> bool:
-    try:
-        parsed = urllib.parse.urlparse(url)
-        pathname = (parsed.path or "").lower()
-        return any(
-            pathname.startswith(segment)
-            for segment in (
-                "/join",
-                "/signin",
-                "/sign-in",
-            )
-        )
-    except Exception:
-        return False
-
-
-def _normalize_url_path(path: str) -> str:
-    normalized = str(path or "").strip()
-    if not normalized:
-        return "/"
-    normalized = re.sub(r"/+", "/", normalized.strip())
-    if not normalized.startswith("/"):
-        normalized = f"/{normalized}"
-    return normalized.rstrip("/") or "/"
-
-
-def _is_etsy_host(url_or_host: str) -> bool:
-    try:
-        parsed = urllib.parse.urlparse(
-            url_or_host if "://" in url_or_host else f"//{url_or_host}"
-        )
-        return (parsed.hostname or "").lower() in {"etsy.com", "www.etsy.com"}
-    except Exception:
-        return False
-
-
-def _is_etsy_shop_manager_route(url: str) -> bool:
-    try:
-        parsed = urllib.parse.urlparse(url)
-        if not _is_etsy_host(parsed.netloc):
-            return False
-        manager_path = _normalize_url_path(urllib.parse.urlparse(SHOP_MANAGER_URL).path)
-        return _normalize_url_path(parsed.path) == manager_path
-    except Exception:
-        return False
-
-
-def _is_etsy_shop_public_route(url: str) -> bool:
-    try:
-        parsed = urllib.parse.urlparse(url)
-        if not _is_etsy_host(parsed.netloc):
-            return False
-        return _normalize_url_path(parsed.path).startswith("/shop/")
-    except Exception:
-        return False
-
-
-def _is_etsy_access_blocked_url(url: str) -> bool:
-    try:
-        parsed = urllib.parse.urlparse(url)
-        pathname = (parsed.path or "").lower()
-        blocked_paths = (
-            "/access-denied",
-            "/access_denied",
-            "/challenge",
-            "/session/challenge",
-            "/captcha",
-        )
-        return any(pathname.startswith(item) for item in blocked_paths)
-    except Exception:
-        return False
-
-
-async def _read_visible_text(page) -> str:
-    for selector in ("main", "[role='main']", "#content", "body"):
-        try:
-            element = page.locator(selector).first
-            if await element.count() > 0:
-                text = await element.inner_text()
-                if text:
-                    return str(text)
-        except Exception:
-            pass
-    try:
-        return str(await page.evaluate("() => (document?.body?.innerText || '')")) or ""
-    except Exception:
-        return ""
-
-
-async def _extract_shop_anchors(page) -> list[str]:
-    return _parse_visible_shop_slugs(
-        list(
-            await page.evaluate(
-                r'''() => {
-                const selectors = [
-                    "header a[href*='/shop/']",
-                    "a[href*='/shop/']",
-                    ".shops a[href*='/shop/']",
-                    "#content a[href*='/shop/']",
-                ];
-                const anchors = [];
-                for (const selector of selectors) {
-                    for (const node of document.querySelectorAll(selector)) {
-                        anchors.push(node.href || node.getAttribute('href') || '');
-                    }
-                }
-                return anchors.map((href) => {
-                    const match = (href || '').match(/\/shop\/([^/?#]+)/i);
-                    return match ? match[1] : null;
-                }).filter(Boolean);
-            }'''
-            )
-        )
-    )
-
-
-async def _assert_etsy_page_shop_identity(
-    page,
-    target_shop_id: str,
-    *,
-    shop_identity_verified: bool = False,
-) -> None:
-    expected = _expected_shop_slug(target_shop_id)
+async def _assert_etsy_page_shop_identity(page, target_shop_id: str) -> None:
+    """Fail before scraping when the authenticated editor belongs to another shop."""
+    shop_url = str(SHOPS.get(target_shop_id, {}).get("etsy_link") or "")
+    expected_match = re.search(r"/shop/([^/?#]+)", shop_url, re.I)
+    expected = expected_match.group(1).lower() if expected_match else ""
     if not expected:
         raise RuntimeError(f"Shop {target_shop_id} chưa có Etsy URL hợp lệ để xác minh phiên đăng nhập")
-
-    anchors = await _extract_shop_anchors(page)
-    if not anchors and not shop_identity_verified:
+    slugs = await page.evaluate(r'''() => Array.from(document.querySelectorAll('a[href*="/shop/"]'))
+        .map(a => (a.href || a.getAttribute('href') || '').match(/\/shop\/([^/?#]+)/i))
+        .filter(Boolean)
+        .map(match => match[1].toLowerCase())''')
+    actual = next((slug for slug in slugs if slug != "me"), "")
+    if actual != expected:
         raise RuntimeError(
-            f"Phiên Etsy chưa xác minh: không đọc được shop trên editor, yêu cầu={expected}"
+            f"Phiên Etsy sai shop: editor={actual or 'không xác định'}, yêu cầu={expected}"
         )
-    if not anchors:
-        return
-    if len(anchors) != 1 or anchors[0] != expected:
-        raise RuntimeError(
-            f"Phiên Etsy sai shop: editor={', '.join(anchors)} , yêu cầu={expected}"
-        )
-
-
-def _classify_etsy_session_state(url: str, visible_text: str) -> tuple[bool, bool]:
-    auth_required = _is_etsy_auth_required_url(url) or _is_etsy_auth_required_text(visible_text)
-    access_blocked = _is_etsy_access_blocked_url(url) or _is_etsy_access_blocked_text(visible_text)
-    return auth_required, access_blocked
-
-
-async def _assert_etsy_editor_access(page, listing_id: str) -> None:
-    final_url = str(page.url or "").strip()
-    text = await _read_visible_text(page)
-    auth_required, access_blocked = _classify_etsy_session_state(final_url, text)
-    if auth_required:
-        raise RuntimeError(
-            "Phiên Etsy chưa đăng nhập: hãy mở nút Browser Etsy, đăng nhập đúng shop, sau đó nhấn Sync lại"
-        )
-    if access_blocked:
-        raise RuntimeError("Etsy đang chặn/đòi xác minh phiên này, hãy xác minh thủ công rồi Sync lại")
-
-    opened_listing_id = _extract_manager_listing_id(final_url)
-    if not opened_listing_id:
-        raise RuntimeError(
-            f"Không mở đúng editor listing cho ID {listing_id}. URL hiện tại: {final_url or 'không có'}"
-        )
-    if opened_listing_id != listing_id:
-        raise RuntimeError(
-            f"Editor sai listing: editor={opened_listing_id}, yêu cầu={listing_id}"
-        )
-
-
-async def _assert_etsy_shop_manager_preflight(page, target_shop_id: str) -> bool:
-    await page.goto(SHOP_MANAGER_URL, wait_until="domcontentloaded", timeout=20000)
-    expected = _expected_shop_slug(target_shop_id)
-    if not expected:
-        raise RuntimeError(f"Shop {target_shop_id} chưa có Etsy URL hợp lệ để xác minh phiên đăng nhập")
-
-    timeout_ms = 8000
-    poll_ms = 250
-    deadline = time.monotonic() + timeout_ms / 1000.0
-
-    while True:
-        final_url = str(page.url or "").strip()
-        text = await _read_visible_text(page)
-        auth_required, access_blocked = _classify_etsy_session_state(final_url, text)
-        if auth_required:
-            raise RuntimeError(
-                "Phiên Etsy chưa đăng nhập: hãy mở nút Browser Etsy, đăng nhập đúng shop, sau đó nhấn Sync lại"
-            )
-        if access_blocked:
-            raise RuntimeError("Etsy đang chặn/đòi xác minh phiên này, hãy xác minh thủ công rồi Sync lại")
-        if _is_etsy_shop_public_route(final_url):
-            raise RuntimeError(
-                "Phiên Etsy chưa xác minh: không mở đúng Shop Manager, đang ở trang cửa hàng công khai."
-            )
-
-        if not _is_etsy_shop_manager_route(final_url):
-            if time.monotonic() >= deadline:
-                raise RuntimeError(
-                    f"Shop Manager chưa sẵn sàng/chưa xác minh: url hiện tại={final_url or 'không có'}"
-                )
-            await asyncio.sleep(poll_ms / 1000.0)
-            continue
-
-        manager_slugs = await _extract_shop_anchors(page)
-        if manager_slugs:
-            if len(manager_slugs) != 1 or manager_slugs[0] != expected:
-                raise RuntimeError(
-                    f"Phiên Etsy sai shop: editor={', '.join(manager_slugs)} , yêu cầu={expected}"
-                )
-            return True
-
-        if time.monotonic() >= deadline:
-            raise RuntimeError(
-                "Shop Manager chưa sẵn sàng/chưa xác minh: không đọc được shop trên Shop Manager"
-            )
-
-        await asyncio.sleep(poll_ms / 1000.0)
-
-
-async def _assert_etsy_editor_ready(page, listing_id: str) -> None:
-    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
-
-    editor_url = f"https://www.etsy.com/your/shops/me/listing-editor/edit/{listing_id}"
-    selector = 'textarea[name="title"], input[name="title"], #title-input'
-
-    async def _assert_current_state(exc: Exception | None = None) -> None:
-        text = await _read_visible_text(page)
-        current_url = str(page.url or "").strip()
-        auth_required, access_blocked = _classify_etsy_session_state(current_url, text)
-        if auth_required:
-            raise RuntimeError(
-                "Phiên Etsy chưa đăng nhập: hãy mở nút Browser Etsy, đăng nhập đúng shop, sau đó nhấn Sync lại"
-            ) from exc
-        if access_blocked:
-            raise RuntimeError("Etsy đang chặn/đòi xác minh phiên này, hãy xác minh thủ công rồi Sync lại") from exc
-        opened_listing_id = _extract_manager_listing_id(current_url)
-        if opened_listing_id != listing_id:
-            raise RuntimeError(
-                f"Editor sai listing: editor={opened_listing_id or 'không có'}, yêu cầu={listing_id}"
-            ) from exc
-
-    last_timeout: Exception | None = None
-    for attempt in range(2):
-        await _assert_current_state()
-        try:
-            # Two bounded waits give a transiently slow editor one clean reload
-            # while keeping the worst-case selector wait close to the old 20s.
-            await page.wait_for_selector(selector, timeout=12000)
-            await _assert_current_state()
-            return
-        except PlaywrightTimeoutError as exc:
-            last_timeout = exc
-            await _assert_current_state(exc)
-            if attempt == 0:
-                try:
-                    await page.goto(editor_url, wait_until="domcontentloaded", timeout=15000)
-                except Exception:
-                    # A navigation timeout can still leave a usable hydrated DOM;
-                    # the second readiness pass validates route and session again.
-                    pass
-
-    raise RuntimeError(
-        f"Không nạp được giao diện Listing Editor cho listing {listing_id}; có thể đăng nhập sai shop hoặc trang bị chặn"
-    ) from last_timeout
 
 
 def _validate_etsy_image_bytes(image_bytes: bytes) -> tuple[bool, tuple[int, int] | None]:
@@ -1904,18 +619,12 @@ def _validate_etsy_image_bytes(image_bytes: bytes) -> tuple[bool, tuple[int, int
         try:
             with Image.open(fp) as img:
                 img.load()
-                width, height = img.size
-                return width > 0 and height > 0, (width, height)
+                return img.size[0] > 0 and img.size[1] > 0, tuple(img.size)
         except Exception:
             return False, None
 
 
-def _extract_asset_sync_status(
-    asset_report: dict,
-    *,
-    metadata_ok: bool,
-    include_assets: bool = True,
-) -> dict:
+def _extract_asset_sync_status(asset_report: dict, *, metadata_ok: bool) -> dict:
     images_found = int(asset_report.get("images_found") or 0)
     images_downloaded = int(asset_report.get("images_downloaded") or 0)
     files_found = int(asset_report.get("files_found") or 0)
@@ -1938,31 +647,11 @@ def _extract_asset_sync_status(
         "images_complete": bool(images_complete),
         "files_complete": bool(files_complete),
         "assets_complete": bool(images_complete and files_complete),
-        "assets_deferred": not bool(include_assets),
-        "overall": bool(metadata_ok and (images_complete and files_complete if include_assets else True)),
+        "overall": bool(metadata_ok and images_complete and files_complete),
         "files_section_observed": bool(files_section_observed),
         "image_warning": images_warning or None,
         "file_warning": files_warning or None,
     }
-
-
-def _parse_request_bool(payload: dict, key: str, default: bool) -> bool:
-    """Read optional boolean request flags safely (accept common boolean strings)."""
-    if key not in payload:
-        return default
-    value = payload.get(key)
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int):
-        if value in {0, 1}:
-            return bool(value)
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "on"}:
-            return True
-        if normalized in {"0", "false", "no", "off"}:
-            return False
-    raise ValueError(f"{key} phải là boolean")
 
 
 def _size_text_to_bytes(value: str) -> Optional[int]:
@@ -2050,12 +739,7 @@ async def _inspect_etsy_listing_assets(page) -> dict:
     }
 
 
-async def _extract_editor_listing_images(
-    editor_page,
-    *,
-    timeout_ms: int = 8000,
-    poll_ms: int = 250,
-) -> dict | list[Any]:
+async def _extract_editor_listing_images(editor_page) -> dict:
     """Prefer authenticated editor HTML for image URLs, fallback later if empty."""
     await _click_etsy_editor_tab(editor_page, "Photo & Video", "Photos")
     try:
@@ -2065,400 +749,67 @@ async def _extract_editor_listing_images(
             await editor_page.wait_for_timeout(600)
     except Exception:
         pass
+    payload = await editor_page.evaluate(r'''() => {
+        const normalize = (raw) => {
+            if (!raw) return '';
+            let clean = String(raw).trim().split('#')[0].split('?')[0];
+            if (!clean) return '';
+            clean = clean.replace(/^url\([\"']?/, '').replace(/[\"']?\)$/, '');
+            if (!clean.includes('i.etsystatic.com') || !clean.includes('/r/il/')) return '';
+            if (!/^https?:\/\//i.test(clean)) return '';
+            const normalized = clean.replace(/(il_)[^/.]+\.(jpe?g|png|webp|gif)/i, `il_fullxfull.$2`);
+            return normalized.includes('il_fullxfull') ? normalized : '';
+        };
 
-    deadline = time.monotonic() + timeout_ms / 1000.0
-    last_signature: tuple[int, tuple[str, ...], tuple[str, ...], int] | None = None
-    stable_count = 0
+        const add = (value, bag) => {
+            if (!value) return;
+            const normalized = normalize(value);
+            if (!normalized) return;
+            if (!bag.has(normalized)) bag.add(normalized);
+        };
 
-    while True:
-        payload = await editor_page.evaluate(r'''() => {
-            const media_root = document.querySelector('#media') || document.body;
-            const deleteButtons = Array.from(media_root.querySelectorAll(
-                'button[data-testid="image-delete-button"], [data-testid*="photo" i] button[aria-label*="Delete" i], [data-testid*="photo" i] button[aria-label*="Remove" i]'
-            ));
-            const uploadImageSelector =
-                'img.le-media-preview-image-hide-edges, source.le-media-preview-image-hide-edges, picture.le-media-preview-image-hide-edges';
-            const candidateSet = new Set();
-            const imageNodes = [];
+        const container = document.querySelector('[data-testid="photo-upload"], .wt-photo-upload, #media-upload, .wt-media-upload') || document.body;
+        const deleteButtons = Array.from(container.querySelectorAll(
+            'button[data-testid="image-delete-button"], [data-testid*="photo" i] button[aria-label*="Delete" i], [data-testid*="photo" i] button[aria-label*="Remove" i]'
+        ));
+        const deleteCount = deleteButtons.length;
+        const candidates = new Set();
 
-            const addNode = (node, allowGeneric = false) => {
-                if (!node || node.nodeType !== 1) return;
-                const testId = node.getAttribute ? (node.getAttribute('data-testid') || '').trim() : '';
-                if (testId === 'thumbnail_image') return;
-                const tagName = node.tagName.toLowerCase();
-                if (tagName === 'source' || allowGeneric) {
-                    if (testId === 'thumbnail_image') return;
-                    candidateSet.add(node);
-                    imageNodes.push(node);
-                    return;
-                }
-                if (node.classList && node.classList.contains('le-media-preview-image-hide-edges')) {
-                    candidateSet.add(node);
-                    imageNodes.push(node);
-                }
-            };
+        // Etsy's delete button and preview image are siblings in separate nested
+        // wrappers, so walking up to the first div can miss every image. The
+        // /r/il/ URL guard excludes account/shop chrome, and the Set collapses
+        // the duplicate thumbnail for the primary listing image.
+        const nodes = [
+            ...document.querySelectorAll('img[src], img[srcset], picture source[src], picture source[srcset], [data-listing-image-id] img'),
+        ];
+        nodes.forEach(node => {
+            const src = node.getAttribute('src') || '';
+            const srcset = node.getAttribute('srcset') || '';
+            add(src, candidates);
+            srcset.split(',').forEach(token => add(token.trim().split(/\\s+/)[0], candidates));
+        });
 
-            // Prefer the dedicated uploaded-media preview nodes.
-            for (const node of Array.from(media_root.querySelectorAll(uploadImageSelector))) {
-                addNode(node);
-            }
-
-            // Fallback: for robustness, include preview nodes that belong to
-            // the same upload item container as a detected delete control.
-            if (imageNodes.length === 0 && deleteButtons.length > 0) {
-                for (const button of deleteButtons) {
-                    const scope = button.closest('[data-photo-id], [data-listing-image-id], [data-clg-id], [class*="photo" i], li, div');
-                    if (!scope) continue;
-                    for (const node of Array.from(scope.querySelectorAll('img.le-media-preview-image-hide-edges, source.le-media-preview-image-hide-edges, picture.le-media-preview-image-hide-edges, img[src], img[srcset], picture source[src], picture source[srcset]'))) {
-                        const testId = (node.getAttribute ? (node.getAttribute('data-testid') || '').trim() : '');
-                        if (testId === 'thumbnail_image') continue;
-                        addNode(node, true);
-                    }
-                }
-            }
-
-            const fallbackNodes = Array.from(media_root.querySelectorAll(
-                'img[src], img[srcset], picture source[src], picture source[srcset]'
-            ));
-            if (imageNodes.length === 0 && fallbackNodes.length > 0) {
-                for (const node of fallbackNodes) {
-                    const testId = (node.getAttribute ? (node.getAttribute('data-testid') || '').trim() : '');
-                    if (testId === 'thumbnail_image') continue;
-                    if (candidateSet.has(node)) {
-                        continue;
-                    }
-                    addNode(node, true);
-                }
-            }
-
-            return {
-                image_nodes: imageNodes.map((node, position) => {
-                    const index = (
-                        (node.getAttribute('data-index') ||
-                        node.getAttribute('data-photo-id') ||
-                        node.getAttribute('data-listing-image-id') ||
-                        String(position)).trim()
-                    );
-                    const candidates = [];
-                    const add = (value) => {
-                        if (!value) return;
-                        for (const token of String(value).split(',').map((value) => value.trim()).filter(Boolean)) {
-                            const first = token.split(/\s+/)[0].trim();
-                            if (first) {
-                                candidates.push(first);
-                            }
-                        }
-                    };
-
-                    add(node.currentSrc || '');
-                    add(node.getAttribute('src') || '');
-                    add(node.getAttribute('srcset') || '');
-                    add(node.getAttribute('data-src') || '');
-                    add(node.getAttribute('data-srcset') || '');
-                    return {index, candidates};
-                }),
-                delete_count: deleteButtons.length,
-            };
-        }''')
-        payload = payload if isinstance(payload, dict) else {}
-        image_nodes = payload.get("image_nodes")
-        image_nodes = image_nodes if isinstance(image_nodes, list) else []
-
-        normalized_urls: list[str] = []
-        seen_urls: set[str] = set()
-        indices: list[str] = []
-        for position, node in enumerate(image_nodes):
-            index = str(position).strip()
-            candidates: list[str] = []
-            if isinstance(node, dict):
-                index = str(node.get("index") or position).strip()
-                candidates = list(node.get("candidates") or [])
-
-            if index:
-                indices.append(index)
-            for raw in candidates:
-                clean = str(raw).split("?")[0].split("#")[0].strip()
-                if not clean or "/r/il/" not in clean:
-                    continue
-                normalized = _to_il_fullxfull_url(clean)
-                if not normalized or normalized in seen_urls:
-                    continue
-                seen_urls.add(normalized)
-                normalized_urls.append(normalized)
-                if len(normalized_urls) >= 20:
-                    break
-            if len(normalized_urls) >= 20:
-                break
-
-        gallery_node_count = len(image_nodes)
-        unique_indices = sorted(set(indices))
-        delete_count = int(payload.get("delete_count", 0) or 0)
-        editor_image_count = delete_count if delete_count > 0 else len(unique_indices)
-        complete = (
-            gallery_node_count > 0
-            and len(normalized_urls) == len(unique_indices) == delete_count == gallery_node_count
-        )
-        signature = (
-            gallery_node_count,
-            tuple(unique_indices),
-            tuple(normalized_urls),
-            delete_count,
-        )
-
-        if complete:
-            if signature == last_signature:
-                stable_count += 1
-            else:
-                stable_count = 1
-                last_signature = signature
-            if stable_count >= 2:
-                return {
-                    "images": normalized_urls,
-                    "complete": True,
-                    "image_count": editor_image_count,
-                    "gallery_node_count": gallery_node_count,
-                    "gallery_index_count": len(unique_indices),
-                    "delete_count": delete_count,
-                }
-        else:
-            stable_count = 0
-            last_signature = None
-
-        if time.monotonic() >= deadline:
-            return {
-                "images": normalized_urls,
-                "complete": False,
-                "image_count": editor_image_count,
-                "gallery_node_count": gallery_node_count,
-                "gallery_index_count": len(unique_indices),
-                "delete_count": delete_count,
-                "reason": (
-                    "incomplete_editor_hydration"
-                    if len(unique_indices) != len(normalized_urls)
-                    or delete_count != gallery_node_count
-                    or gallery_node_count != len(normalized_urls)
-                    else "timeout"
-                ),
-            }
-
-        await asyncio.sleep(poll_ms / 1000.0)
-
-
-async def _extract_public_listing_images(
-    public_page,
-    *,
-    timeout_ms: int = 8000,
-    poll_ms: int = 250,
-) -> dict | list[Any]:
-    deadline = time.monotonic() + timeout_ms / 1000.0
-    last_signature: tuple[int, tuple[str, ...], tuple[str, ...]] | None = None
-    stable_count = 0
-
-    while True:
-        gallery_payload = await public_page.evaluate(r"""() => {
-            const photos = document.querySelector("#photos");
-            if (!photos) return [];
-            const gallery_root = photos.querySelector(".listing-page-image-carousel-component") || photos;
-            const gallery_nodes = Array.from(gallery_root.querySelectorAll("img.carousel-image"));
-
-            return gallery_nodes.map((node, position) => {
-                const index = (node.getAttribute("data-index") || String(position)).trim();
-                const candidates = [];
-
-                const add = (raw) => {
-                    if (!raw) return;
-                    for (const token of String(raw).split(",").map((value) => value.trim()).filter(Boolean)) {
-                        const first = token.split(/\s+/)[0].trim();
-                        if (first) {
-                            candidates.push(first);
-                        }
-                    }
-                };
-
-                add(node.currentSrc || "");
-                add(node.getAttribute("src") || "");
-                add(node.getAttribute("data-src") || "");
-                add(node.getAttribute("srcset") || "");
-                add(node.getAttribute("data-srcset") || "");
-                return { index, candidates };
-            });
-        }""")
-
-        gallery_payload = gallery_payload if isinstance(gallery_payload, list) else []
-
-        normalized_urls: list[str] = []
-        seen_urls: set[str] = set()
-        indices: list[str] = []
-        for position, node in enumerate(gallery_payload):
-            index = str(position).strip()
-            candidates: list[str] = []
-            if isinstance(node, dict):
-                index = str((node.get("index") or position)).strip()
-                candidates = list(node.get("candidates") or [])
-            elif isinstance(node, str):
-                candidates = [node]
-            else:
-                index = str((node.get("index") if hasattr(node, "get") else position)).strip()
-                candidates = list(getattr(node, "candidates", []) or [])
-
-            if index:
-                indices.append(index)
-            for raw in candidates:
-                clean = str(raw).split("?")[0].split("#")[0].strip()
-                if not clean or "/r/il/" not in clean:
-                    continue
-                normalized = _to_il_fullxfull_url(clean)
-                if not normalized or normalized in seen_urls:
-                    continue
-                seen_urls.add(normalized)
-                normalized_urls.append(normalized)
-                if len(normalized_urls) >= 20:
-                    break
-            if len(normalized_urls) >= 20:
-                break
-
-        gallery_node_count = len(gallery_payload)
-        unique_indices = sorted(set(indices))
-        complete = (
-            gallery_node_count > 0
-            and len(normalized_urls) == len(unique_indices) == gallery_node_count
-        )
-        signature = (gallery_node_count, tuple(unique_indices), tuple(normalized_urls))
-
-        if complete:
-            if signature == last_signature:
-                stable_count += 1
-            else:
-                stable_count = 1
-                last_signature = signature
-            if stable_count >= 2:
-                return {
-                    "urls": normalized_urls,
-                    "complete": True,
-                    "gallery_node_count": gallery_node_count,
-                    "gallery_index_count": len(unique_indices),
-                }
-        else:
-            stable_count = 0
-            last_signature = None
-
-        if time.monotonic() >= deadline:
-            return {
-                "urls": normalized_urls,
-                "complete": False,
-                "gallery_node_count": gallery_node_count,
-                "gallery_index_count": len(unique_indices),
-                "reason": (
-                    "incomplete_gallery_hydration"
-                    if len(unique_indices) != len(normalized_urls)
-                    else "timeout"
-                ),
-            }
-
-        await asyncio.sleep(poll_ms / 1000.0)
-
-
-@asynccontextmanager
-async def _redirect_cdp_downloads_to_staging(browser_ctx, page, download_dir: Path):
-    """Keep seller-button downloads inside product-local staging.
-
-    A browser attached over CDP otherwise follows the Chrome profile's normal
-    download directory even when Playwright later copies the artifact with
-    ``download.save_as``.  Scope the override to the click and always restore
-    Chrome's default behavior before detaching the temporary CDP session.
-    """
-    download_dir.mkdir(parents=True, exist_ok=True)
-    cdp_session = await browser_ctx.new_cdp_session(page)
-    redirect_enabled = False
-    try:
-        await cdp_session.send(
-            "Page.setDownloadBehavior",
-            {
-                "behavior": "allow",
-                "downloadPath": str(download_dir.resolve()),
-            },
-        )
-        redirect_enabled = True
-        yield
-    finally:
-        try:
-            if redirect_enabled:
-                await cdp_session.send(
-                    "Page.setDownloadBehavior",
-                    {"behavior": "default"},
-                )
-        finally:
-            await cdp_session.detach()
-
-
-def _snapshot_staged_files(directory: Path) -> dict[Path, tuple[int, int]]:
-    """Capture stable file signatures for a staging directory."""
-    result: dict[Path, tuple[int, int]] = {}
-    for candidate in directory.iterdir():
-        if not candidate.is_file():
+        return {
+            images: Array.from(candidates),
+            image_count: deleteCount,
+        };
+    }''')
+    result = [url for url in (payload.get("images") if isinstance(payload, dict) else []) if url]
+    observed_count = int(payload.get("image_count", 0) if isinstance(payload, dict) else 0)
+    deduped = []
+    seen = set()
+    for raw in result:
+        normalized = _to_il_fullxfull_url(raw)
+        if not normalized or normalized in seen:
             continue
-        try:
-            stat = candidate.stat()
-        except OSError:
-            continue
-        result[candidate.resolve()] = (stat.st_size, stat.st_mtime_ns)
-    return result
-
-
-_STAGED_DOWNLOAD_POLL_MS = 250
-_STAGED_DOWNLOAD_MAX_ATTEMPTS = 50  # 50 x 250ms ~= 12.5s bounded wait for large assets
-_STAGED_DOWNLOAD_MIN_SIZE_BYTES = 100
-_STAGED_DOWNLOAD_STABLE_ROUNDS = 2
-
-
-async def _await_stable_matching_staged_download(
-    staging_dir: Path,
-    *,
-    baseline: dict[Path, tuple[int, int]],
-    expected_size: int | None,
-    max_attempts: int = _STAGED_DOWNLOAD_MAX_ATTEMPTS,
-    poll_ms: int = _STAGED_DOWNLOAD_POLL_MS,
-    min_size: int = _STAGED_DOWNLOAD_MIN_SIZE_BYTES,
-    stable_rounds: int = _STAGED_DOWNLOAD_STABLE_ROUNDS,
-) -> list[Path]:
-    """Wait for a new/changed staged file that is stable and size-matched."""
-    if expected_size is None:
-        return []
-    previous_sizes: dict[Path, int] = {}
-    stable_rounds_seen: dict[Path, int] = {}
-
-    for _ in range(max_attempts):
-        candidates: list[Path] = []
-        for candidate in staging_dir.iterdir():
-            if not candidate.is_file():
-                continue
-            try:
-                stat = candidate.stat()
-            except OSError:
-                continue
-            current_signature = (stat.st_size, stat.st_mtime_ns)
-            candidate_key = candidate.resolve()
-            if baseline.get(candidate_key) == current_signature:
-                continue
-            if stat.st_size < max(min_size, 1):
-                continue
-            if not _etsy_size_matches(stat.st_size, expected_size):
-                continue
-            previous_size = previous_sizes.get(candidate_key)
-            if previous_size is None or previous_size != stat.st_size:
-                previous_sizes[candidate_key] = stat.st_size
-                stable_rounds_seen[candidate_key] = 1
-                continue
-            stable_rounds_seen[candidate_key] = stable_rounds_seen.get(candidate_key, 1) + 1
-            if stable_rounds_seen[candidate_key] >= stable_rounds:
-                candidates.append(candidate)
-
-        if candidates:
-            return sorted(candidates, key=lambda candidate: candidate.name)
-
-        await asyncio.sleep(poll_ms / 1000.0)
-
-    return []
+        seen.add(normalized)
+        deduped.append(normalized)
+        if len(deduped) >= 20:
+            break
+    return {
+        "images": deduped,
+        "image_count": observed_count if observed_count > 0 else len(deduped),
+    }
 
 
 async def _sync_listing_assets(browser_ctx, editor_page, listing_id: str, product_path: Path) -> dict:
@@ -2536,37 +887,15 @@ async def _sync_listing_assets(browser_ctx, editor_page, listing_id: str, produc
     image_urls: list[str] = []
     editor_expected_images = 0
     staged_image_entries: list[tuple[Path, Path]] = []
-    editor_complete = False
-    editor_payload_had_urls = False
 
     try:
         image_payload = await _extract_editor_listing_images(editor_page)
         if isinstance(image_payload, dict):
             image_urls = [str(v) for v in image_payload.get("images", []) if v]
             editor_expected_images = int(image_payload.get("image_count") or 0)
-            if "complete" in image_payload:
-                editor_complete = bool(image_payload.get("complete"))
-            elif editor_expected_images and editor_expected_images == len(image_urls):
-                editor_complete = True
         else:
             image_urls = [str(v) for v in image_payload or [] if v]
             editor_expected_images = len(image_urls)
-            editor_complete = True
-
-        editor_payload_had_urls = bool(image_urls)
-
-        if image_urls and not editor_complete:
-            editor_warning = image_payload.get("reason") if isinstance(image_payload, dict) else None
-            report["image_warning"] = (
-                editor_warning
-                or (
-                    f"Ảnh editor chưa hydrate đủ cho listing {listing_id}: "
-                    f"{len(image_urls)} ảnh / {editor_expected_images or len(image_urls)} nút/ảnh."
-                )
-            )
-            if not editor_warning:
-                report["image_warning"] += " Không commit ảnh một phần."
-            image_urls = []
         if image_urls:
             report["images_found"] = max(editor_expected_images, len(image_urls))
             if editor_expected_images and editor_expected_images != len(image_urls):
@@ -2574,7 +903,7 @@ async def _sync_listing_assets(browser_ctx, editor_page, listing_id: str, produc
                     f"Số ảnh trên editor ({editor_expected_images}) không khớp số URL duy nhất ({len(image_urls)}). "
                     "Không commit ảnh một phần."
                 )
-        elif not editor_payload_had_urls:
+        else:
             report["image_warning"] = "Không đọc được ảnh từ editor; chuyển qua public page."
     except Exception as exc:
         report["image_warning"] = f"Không đọc được ảnh từ editor: {exc}"
@@ -2615,53 +944,51 @@ async def _sync_listing_assets(browser_ctx, editor_page, listing_id: str, produc
     if not image_urls:
         public_page = await browser_ctx.new_page()
         try:
-            public_url = f"https://www.etsy.com/listing/{listing_id}"
             response = await public_page.goto(
-                public_url,
+                f"https://www.etsy.com/listing/{listing_id}",
                 wait_until="domcontentloaded",
                 timeout=30000,
             )
             if response is not None:
                 report["public_image_status"] = int(response.status) if hasattr(response, "status") else None
-            final_url = str(public_page.url or "").strip()
-            if not _safe_etsy_public_url(final_url, listing_id):
-                report["image_warning"] = "Public page mở sai listing so với request, không cho phép fallback."
-                raise RuntimeError(
-                    f"Không đọc được ảnh public: public url khác listing {listing_id} -> {final_url or public_url}"
-                )
-            if response is None:
-                report["image_warning"] = "Không đọc được phản hồi từ public page."
-                raise RuntimeError("Public page navigation failed")
-            if response.status == 403:
+            if response is not None and response.status == 403:
                 report["image_warning"] = "Public page bị chặn bởi DataDome (403). Không thể kiểm tra ảnh công khai."
                 raise RuntimeError("DataDome challenge on public listing page")
-            elif response.status >= 400:
+            elif response is not None and response.status >= 400:
                 report["image_warning"] = f"Public page lỗi {response.status}, không thể kiểm tra ảnh."
             else:
                 report["images_source"] = "public"
-                public_payload = await _extract_public_listing_images(public_page)
-                if isinstance(public_payload, dict):
-                    gallery_node_count = int(public_payload.get("gallery_node_count", 0))
-                    image_urls = [str(v) for v in public_payload.get("urls", []) if v]
-                    if public_payload.get("complete"):
-                        report["image_warning"] = ""
-                    elif gallery_node_count > len(image_urls):
-                        report["image_warning"] = (
-                            f"Gallery ảnh công khai chưa hydrate đủ cho listing {listing_id}: "
-                            f"{len(image_urls)} ảnh / {gallery_node_count} nút."
-                        )
-                    else:
-                        report["image_warning"] = (
-                            "Không đọc được gallery ảnh công khai trong #photos của listing "
-                            f"{listing_id}: {public_payload.get('reason') or 'không thu thập đủ'}"
-                        )
-                else:
-                    image_urls = [str(v) for v in public_payload or [] if v]
-                    report["image_warning"] = (
-                        "Không đọc được gallery ảnh công khai trong #photos của listing "
-                        f"{listing_id}."
-                    )
+                await public_page.wait_for_timeout(1200)
+                image_urls = await public_page.evaluate(r"""() => {
+                    const urls = [];
+                    const seen = new Set();
+                    for (const img of document.querySelectorAll('main img')) {
+                        const src = img.getAttribute('src') || '';
+                        const srcset = img.getAttribute('srcset') || '';
+                        const candidates = (srcset.split(',')
+                            .map(v => v.trim().split(/\s+/)[0])
+                            .concat([src]))
+                            .filter(Boolean);
+                        for (const value of candidates) {
+                            const clean = (value.split('?')[0]).split('#')[0];
+                            if (!clean || !clean.includes('i.etsystatic.com') || !clean.includes('/r/il/')) continue;
+                            const normalized = clean.replace(/(il_)[^/.]+\.(jpe?g|png|webp|gif)/i, 'il_fullxfull.$2');
+                            if (!normalized.includes('il_fullxfull')) continue;
+                            if (!seen.has(normalized)) {
+                                seen.add(normalized);
+                                urls.push(normalized);
+                            }
+                            if (seen.size >= 20) break;
+                        }
+                        if (seen.size >= 20) break;
+                    }
+                    return urls;
+                }""")
+                image_urls = [str(url) for url in (image_urls or []) if _to_il_fullxfull_url(url)]
                 report["images_found"] = len(image_urls)
+                if image_urls:
+                    report["image_warning"] = ""
+                editor_expected_images = len(image_urls)
                 staged_image_entries = []
                 for index, url in enumerate(image_urls, 1):
                     try:
@@ -2755,56 +1082,24 @@ async def _sync_listing_assets(browser_ctx, editor_page, listing_id: str, produc
                     broadcast(f"[ETSY-ASSET] ⚠️ File {file_name}: {exc}")
 
             if not downloaded:
-                download_control = item.locator('button[data-testid="digital_file_action_download"]')
-                if await download_control.count() == 0:
-                    download_control = item.locator(
-                        'button[aria-label*="download" i], a[aria-label*="download" i], button[title*="download" i]'
-                    )
+                download_control = item.locator(
+                    'button[aria-label*="download" i], a[aria-label*="download" i], button[title*="download" i]'
+                )
                 if await download_control.count() == 1:
                     try:
-                        staging_before = _snapshot_staged_files(file_staging)
-                        async with _redirect_cdp_downloads_to_staging(
-                            browser_ctx,
-                            editor_page,
-                            file_staging,
-                        ):
-                            async with editor_page.expect_download(timeout=10000) as download_info:
-                                await download_control.click()
-                            download = await download_info.value
-                            suggested = _safe_asset_filename(download.suggested_filename, file_name)
-                            stage_file = file_staging / f"{suggested}.part"
-                            await download.save_as(str(stage_file))
-
-                        redirected_candidates = await _await_stable_matching_staged_download(
-                            file_staging,
-                            baseline=staging_before,
-                            expected_size=expected_size,
-                        )
-                        if len(redirected_candidates) != 1:
-                            stage_file.unlink(missing_ok=True)
-                            raise RuntimeError(
-                                "Không xác định duy nhất file Chrome tải hoàn chỉnh "
-                                f"(save_as={stage_file.stat().st_size if stage_file.exists() else 0}, "
-                                f"Etsy={expected_size}, "
-                                f"candidates={len(redirected_candidates)})"
-                            )
-
-                        redirected = redirected_candidates[0]
-                        if redirected != stage_file:
-                            stage_file.unlink(missing_ok=True)
-                            recovered_stage = file_staging / f".redirected-{index + 1:02d}-{file_name}.part"
-                            if recovered_stage.exists():
-                                raise RuntimeError(f"Staging collision cho {file_name}")
-                            redirected.rename(recovered_stage)
-                            stage_file = recovered_stage
-
-                        actual_size = stage_file.stat().st_size if stage_file.exists() else 0
-                        if actual_size <= 100 or not _etsy_size_matches(actual_size, expected_size):
+                        async with editor_page.expect_download(timeout=10000) as download_info:
+                            await download_control.click()
+                        download = await download_info.value
+                        suggested = _safe_asset_filename(download.suggested_filename, file_name)
+                        stage_file = file_staging / f"{suggested}.part"
+                        await download.save_as(str(stage_file))
+                        actual_size = stage_file.stat().st_size
+                        if not _etsy_size_matches(actual_size, expected_size):
                             stage_file.unlink(missing_ok=True)
                             raise RuntimeError(
                                 f"Dung lượng tải về không khớp Etsy: local={actual_size}, Etsy={expected_size}"
                             )
-                        _stage_file(stage_file, file_name, staged_file_entries)
+                        _stage_file(stage_file, suggested, staged_file_entries)
                         report["files_downloaded"] += 1
                         resolved_file_names.add(file_name)
                     except Exception as exc:
@@ -2881,123 +1176,61 @@ async def scrape_listing_details(
     include_asset_summary: bool = False,
 ) -> dict:
     from playwright.async_api import async_playwright
+    import sys
+    from pathlib import Path
 
     target_shop_id = shop_id or _active_shop_id
     if shop_id:
         _assert_shop_identity(target_shop_id)
-    session = resolve_etsy_session(BASE_DIR, SHOPS, target_shop_id)
-    scrape_log = _ctx_logger("scrape_listing_details", shop=target_shop_id, listing_id=listing_id)
-    session_verified = False
-    for attempt in range(1, 4):
-        session_verified = await asyncio.to_thread(is_etsy_session_ready, session)
-        if session_verified:
-            break
-        if attempt < 3:
-            await asyncio.sleep(0.2 * attempt)
-    scrape_log.info("scrape start (session_ready=%s)", session_verified)
-
-    # 1. Chỉ dùng đúng session theo resolve_etsy_session.
-    if not session_verified:
-        scrape_log.error(
-            "exact Etsy Chrome profile/CDP unavailable (profile=%s, cdp=%s)",
-            session.profile_dir,
-            session.cdp_url,
-        )
-        raise RuntimeError(
-            f"Không truy cập được Chrome profile={session.profile_dir} "
-            f"tại CDP={session.cdp_url} cho shop={target_shop_id} sau 3 lần kiểm tra. "
-            "Hãy bảo đảm đúng cửa sổ Browser Etsy vẫn đang mở, rồi Sync lại."
-        )
+    BROWSER_DIR = _resolve_browser_session_dir(target_shop_id)
+    shop_cfg = SHOPS.get(target_shop_id, {})
+    BASE_DIR = Path(__file__).parent
+    CHROME_PATH = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 
     pw = await async_playwright().start()
     browser_ctx = None
     connected_cdp = False
 
-    def _requires_cdp_no_defaults_fallback(error: Exception) -> bool:
-        """Detect Chrome builds that reject Playwright's global download setup.
-
-        The single-sync downloader configures downloads per page immediately
-        before clicking a seller file.  Some current Chrome builds reject the
-        global ``Browser.setDownloadBehavior`` sent while Playwright attaches,
-        even though the exact CDP session itself is healthy.
-        """
-        message = str(error)
-        return (
-            "Browser.setDownloadBehavior" in message
-            and "Browser context management is not supported" in message
-        )
-
-    # 2. Connect chính xác vào CDP của phiên đã xác thực.
-    #    Retry a few short times if the CDP endpoint is busy/transiently
-    #    unavailable. Recheck session readiness between retries to avoid
-    #    continuing against a no-longer-ready browser profile.
-    connect_attempts = 0
-    last_error = None
-    for connect_attempts in range(1, 4):
-        if connect_attempts > 1:
-            session_verified = await asyncio.to_thread(is_etsy_session_ready, session)
-            if not session_verified:
-                await asyncio.sleep(0.2 * connect_attempts)
-                continue
+    # 1. Try to connect via CDP (Chrome Debug Port)
+    debug_port = shop_cfg.get("debug_port")
+    if debug_port or target_shop_id == "templystudios":
         try:
-            browser = await pw.chromium.connect_over_cdp(session.cdp_url, timeout=10000)
+            port = int(debug_port or 9222)
+            browser = await pw.chromium.connect_over_cdp(f"http://localhost:{port}", timeout=3000)
             browser_ctx = browser.contexts[0] if browser.contexts else await browser.new_context()
             connected_cdp = True
-            break
-        except Exception as exc:
-            last_error = exc
-            if _requires_cdp_no_defaults_fallback(exc):
-                scrape_log.info(
-                    "CDP attach rejected Playwright global download defaults; retrying exact session without them"
-                )
-                try:
-                    browser = await pw.chromium.connect_over_cdp(
-                        session.cdp_url,
-                        timeout=10000,
-                        no_defaults=True,
-                    )
-                    browser_ctx = browser.contexts[0] if browser.contexts else await browser.new_context()
-                    connected_cdp = True
-                    break
-                except Exception as fallback_exc:
-                    last_error = fallback_exc
-            scrape_log.warning(
-                "CDP connect attempt %s failed for shop=%s cdp=%s: %s",
-                connect_attempts,
-                target_shop_id,
-                session.cdp_url,
-                last_error,
-            )
-            if connect_attempts < 3:
-                await asyncio.sleep(0.25 * connect_attempts)
-                continue
-            scrape_log.error("failed to connect Etsy CDP session via %s", session.cdp_url)
+        except Exception as e:
+            print(f"CDP connection failed: {e}. Falling back to persistent context.")
 
-    if not connected_cdp:
-        await pw.stop()
-        if last_error is not None:
-            raise RuntimeError(
-                f"CDP Etsy đang bận hoặc không phản hồi cho shop={target_shop_id} "
-                f"tại {session.cdp_url} (profile={session.profile_dir}). "
-                "Hãy chờ lượt Sync hiện tại xong hoặc đóng bớt tab Etsy, rồi thử lại."
-            ) from last_error
-        raise RuntimeError(
-            f"CDP Etsy đang bận hoặc không phản hồi cho shop={target_shop_id} "
-            f"tại {session.cdp_url} (profile={session.profile_dir}). "
-            "Hãy chờ lượt Sync hiện tại xong hoặc đóng bớt tab Etsy, rồi thử lại."
-        )
-
-    if browser_ctx is None:
-        await pw.stop()
-        raise RuntimeError("Không khởi tạo được browser context cho phiên Etsy đã xác thực")
-
-    # 3. Dùng profile + cdp này rồi xác nhận không được fallback sang bundled/headless.
-    #   (Không mở context local khi CDP chưa sẵn sàng)
-    if not connected_cdp:
-        scrape_log.error("no active CDP session available for scraping")
-        raise RuntimeError(
-            "Không có phiên CDP hoạt động cho scraping. Hãy mở Browser Etsy đúng shop, rồi thử lại."
-        )
+    # 2. If CDP failed, launch persistent context using the local session
+    if not browser_ctx:
+        # Bulk/local sync runs in a restricted macOS environment where Chrome's
+        # Crashpad xattr writes can abort a persistent headed session.  Default
+        # to headless for Etsy scraping; callers may opt into a visible window
+        # with ETSY_SCRAPER_HEADLESS=0.
+        headless_env = str(os.environ.get("ETSY_SCRAPER_HEADLESS", "1")).lower()
+        scraper_headless = headless_env not in {"0", "false", "no", "off"}
+        launch_kw = {
+            "user_data_dir": str(BROWSER_DIR),
+            "headless": scraper_headless,
+            "args": [
+                "--start-maximized",
+                "--disable-blink-features=AutomationControlled",
+                "--disable-crash-reporter",
+                "--disable-breakpad",
+            ],
+            "viewport": None,
+        }
+        # Playwright's bundled Chromium avoids the macOS system Chrome
+        # Crashpad/xattr restrictions seen in the sandbox.  Set
+        # ETSY_SCRAPER_USE_SYSTEM_CHROME=1 only when the real Chrome profile is
+        # required; the persistent Etsy session remains usable with bundled
+        # Chromium in the default path.
+        use_system_chrome = str(os.environ.get("ETSY_SCRAPER_USE_SYSTEM_CHROME", "0")).lower() in {"1", "true", "yes", "on"}
+        bundled_chromium = Path(pw.chromium.executable_path)
+        if CHROME_PATH.exists() and (use_system_chrome or not bundled_chromium.exists()):
+            launch_kw["executable_path"] = str(CHROME_PATH)
+        browser_ctx = await pw.chromium.launch_persistent_context(**launch_kw)
 
     try:
         page = None
@@ -3007,33 +1240,18 @@ async def scrape_listing_details(
                 break
         if page is None:
             page = await browser_ctx.new_page()
-        # 3. Shop-manager identity preflight trong cùng browser context/page.
-        #    Tránh fail-open khi profile đúng nhưng account/shop không khớp.
-        shop_identity_verified = await _assert_etsy_shop_manager_preflight(page, target_shop_id)
         edit_url = f"https://www.etsy.com/your/shops/me/listing-editor/edit/{listing_id}"
         try:
             await page.goto(edit_url, wait_until="commit", timeout=20000)
         except Exception as e:
-            scrape_log.warning("navigation timeout/error opening listing editor: %s", e)
-        await _assert_etsy_editor_access(page, listing_id)
-        # Verify editor route chính xác cho listing_id trước khi chốt metadata.
-        opened_listing_id = _extract_manager_listing_id(str(page.url or "").strip())
-        if not opened_listing_id:
-            scrape_log.error("editor opened without a listing id in URL: %s", page.url or "")
-            raise RuntimeError(
-                f"Không mở đúng editor listing cho ID {listing_id}. URL hiện tại: {page.url or 'không có'}"
-            )
-        if opened_listing_id != listing_id:
-            scrape_log.error("editor opened wrong listing: editor=%s requested=%s", opened_listing_id, listing_id)
-            raise RuntimeError(
-                f"Editor sai listing: editor={opened_listing_id}, yêu cầu={listing_id}"
-            )
-        await _assert_etsy_editor_ready(page, listing_id)
-        await _assert_etsy_page_shop_identity(
-            page,
-            target_shop_id,
-            shop_identity_verified=shop_identity_verified,
-        )
+            print(f"Navigation timeout/error: {e}")
+
+        try:
+            await page.wait_for_selector('textarea[name="title"], input[name="title"], #title-input', timeout=20000)
+        except Exception as e:
+            print(f"Warning: title input did not appear: {e}")
+        await page.wait_for_timeout(2000)
+        await _assert_etsy_page_shop_identity(page, target_shop_id)
 
         # Scrape Title
         title = ""
@@ -3143,10 +1361,9 @@ async def scrape_listing_details(
             result["_asset_sync"] = await _sync_listing_assets(
                 browser_ctx, page, listing_id, product_path
             )
-        scrape_log.info("scrape complete (fields=%s)", sorted(k for k in result if k != "ok"))
         return result
     finally:
-        if browser_ctx is not None and not connected_cdp:
+        if not connected_cdp:
             await browser_ctx.close()
         await pw.stop()
 
@@ -3154,157 +1371,37 @@ async def scrape_listing_details(
 def latest_etsy_manager_snapshot() -> dict:
     """Return counts from the latest Etsy Manager crawl, if one exists."""
     scratch_dir = BASE_DIR / "scratch"
-    candidates = []
-    for path in scratch_dir.glob(f"etsy_manager_current_{_active_shop_id}_*.json"):
-        ts = _snapshot_path_timestamp(path)
-        if ts is None:
-            ts = datetime.fromtimestamp(path.stat().st_mtime)
-        candidates.append((ts, path))
+    candidates = sorted(scratch_dir.glob(f"etsy_manager_current_{_active_shop_id}_*.json"))
     if not candidates:
         return {}
 
-    _, latest = sorted(candidates, key=lambda item: item[0])[-1]
+    latest = candidates[-1]
     try:
         data = json.loads(latest.read_text(encoding="utf-8"))
     except Exception:
         return {}
 
-    normalized = normalize_etsy_manager_snapshot(data)
-    counts = dict(normalized.get("counts", {}))
-    raw_counts = dict(normalized.get("raw_counts", {}))
-    if not counts and not any(raw_counts.values()):
+    counts = {
+        key: len(data.get(key, []))
+        for key in ("active", "draft", "inactive", "expired")
+        if isinstance(data.get(key, []), list)
+    }
+    if not counts:
         return {}
-    raw_counts["total"] = sum(raw_counts.values())
     counts["total"] = sum(counts.values())
-    freshness = _snapshot_freshness(snapshot_source=str(latest), snapshot_at=_snapshot_path_timestamp(latest))
     listings = []
-    for listing in normalized.get("listings", []):
-        item = dict(listing)
-        listings.append(item)
-    snapshot_at = _snapshot_path_timestamp(latest)
+    for status in ("active", "draft", "inactive", "expired"):
+        for listing in data.get(status, []):
+            if not isinstance(listing, dict):
+                continue
+            item = dict(listing)
+            item["managerStatus"] = item.get("managerStatus") or status
+            listings.append(item)
     return {
         "source": str(latest),
-        "snapshotAt": snapshot_at.isoformat(timespec="seconds") if snapshot_at else None,
         "counts": counts,
-        "raw_counts": raw_counts,
-        "duplicate_count": normalized.get("duplicate_count", 0),
-        "freshness": freshness,
-        "stale": freshness["stale"],
         "listings": listings,
     }
-
-
-def _snapshot_path_timestamp(path: Path) -> datetime | None:
-    ts = _snapshot_path_timestamp_from_name(path.name)
-    if ts is not None:
-        return ts
-    try:
-        return datetime.fromtimestamp(path.stat().st_mtime)
-    except Exception:
-        return None
-
-
-def _snapshot_path_timestamp_from_name(filename: str) -> datetime | None:
-    match = re.search(r"_(\d{8}_\d{6})\.json$", filename)
-    if not match:
-        return None
-    try:
-        return datetime.strptime(match.group(1), "%Y%m%d_%H%M%S")
-    except Exception:
-        return None
-
-
-def _snapshot_freshness(
-    *,
-    snapshot_source: str,
-    snapshot_at: datetime | None,
-    max_age_hours: int = 24,
-) -> dict:
-    age_hours = None
-    if snapshot_at is not None:
-        age_hours = round(max(0.0, (datetime.now() - snapshot_at).total_seconds() / 3600), 2)
-    return {
-        "source": snapshot_source or None,
-        "snapshotAt": snapshot_at.isoformat(timespec="seconds") if snapshot_at else None,
-        "ageHours": age_hours,
-        "maxAgeHours": max_age_hours,
-        "stale": age_hours is None or age_hours > max_age_hours,
-    }
-
-
-def _snapshot_too_old(snapshot: dict, *, max_age_hours: int = 24) -> bool:
-    source = str(snapshot.get("source") or "")
-    if not source:
-        return True
-    ts = _snapshot_path_timestamp(Path(source))
-    if ts is None:
-        return True
-    return datetime.now() - ts > timedelta(hours=max_age_hours)
-
-
-def enrich_products_with_etsy_manager(products: list[dict], snapshot: dict) -> list[dict]:
-    """Add status-aware Etsy links without changing the workbook mapping field.
-
-    ``etsy_url`` remains the Excel mapping source.  The dashboard may expose a
-    public URL only for an exact listing found as active in the newest manager
-    snapshot; all known non-active listings require a verified manager/editor
-    URL.  Missing evidence is represented as an unavailable link.
-    """
-    listings_by_id = {
-        str(item.get("listing_id") or item.get("id") or "").strip(): item
-        for item in snapshot.get("listings", [])
-        if isinstance(item, dict)
-    } if isinstance(snapshot, dict) else {}
-    freshness = snapshot.get("freshness", {}) if isinstance(snapshot, dict) else {}
-
-    enriched: list[dict] = []
-    for product in products:
-        item = dict(product)
-        listing_id = _extract_etsy_listing_id(str(item.get("etsy_url") or ""))
-        listing = listings_by_id.get(listing_id) if listing_id else None
-        manager_status = str((listing or {}).get("managerStatus") or (listing or {}).get("status") or "").strip().lower()
-        public_url = ""
-        edit_url = ""
-        manager_url = ""
-        link_type = "unavailable"
-        unavailable_reason = "listing_not_in_snapshot" if listing_id else "no_listing_id"
-
-        if listing:
-            manager_url = _safe_etsy_manager_url(
-                listing.get("editUrl") or listing.get("manageUrl"), listing_id
-            )
-            edit_url = manager_url
-            if manager_status == "active":
-                public_url = _safe_etsy_public_url(listing.get("url"), listing_id)
-                if not public_url:
-                    # Exact active ID + manager status is sufficient to
-                    # form Etsy's canonical public URL.
-                    public_url = f"https://www.etsy.com/listing/{listing_id}"
-                link_type = "public"
-                unavailable_reason = ""
-                manager_url = ""
-            elif manager_status in {"draft", "inactive", "expired"}:
-                if manager_url:
-                    link_type = "manager"
-                    unavailable_reason = ""
-                else:
-                    unavailable_reason = "manager_url_missing"
-
-        item.update({
-            "etsy_listing_id": listing_id or None,
-            "etsy_manager_status": manager_status or None,
-            "etsy_public_url": public_url or None,
-            "etsy_manage_url": manager_url or None,
-            "etsy_edit_url": edit_url or None,
-            "etsy_link_type": link_type,
-            "etsy_link_verified": bool(public_url or manager_url),
-            "etsy_link_unavailable_reason": unavailable_reason or None,
-            "etsy_snapshot_at": freshness.get("snapshotAt"),
-            "etsy_snapshot_source": freshness.get("source"),
-            "etsy_snapshot_stale": bool(freshness.get("stale", True)),
-        })
-        enriched.append(item)
-    return enriched
 
 
 def _validate_draft_listing_ids(raw_ids: object, snapshot: dict) -> list[str]:
@@ -3357,13 +1454,6 @@ async def _delete_selected_etsy_drafts_unlocked(req: Request):
     snapshot = latest_etsy_manager_snapshot()
     if not snapshot:
         raise HTTPException(409, "Chưa có Etsy snapshot cho shop đang hoạt động; hãy đồng bộ lại")
-    if _snapshot_too_old(snapshot):
-        snapshot_time = snapshot.get("snapshotAt")
-        raise HTTPException(
-            409,
-            f"Snapshot listing của shop quá cũ (hơn 24 giờ). Hãy Sync Etsy Shop trước để lấy snapshot mới. "
-            f"snapshotAt={snapshot_time or 'không xác định'}",
-        )
     listing_ids = _validate_draft_listing_ids(data.get("listing_ids"), snapshot)
     command = [sys.executable, str(BASE_DIR / "etsy_clean_duplicates.py"), "--shop", target_shop]
     for listing_id in listing_ids:
@@ -3411,12 +1501,12 @@ def attach_local_products_to_etsy_snapshot(snapshot: dict, products: list[dict])
 
     by_listing_id = {}
     for product in products:
-        listing_id = str(product.get("etsy_listing_id") or _extract_etsy_listing_id(str(product.get("etsy_url", ""))))
-        if listing_id:
-            by_listing_id[listing_id] = product
+        match = re.search(r"/listing/(\d+)", str(product.get("etsy_url", "")))
+        if match:
+            by_listing_id[match.group(1)] = product
 
     for listing in snapshot["listings"]:
-        listing_id = str(listing.get("listing_id") or listing.get("id") or "")
+        listing_id = str(listing.get("id", ""))
         local_product = by_listing_id.get(listing_id)
         if local_product:
             listing["localProduct"] = local_product
@@ -3457,691 +1547,18 @@ async def update_shop(request: Request):
     save_shops()
     return {"ok": True, "shop": SHOPS[shop_id]}
 
-
-# ── API: Cloud Asset Store (local/cloud only; never Etsy writes) ───────────────
-_CLOUD_SCOPE_PATHS = {"shop": "shops", "master": "master_products"}
-_CLOUD_SAFE_SHOP_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
-_CLOUD_SECRET_RE = re.compile(
-    r"(?i)(access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization)\s*[=:]\s*[^\s,;]+"
-)
-
-
-def _normalize_cloud_scope(value: object, *, allow_empty: bool = False) -> str:
-    """Accept only the public scope names; never expose internal path aliases."""
-
-    scope = str(value or "").strip().lower()
-    if not scope and allow_empty:
-        return ""
-    if scope not in _CLOUD_SCOPE_PATHS:
-        raise HTTPException(400, "scope phải là shop hoặc master")
-    return scope
-
-
-def _normalize_cloud_folder(value: object, *, required: bool = True) -> str:
-    if not isinstance(value, str):
-        if required:
-            raise HTTPException(400, "folder phải là chuỗi product-N")
-        return ""
-    folder = value.strip()
-    if not folder and not required:
-        return ""
-    return _validate_product_numbered_folder_name(folder)
-
-
-def _validate_cloud_shop_id(value: object, *, required: bool) -> str:
-    if value is None or (isinstance(value, str) and not value.strip()):
-        if required:
-            raise HTTPException(400, "Thiếu shop_id")
-        shop_id = str(_active_shop_id or "").strip()
-        if not shop_id:
-            raise HTTPException(409, "Chưa có shop đang hoạt động hợp lệ")
-    elif not isinstance(value, str):
-        raise HTTPException(400, "shop_id phải là chuỗi")
-    else:
-        shop_id = value.strip()
-    if not shop_id or not _CLOUD_SAFE_SHOP_RE.fullmatch(shop_id):
-        raise HTTPException(400, "shop_id không hợp lệ")
-    try:
-        _assert_shop_identity(shop_id)
-    except RuntimeError as exc:
-        raise HTTPException(409, str(exc)) from exc
-    if shop_id not in SHOPS:
-        raise HTTPException(409, f"Shop đang hoạt động chưa được cấu hình: {shop_id}")
-    return shop_id
-
-
-def _cloud_product_identity(scope: str, shop_id: str, folder: str) -> dict:
-    path_scope = _CLOUD_SCOPE_PATHS[scope]
-    shop = shop_id if scope == "shop" else None
-    key = f"{path_scope}/{shop_id}/{folder}" if scope == "shop" else f"{path_scope}/{folder}"
-    return {
-        "scope": scope,
-        "shop": shop,
-        "product": folder,
-        "key": key,
-    }
-
-
-def _cloud_asset_product_root(scope: str, shop_id: str, folder: str) -> Path:
-    """Resolve one product only through the canonical shop/master layout."""
-
-    normalized_scope = _normalize_cloud_scope(scope)
-    normalized_folder = _normalize_cloud_folder(folder)
-    # Every cloud API context is anchored to the currently active shop,
-    # including master products.  The shop component is not part of a master
-    # path, but the request still must carry the active-shop identity.
-    shop_id = _validate_cloud_shop_id(shop_id, required=True)
-    if normalized_scope == "shop":
-        candidate = BASE_DIR / "shops" / shop_id / normalized_folder
-    else:
-        candidate = BASE_DIR / "master_products" / normalized_folder
-    if candidate.is_symlink():
-        raise HTTPException(400, "product folder không được là symlink")
-    if not candidate.exists():
-        raise HTTPException(404, f"Không tìm thấy product folder: {normalized_folder}")
-    try:
-        resolved, identity = resolve_product(BASE_DIR, candidate)
-    except (AssetValidationError, OSError, ValueError) as exc:
-        raise HTTPException(400, f"product folder không hợp lệ hoặc không tồn tại: {normalized_folder}") from exc
-    expected_scope = _CLOUD_SCOPE_PATHS[normalized_scope]
-    if identity.scope != expected_scope or (
-        normalized_scope == "shop" and identity.shop != shop_id
-    ):
-        raise HTTPException(400, "product folder không thuộc scope/shop yêu cầu")
-    return resolved
-
-
-def _cloud_status_targets(scope: str, shop_id: str, folder: str = "") -> list[Path]:
-    normalized_scope = _normalize_cloud_scope(scope)
-    normalized_shop_id = _validate_cloud_shop_id(shop_id, required=True)
-    normalized_folder = _normalize_cloud_folder(folder, required=False)
-    if normalized_folder:
-        return [_cloud_asset_product_root(normalized_scope, normalized_shop_id, normalized_folder)]
-
-    targets: list[Path] = []
-    for product_path, identity in discover_product_roots(BASE_DIR):
-        if normalized_scope == "shop":
-            if identity.scope == "shops" and identity.shop == normalized_shop_id:
-                targets.append(product_path)
-        elif identity.scope == "master_products":
-            targets.append(product_path)
-    return targets
-
-
-async def _read_cloud_asset_request(request: Request) -> dict:
-    try:
-        data = await request.json()
-    except Exception as exc:
-        raise HTTPException(400, "Payload cloud assets phải là JSON object") from exc
-    if not isinstance(data, dict):
-        raise HTTPException(400, "Payload cloud assets phải là JSON object")
-    for field in ("shop_id", "scope", "folder"):
-        if field not in data:
-            raise HTTPException(400, f"Thiếu {field}")
-
-    shop_id = _validate_cloud_shop_id(data.get("shop_id"), required=True)
-    scope_value = data.get("scope")
-    if not isinstance(scope_value, str) or not scope_value.strip():
-        raise HTTPException(400, "Thiếu scope")
-    scope = _normalize_cloud_scope(scope_value)
-    folder = _normalize_cloud_folder(data.get("folder"))
-    target = await asyncio.to_thread(_cloud_asset_product_root, scope, shop_id, folder)
-    identity = _cloud_product_identity(scope, shop_id, folder)
-    normalized = dict(data)
-    normalized.update(
-        {
-            "shop_id": shop_id,
-            "scope": scope,
-            "folder": folder,
-            "target": target,
-            "product_identity": identity,
-            "product_key": identity["key"],
-        }
-    )
-    return normalized
-
-
-def _cloud_error_text(exc: Exception) -> str:
-    message = str(exc).strip() or exc.__class__.__name__
-    return _CLOUD_SECRET_RE.sub(r"\1=[REDACTED]", message)[:800]
-
-
-def _decorate_cloud_status(item: dict, identity: dict) -> dict:
-    decorated = dict(item)
-    decorated["scope"] = identity["scope"]
-    decorated["shop"] = identity["shop"]
-    decorated["folder"] = identity["product"]
-    decorated["product_identity"] = identity
-    decorated["product_key"] = identity["key"]
-    return decorated
-
-
-def _cloud_operation_error(operation: str, data: dict, exc: Exception) -> JSONResponse:
-    message = _cloud_error_text(exc)
-    identity = data["product_identity"]
-    logger.error(
-        "cloud asset operation failed operation=%s product=%s error=%s",
-        operation,
-        identity["key"],
-        message,
-    )
-    broadcast(f"[CLOUD-ASSETS] ❌ {operation} {identity['key']}: {message}")
-    return JSONResponse(
-        {
-            "ok": False,
-            "operation": operation,
-            "product": identity,
-            "state": "ERROR",
-            "error": message,
-        },
-        status_code=502 if isinstance(exc, CloudAssetError) else 500,
-    )
-
-
-@app.get("/api/cloud-assets/status")
-async def cloud_assets_status(
-    shop_id: str = "",
-    scope: str = "shop",
-    folder: str = "",
-):
-    requested_shop = _validate_cloud_shop_id(shop_id, required=False)
-    normalized_scope = _normalize_cloud_scope(scope or "shop")
-    normalized_folder = _normalize_cloud_folder(folder, required=False)
-    targets = await asyncio.to_thread(
-        _cloud_status_targets,
-        normalized_scope,
-        requested_shop,
-        normalized_folder,
-    )
-    store = get_cloud_asset_store()
-    items: list[dict] = []
-    for target in targets:
-        identity = _cloud_product_identity(normalized_scope, requested_shop, target.name)
-        try:
-            # CloudAssetStore.status defaults to local/cache inspection.  Do
-            # not expose a remote-check flag on this dashboard route.
-            item = await asyncio.to_thread(store.status, target)
-            items.append(_decorate_cloud_status(item, identity))
-        except Exception as exc:
-            message = _cloud_error_text(exc)
-            items.append(
-                _decorate_cloud_status(
-                    {
-                        "ok": False,
-                        "state": "ERROR",
-                        "path": str(target),
-                        "error": message,
-                        "last_error": message,
-                    },
-                    identity,
-                )
-            )
-    async with _CLOUD_ASSET_UPLOAD_QUEUE_GUARD:
-        schedules = {
-            key: {field: value for field, value in value.items() if field != "data"}
-            for key, value in _CLOUD_ASSET_UPLOAD_SCHEDULES.items()
-        }
-    for item in items:
-        schedule = schedules.get(str(item.get("product_key") or ""))
-        if schedule is None:
-            continue
-        item["upload_schedule"] = schedule
-        schedule_status = str(schedule.get("status") or "queued")
-        if schedule_status == "queued":
-            item["state"] = "UPLOAD_SCHEDULED"
-        elif schedule_status == "running":
-            item["state"] = "UPLOADING"
-        elif schedule_status == "error":
-            item["state"] = "ERROR"
-            item["last_error"] = str(schedule.get("error") or "Cloud upload theo lịch thất bại")
-    return {
-        "ok": all(bool(item.get("ok", False)) for item in items) if items else True,
-        "active_shop": _active_shop_id,
-        "shop_id": requested_shop,
-        "scope": normalized_scope,
-        "folder": normalized_folder or None,
-        "cloud_network_contacted": False,
-        "items": items,
-        "products": items,
-    }
-
-
-def _cloud_image_relative_path(filename: str) -> str:
-    relative = urllib.parse.unquote(str(filename or "")).replace("\\", "/").strip("/")
-    parts = relative.split("/")
-    if not relative or not parts or parts[0] != "images" or any(part in {"", ".", ".."} for part in parts):
-        raise HTTPException(400, "filename phải trỏ tới một image path hợp lệ")
-    return "/".join(parts)
-
-
-def _safe_regular_cloud_file(path: Path) -> bool:
-    try:
-        stat_result = path.stat()
-    except OSError:
-        return False
-    return (
-        not path.is_symlink()
-        and path.is_file()
-        and stat_result.st_size > 0
-        and getattr(stat_result, "st_blocks", 1) > 0
-    )
-
-
-@app.get("/api/cloud-assets/preview/{folder}")
-async def cloud_assets_preview(folder: str):
-    """Serve only the retained, small shop preview marker."""
-
-    target = _cloud_asset_product_root("shop", _active_shop_id, folder)
-    preview = target / CLOUD_PREVIEW_FILE_NAME
-    if not _safe_regular_cloud_file(preview):
-        raise HTTPException(404, "Không có cloud preview cho product này")
-    return FileResponse(
-        preview,
-        media_type="image/webp",
-        headers={"Cache-Control": "private, max-age=300"},
-    )
-
-
-@app.get("/api/cloud-assets/image/{folder}/{filename:path}")
-async def cloud_assets_image(folder: str, filename: str):
-    """Serve one manifest-verified image, hydrating to cache when needed."""
-
-    target = _cloud_asset_product_root("shop", _active_shop_id, folder)
-    relative = _cloud_image_relative_path(filename)
-    local_candidate = target / Path(relative)
-    if _safe_regular_cloud_file(local_candidate):
-        return FileResponse(local_candidate, headers={"Cache-Control": "private, max-age=300"})
-
-    store = get_cloud_asset_store()
-    try:
-        resolution = await asyncio.to_thread(
-            store.resolve_asset_root,
-            target,
-        )
-    except (CloudAssetError, AssetValidationError, OSError, ValueError, TypeError, KeyError) as exc:
-        raise HTTPException(502, f"Không hydrate được image cloud: {_cloud_error_text(exc)}") from exc
-
-    manifest = resolution.get("manifest") if isinstance(resolution, dict) else None
-    records = manifest.get("files", []) if isinstance(manifest, dict) else []
-    if not any(
-        isinstance(item, dict)
-        and item.get("role") == "image"
-        and str(item.get("path") or "").replace("\\", "/") == relative
-        for item in (records if isinstance(records, list) else [])
-    ):
-        raise HTTPException(404, "Image không có trong manifest cloud hiện hành")
-
-    asset_root = Path(str(resolution.get("asset_root") or "")).absolute()
-    candidate = (asset_root / Path(relative)).absolute()
-    try:
-        candidate.relative_to(asset_root)
-    except ValueError as exc:
-        raise HTTPException(400, "image path thoát khỏi asset root") from exc
-    if not _safe_regular_cloud_file(candidate):
-        raise HTTPException(404, "Không tìm thấy image đã hydrate")
-    return FileResponse(candidate, headers={"Cache-Control": "private, max-age=300"})
-
-
-def _cloud_store_operation(store: CloudAssetStore, operation: str, data: dict):
-    target = data["target"]
-    if operation == "upload":
-        return store.upload(target, revision=data.get("revision"))
-    if operation == "verify":
-        return store.verify(target)
-    if operation == "restore":
-        return store.restore(target, force=data.get("force", False))
-    if operation == "cancel-offload":
-        return store.cancel_offload(target)
-    raise RuntimeError(f"unsupported cloud asset operation: {operation}")
-
-
-async def _perform_cloud_asset_mutation(data: dict, operation: str) -> dict:
-    """Run one cloud mutation under the existing product-level lock."""
-    identity = data["product_identity"]
-    product_key = identity["key"]
-    store = get_cloud_asset_store()
-    mutation_lock = await _get_cloud_asset_mutation_lock(product_key)
-    if mutation_lock.locked():
-        broadcast(f"[CLOUD-ASSETS] ⏳ Chờ mutation cloud đang chạy: {product_key}")
-
-    async with mutation_lock:
-        broadcast(f"[CLOUD-ASSETS] 🔄 {operation} {product_key}")
-        result = await asyncio.to_thread(_cloud_store_operation, store, operation, data)
-
-    broadcast(f"[CLOUD-ASSETS] ✅ {operation} {product_key}")
-    return result if isinstance(result, dict) else {"ok": True, "state": None}
-
-
-def _cloud_upload_wait_reason(shop_id: str) -> str:
-    """Return why a scheduled cloud upload must wait, scoped to its shop."""
-    if shop_id in _etsy_single_sync_busy_shops:
-        return "đang Sync listing Etsy"
-    if shop_id == _active_shop_id and "__ETSY_SYNC__" in _running_processes:
-        return "đang Sync Shop Manager"
-    if _is_poster_locked_for_shop(shop_id):
-        return "đang Post Etsy"
-    if _etsy_update_shop_is_busy(shop_id):
-        return "đang Update Etsy"
-    return ""
-
-
-async def _run_scheduled_cloud_uploads(shop_id: str) -> None:
-    """Drain one shop's explicit cloud queue only while Etsy work is idle."""
-    try:
-        while True:
-            async with _CLOUD_ASSET_UPLOAD_QUEUE_GUARD:
-                queue = _CLOUD_ASSET_UPLOAD_QUEUE_BY_SHOP.get(shop_id, [])
-                while queue and queue[0] not in _CLOUD_ASSET_UPLOAD_SCHEDULES:
-                    queue.pop(0)
-                if not queue:
-                    _CLOUD_ASSET_UPLOAD_QUEUE_BY_SHOP.pop(shop_id, None)
-                    return
-
-                product_key = queue[0]
-                scheduled = _CLOUD_ASSET_UPLOAD_SCHEDULES[product_key]
-                reason = _cloud_upload_wait_reason(shop_id)
-                if reason:
-                    if scheduled.get("wait_reason") != reason:
-                        scheduled["wait_reason"] = reason
-                        scheduled["updated_at"] = time.time()
-                        broadcast(f"[CLOUD-ASSETS] ⏳ Upload đã xếp lịch {product_key}: chờ {reason}")
-                else:
-                    queue.pop(0)
-                    scheduled["status"] = "running"
-                    scheduled["wait_reason"] = ""
-                    scheduled["updated_at"] = time.time()
-
-            if reason:
-                await asyncio.sleep(_CLOUD_ASSET_UPLOAD_IDLE_POLL_SECONDS)
-                continue
-
-            data = scheduled["data"]
-            try:
-                upload_result = await _perform_cloud_asset_mutation(data, "upload")
-                if not bool(upload_result.get("ok", True)):
-                    raise RuntimeError(upload_result.get("error") or "upload cloud không thành công")
-                verify_result = await _perform_cloud_asset_mutation(data, "verify")
-                if not bool(verify_result.get("ok", True)):
-                    raise RuntimeError(verify_result.get("error") or "verify cloud không thành công")
-            except Exception as exc:
-                message = _cloud_error_text(exc)
-                async with _CLOUD_ASSET_UPLOAD_QUEUE_GUARD:
-                    current = _CLOUD_ASSET_UPLOAD_SCHEDULES.get(product_key)
-                    if current is not None:
-                        current.update({"status": "error", "error": message, "updated_at": time.time()})
-                broadcast(f"[CLOUD-ASSETS] ❌ Upload đã xếp lịch {product_key}: {message}")
-            else:
-                async with _CLOUD_ASSET_UPLOAD_QUEUE_GUARD:
-                    _CLOUD_ASSET_UPLOAD_SCHEDULES.pop(product_key, None)
-                broadcast(f"[CLOUD-ASSETS] ✅ Upload & verify theo lịch {product_key}")
-    finally:
-        async with _CLOUD_ASSET_UPLOAD_QUEUE_GUARD:
-            if _CLOUD_ASSET_UPLOAD_WORKERS.get(shop_id) is asyncio.current_task():
-                _CLOUD_ASSET_UPLOAD_WORKERS.pop(shop_id, None)
-
-
-async def _schedule_cloud_upload_and_verify(data: dict) -> tuple[dict, bool]:
-    identity = data["product_identity"]
-    product_key = identity["key"]
-    shop_id = str(data["shop_id"])
-    async with _CLOUD_ASSET_UPLOAD_QUEUE_GUARD:
-        existing = _CLOUD_ASSET_UPLOAD_SCHEDULES.get(product_key)
-        if existing is not None and existing.get("status") != "error":
-            return existing, False
-        if existing is not None:
-            _CLOUD_ASSET_UPLOAD_SCHEDULES.pop(product_key, None)
-        scheduled = {
-            "product_key": product_key,
-            "shop_id": shop_id,
-            "scope": data["scope"],
-            "folder": data["folder"],
-            "status": "queued",
-            "wait_reason": _cloud_upload_wait_reason(shop_id),
-            "enqueued_at": time.time(),
-            "updated_at": time.time(),
-            "data": dict(data),
-        }
-        _CLOUD_ASSET_UPLOAD_SCHEDULES[product_key] = scheduled
-
-    async def run_upload_verify():
-        # Preserve the status contract for a cloud command that was admitted
-        # while a legacy/in-flight listing sync is finishing. Normally the
-        # shared FIFO already provides this ordering, but this guard also
-        # covers a sync that pre-dated the queue migration.
-        while (reason := _cloud_upload_wait_reason(shop_id)):
-            async with _CLOUD_ASSET_UPLOAD_QUEUE_GUARD:
-                current = _CLOUD_ASSET_UPLOAD_SCHEDULES.get(product_key)
-                if current is None:
-                    return
-                current.update({"status": "queued", "wait_reason": reason, "updated_at": time.time()})
-            await asyncio.sleep(_CLOUD_ASSET_UPLOAD_IDLE_POLL_SECONDS)
-        async with _CLOUD_ASSET_UPLOAD_QUEUE_GUARD:
-            current = _CLOUD_ASSET_UPLOAD_SCHEDULES.get(product_key)
-            if current is None:
-                return
-            current.update({"status": "running", "wait_reason": "", "updated_at": time.time()})
-        try:
-            upload_result = await _perform_cloud_asset_mutation(data, "upload")
-            if not bool(upload_result.get("ok", True)):
-                raise RuntimeError(upload_result.get("error") or "upload cloud không thành công")
-            verify_result = await _perform_cloud_asset_mutation(data, "verify")
-            if not bool(verify_result.get("ok", True)):
-                raise RuntimeError(verify_result.get("error") or "verify cloud không thành công")
-        except Exception as exc:
-            message = _cloud_error_text(exc)
-            async with _CLOUD_ASSET_UPLOAD_QUEUE_GUARD:
-                current = _CLOUD_ASSET_UPLOAD_SCHEDULES.get(product_key)
-                if current is not None:
-                    current.update({"status": "error", "error": message, "updated_at": time.time()})
-            broadcast(f"[CLOUD-ASSETS] ❌ Upload đã xếp lịch {product_key}: {message}")
-            raise
-        else:
-            async with _CLOUD_ASSET_UPLOAD_QUEUE_GUARD:
-                _CLOUD_ASSET_UPLOAD_SCHEDULES.pop(product_key, None)
-            broadcast(f"[CLOUD-ASSETS] ✅ Upload & verify theo lịch {product_key}")
-
-    command, created = await _enqueue_operation(
-        operation="cloud-upload-verify",
-        shop_id=shop_id,
-        target=product_key,
-        callback=run_upload_verify,
-    )
-    scheduled["command_id"] = command["command_id"]
-    scheduled["queue_position"] = command.get("position")
-    scheduled["wait_reason"] = "đang chờ hàng lệnh chung" if created else "đã có trong hàng chờ"
-    broadcast(f"[CLOUD-ASSETS] 🗓️ Đã thêm Upload & verify {product_key} vào hàng chờ chung")
-    return scheduled, created
-
-
-async def _run_cloud_asset_mutation(request: Request, operation: str):
-    data = await _read_cloud_asset_request(request)
-    identity = data["product_identity"]
-    try:
-        result = await _perform_cloud_asset_mutation(data, operation)
-    except Exception as exc:
-        return _cloud_operation_error(operation, data, exc)
-
-    ok = bool(result.get("ok", True)) if isinstance(result, dict) else True
-    response = {
-        "ok": ok,
-        "operation": operation,
-        "product": identity,
-        "state": result.get("state") if isinstance(result, dict) else None,
-        "result": result,
-    }
-    if not ok and isinstance(result, dict):
-        response["error"] = result.get("error") or result.get("local_error") or (
-            "local assets do not match the cloud revision"
-        )
-    return response
-
-
-@app.post("/api/cloud-assets/upload")
-async def cloud_assets_upload(request: Request):
-    return await _run_cloud_asset_mutation(request, "upload")
-
-
-@app.post("/api/cloud-assets/schedule-upload-verify")
-async def cloud_assets_schedule_upload_verify(request: Request):
-    data = await _read_cloud_asset_request(request)
-    scheduled, created = await _schedule_cloud_upload_and_verify(data)
-    return JSONResponse(
-        status_code=202 if created else 200,
-        content={
-            "ok": True,
-            "created": created,
-            "operation": "schedule-upload-verify",
-            "product": data["product_identity"],
-            "schedule": {key: value for key, value in scheduled.items() if key != "data"},
-        },
-    )
-
-
-@app.post("/api/cloud-assets/verify")
-async def cloud_assets_verify(request: Request):
-    return await _run_cloud_asset_mutation(request, "verify")
-
-
-@app.post("/api/cloud-assets/restore")
-async def cloud_assets_restore(request: Request):
-    return await _run_cloud_asset_mutation(request, "restore")
-
-
-@app.post("/api/cloud-assets/cancel-offload")
-async def cloud_assets_cancel_offload(request: Request):
-    return await _run_cloud_asset_mutation(request, "cancel-offload")
-
-
-@app.post("/api/cloud-assets/maintain")
-async def cloud_assets_maintain(request: Request):
-    data = await _read_cloud_asset_request(request)
-    identity = data["product_identity"]
-    product_key = identity["key"]
-
-    raw_dry_run = data.get("dry_run", True)
-    if not isinstance(raw_dry_run, bool):
-        raise HTTPException(400, "dry_run phải là boolean")
-    dry_run = raw_dry_run
-    apply_requested = data.get("apply") is True and dry_run is False
-    policy_enabled = data.get("policy_enabled") is True
-    raw_allowlist = data.get("allowlist", [])
-    if isinstance(raw_allowlist, str):
-        allowlist = [item.strip() for item in raw_allowlist.split(",") if item.strip()]
-    elif isinstance(raw_allowlist, list):
-        allowlist = [str(item).strip() for item in raw_allowlist if str(item).strip()]
-    else:
-        raise HTTPException(400, "allowlist phải là danh sách hoặc chuỗi")
-
-    if apply_requested:
-        if not policy_enabled:
-            raise HTTPException(409, "Xoá offload cần policy_enabled=true trong request")
-        if product_key not in allowlist:
-            raise HTTPException(409, f"Xoá offload cần allowlist exact: {product_key}")
-
-    # A plain request stays policy-disabled.  An explicit dry-run may opt into
-    # the same allowlist checks without ever permitting deletion.
-    dry_run_policy_enabled = policy_enabled and product_key in allowlist
-    offload_enabled = policy_enabled if apply_requested or dry_run_policy_enabled else False
-    allowlist_for_store = allowlist if offload_enabled else ()
-    store = get_cloud_asset_store()
-    broadcast(f"[CLOUD-ASSETS] 🔎 maintain {'apply' if apply_requested else 'dry-run'} {product_key}")
-    try:
-        results = await asyncio.to_thread(
-            store.maintain,
-            [data["target"]],
-            apply=apply_requested,
-            offload_enabled=offload_enabled,
-            allowlist=allowlist_for_store,
-            older_than_days=data.get("older_than_days"),
-        )
-    except Exception as exc:
-        return _cloud_operation_error("maintain", data, exc)
-    return {
-        "ok": all(bool(item.get("ok", False)) for item in results),
-        "operation": "maintain",
-        "dry_run": not apply_requested,
-        "apply": apply_requested,
-        "policy_enabled": offload_enabled,
-        "allowlist": list(allowlist_for_store),
-        "product": identity,
-        "results": results,
-    }
-
 # ── API: Products ────────────────────────────────────────────────────────────────
 @app.get("/api/products")
-def get_products(
-    page: int = 1,
-    page_size: int | None = None,
-    q: str = "",
-    search: str = "",
-    status: str = "",
-    sort: str = "row",
-):
+def get_products():
     try:
         products = products_from_excel()
-        snapshot = latest_etsy_manager_snapshot()
-        products = enrich_products_with_etsy_manager(products, snapshot)
-        if page_size is None:
-            return JSONResponse({
-                "products": products,
-                "etsy_manager": attach_local_products_to_etsy_snapshot(
-                    snapshot, products
-                ),
-            })
-
-        if page < 1 or page_size < 1 or page_size > 200:
-            raise HTTPException(400, "page phải >= 1 và page_size phải trong khoảng 1..200")
-        query = str(q or search or "").strip().casefold()
-        status_filter = str(status or "").strip().casefold()
-        filtered = products
-        if query:
-            filtered = [
-                product for product in filtered
-                if query in " ".join(
-                    str(product.get(field) or "")
-                    for field in ("title", "folder", "tags", "sku", "etsy_url")
-                ).casefold()
-            ]
-        if status_filter:
-            filtered = [
-                product for product in filtered
-                if status_filter in str(product.get("status") or "").casefold()
-            ]
-        sort_key = str(sort or "row").strip().casefold()
-        descending = sort_key.startswith("-")
-        sort_key = sort_key.lstrip("-")
-        allowed_sort = {"row", "folder", "title", "status", "price"}
-        if sort_key not in allowed_sort:
-            raise HTTPException(400, "sort không hợp lệ")
-        filtered = sorted(
-            filtered,
-            key=lambda product: (
-                float(product.get("price") or 0)
-                if sort_key == "price"
-                else str(product.get(sort_key) or "").casefold()
-            ),
-            reverse=descending,
-        )
-        total = len(filtered)
-        start = (page - 1) * page_size
-        page_products = filtered[start:start + page_size]
         return JSONResponse({
-            "products": page_products,
-            "etsy_manager": attach_local_products_to_etsy_snapshot(snapshot, page_products),
-            "pagination": {
-                "page": page,
-                "page_size": page_size,
-                "total": total,
-                "pages": (total + page_size - 1) // page_size,
-                "has_next": start + page_size < total,
-                "query": query,
-                "status": status_filter,
-                "sort": sort,
-            },
+            "products": products,
+            "etsy_manager": attach_local_products_to_etsy_snapshot(
+                latest_etsy_manager_snapshot(), products
+            ),
         })
     except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
         raise HTTPException(500, str(e))
 
 
@@ -4154,17 +1571,7 @@ def get_aggregate_products():
     records so duplicate review has the complete picture.
     """
     try:
-        snapshot = latest_etsy_manager_snapshot()
-        catalog = build_unified_catalog(BASE_DIR, _active_shop_id, EXCEL_FILE())
-        for record in catalog.get("records", []):
-            if not isinstance(record, dict) or record.get("source") not in {"local", "both"}:
-                continue
-            decorated = enrich_products_with_etsy_manager([record], snapshot)[0]
-            record.update({
-                key: value for key, value in decorated.items()
-                if key.startswith("etsy_") and key != "etsy_url"
-            })
-        return JSONResponse(catalog)
+        return JSONResponse(build_unified_catalog(BASE_DIR, _active_shop_id, EXCEL_FILE()))
     except Exception as exc:
         raise HTTPException(500, str(exc))
 
@@ -4373,7 +1780,7 @@ async def download_images_background(images_dir: Path, urls: list[str]):
                     with open(filepath, 'wb') as f:
                         f.write(resp.content)
             except Exception as e:
-                logger.warning("Failed to download image %s: %s", url, e, extra={"operation": "download_images_background"})
+                print(f"Failed to download image {url}: {e}")
 
 
 # ── API: Sync products to another shop ────────────────────────────────────────────
@@ -4549,20 +1956,7 @@ async def sync_to_shop(request: Request):
 @app.patch("/api/products/{row}")
 async def update_product(row: int, request: Request):
     data = await request.json()
-    if not isinstance(data, dict):
-        raise HTTPException(400, "Payload phải là JSON object")
-    updates, expected_version, expected_hash = _catalog_preconditions(data, request)
-    try:
-        save_to_excel(
-            row,
-            updates,
-            expected_version=expected_version,
-            expected_hash=expected_hash,
-        )
-    except CatalogWriteConflict as error:
-        raise HTTPException(409, "Catalog changed; refresh before retrying") from error
-    except CatalogRepositoryError as error:
-        raise HTTPException(500, "Catalog update failed safely") from error
+    save_to_excel(row, data)
     return {"ok": True}
 
 @app.post("/api/products/{row}/reset-status")
@@ -4634,13 +2028,14 @@ async def create_product(request: Request):
     }
 
 @app.delete("/api/products/{row}")
-async def delete_product(row: int, request: Request):
-    """Xoá sản phẩm local khỏi cả catalog và folder."""
-    if _batch_delete_lock.locked():
-        raise HTTPException(409, "Một lệnh xoá đang chạy")
-
-    async with _batch_delete_lock:
-        return await _delete_local_products(request, row)
+async def delete_product(row: int):
+    """Xoá sản phẩm khỏi Excel (clear row data, không xoá folder)."""
+    wb = openpyxl.load_workbook(EXCEL_FILE())
+    ws = wb["Listings"]
+    for col in range(1, 16):
+        set_cell_value(ws, row, col, None)
+    wb.save(EXCEL_FILE())
+    return {"ok": True}
 
 @app.post("/api/batch-delete")
 async def batch_delete(req: Request):
@@ -4652,8 +2047,16 @@ async def batch_delete(req: Request):
 
 async def _batch_delete_unlocked(req: Request):
     """Xoá nhiều sản phẩm khỏi Excel cùng lúc."""
-    data = await _read_delete_payload(req)
-    shop_id, _ = _parse_delete_request_payload(data, require_folder=False)
+    data = await req.json()
+    if not isinstance(data, dict):
+        raise HTTPException(400, "Payload phải là một đối tượng JSON")
+    shop_id = str(data.get("shop") or "").strip()
+    if not shop_id:
+        raise HTTPException(400, "Thiếu thông tin shop")
+    try:
+        _assert_shop_identity(shop_id)
+    except RuntimeError as error:
+        raise HTTPException(409, str(error)) from error
 
     raw_items = data.get("items")
     if not isinstance(raw_items, list) or not raw_items:
@@ -4661,7 +2064,6 @@ async def _batch_delete_unlocked(req: Request):
 
     normalized_items = []
     seen_rows = set()
-    seen_folders = set()
     for item in raw_items:
         if not isinstance(item, dict):
             raise HTTPException(400, "Mỗi phần tử trong items phải có định dạng {row, folder}")
@@ -4672,125 +2074,41 @@ async def _batch_delete_unlocked(req: Request):
             raise HTTPException(400, f"row {row} không hợp lệ (phải >= 4)")
         if row in seen_rows:
             raise HTTPException(400, f"row {row} bị lặp trong danh sách")
-        folder = _validate_product_numbered_folder_name(item.get("folder"))
-        if folder in seen_folders:
-            raise HTTPException(400, f"folder bị lặp trong danh sách: {folder}")
-        seen_folders.add(folder)
+        folder = str(item.get("folder") or "").strip()
+        if not folder:
+            raise HTTPException(400, f"item tại row {row} thiếu folder")
         seen_rows.add(row)
         normalized_items.append((row, folder))
 
     if not normalized_items:
-        return {
-            "ok": True,
-            "shop": shop_id,
-            "deleted": 0,
-            "items": [],
-            "deleted_folders": [],
-        }
+        return {"ok": True, "shop": shop_id, "deleted": 0}
 
     excel_path = EXCEL_FILE()
-    try:
-        result = await _delete_local_products_unlocked(shop_id, normalized_items, excel_path)
-        return result
-    except HTTPException:
-        raise
-    except Exception as error:
-        raise HTTPException(500, "Xoá hàng loạt thất bại") from error
-
-
-async def _delete_local_products(request: Request, row: int):
-    data = await _read_delete_payload(request)
-    shop_id, folder = _parse_delete_request_payload(data)
-    normalized_items = [(row, folder)]
-
-    return await _delete_local_products_unlocked(shop_id, normalized_items, EXCEL_FILE())
-
-
-async def _delete_local_products_unlocked(shop_id: str, normalized_items: list[tuple[int, str]], excel_path: Path):
-    if not excel_path.exists():
-        raise HTTPException(404, "Chưa có file Excel của shop đang hoạt động")
-    if not normalized_items:
-        return {"ok": True, "shop": shop_id, "deleted": 0, "items": [], "deleted_folders": []}
-
     wb = openpyxl.load_workbook(excel_path)
     ws = wb["Listings"]
-    shop_dir = SHOP_DIR()
     for row, folder in normalized_items:
-        if row < 4:
-            raise HTTPException(400, "Row phải từ 4 trở lên")
         current_folder = str(ws.cell(row=row, column=2).value or "").strip()
         if not current_folder:
             raise HTTPException(409, f"Không tìm thấy sản phẩm hợp lệ tại row {row}")
         if current_folder != folder:
-            raise HTTPException(
-                409,
-                f"Row {row} bị thay đổi: folder hiện tại '{current_folder}' không khớp '{folder}'",
-            )
-        if not (shop_dir / folder).exists():
-            raise HTTPException(404, f"Không tìm thấy folder local: {folder}")
-
-    moved_items: list[tuple[int, str, Path, Path]] = []
-    deleted_items: list[dict[str, int | str]] = []
+            raise HTTPException(409, f"Row {row} bị thay đổi: folder hiện tại '{current_folder}' không khớp '{folder}'")
 
     backup_path = excel_path.with_name(
-        f"{excel_path.stem}.backup_delete_{time.strftime('%Y%m%d_%H%M%S')}{excel_path.suffix}"
+        f"{excel_path.stem}.backup_batch_delete_{time.strftime('%Y%m%d_%H%M%S')}{excel_path.suffix}"
     )
-    mutation_started = False
+    shutil.copy2(excel_path, backup_path)
     try:
-        shutil.copy2(excel_path, backup_path)
-        mutation_started = True
-
-        for row, folder in normalized_items:
-            folder_path = shop_dir / folder
-            if not folder_path.exists():
-                raise HTTPException(404, f"Không tìm thấy folder local: {folder}")
-            target_folder = _quarantine_destination(shop_dir, folder)
-            shutil.move(str(folder_path), str(target_folder))
-            moved_items.append((row, folder, folder_path, target_folder))
-
         for row, _folder in normalized_items:
             _clear_catalog_row(ws, row)
-
         wb.save(excel_path)
-        for row, folder, _source, target in moved_items:
-            deleted_items.append(_build_local_delete_metadata(row, folder, target))
-        return {
-            "ok": True,
-            "shop": shop_id,
-            "deleted": len(moved_items),
-            "items": deleted_items,
-            "deleted_folders": [item["quarantine_folder"] for item in deleted_items],
-        }
     except Exception as error:
-        restore_errors: list[str] = []
-        if mutation_started:
-            for row, folder, source_folder, target_folder in reversed(moved_items):
-                try:
-                    if target_folder.exists():
-                        target_folder.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.move(str(target_folder), str(source_folder))
-                except Exception as restore_error:
-                    restore_errors.append(f"{folder}@row {row}: {restore_error}")
+        try:
+            shutil.copy2(backup_path, excel_path)
+        except Exception:
+            pass
+        raise HTTPException(500, "Lưu file Excel thất bại, đã khôi phục từ bản sao dự phòng") from error
 
-            try:
-                shutil.copy2(backup_path, excel_path)
-            except Exception as restore_error:
-                restore_errors.append(f"khôi phục workbook: {restore_error}")
-
-            if restore_errors:
-                raise HTTPException(
-                    500,
-                    "Xoá local thất bại và khôi phục không hoàn toàn: "
-                    + "; ".join(restore_errors),
-                ) from error
-
-            if isinstance(error, HTTPException):
-                raise HTTPException(500, "Xoá local thất bại sau khi bắt đầu thao tác") from error
-            raise HTTPException(500, "Lưu file Excel thất bại, đã khôi phục bản sao dự phòng") from error
-
-        if isinstance(error, HTTPException):
-            raise error
-        raise HTTPException(500, str(error)) from error
+    return {"ok": True, "shop": shop_id, "deleted": len(normalized_items)}
 
 @app.post("/api/fix-sections")
 async def fix_sections():
@@ -4836,44 +2154,11 @@ async def upload_images(row: int, files: list[UploadFile] = File(...)):
     p = get_product_by_row(row)
     img_dir = SHOP_DIR() / p["folder"] / "images"
     img_dir.mkdir(parents=True, exist_ok=True)
-    staged: list[tuple[Path, Path]] = []
-    used_names: set[str] = set()
-    try:
-        with tempfile.TemporaryDirectory(prefix=".image_upload_", dir=str(img_dir)) as stage_dir_name:
-            stage_dir = Path(stage_dir_name)
-            for index, upload in enumerate(files, start=1):
-                safe_name = _safe_asset_filename(upload.filename or "", f"image-{index:02d}.png")
-                if safe_name in used_names:
-                    stem = Path(safe_name).stem or f"image-{index:02d}"
-                    suffix = Path(safe_name).suffix
-                    duplicate = 2
-                    candidate = f"{stem}-{duplicate}{suffix}"
-                    while candidate in used_names:
-                        duplicate += 1
-                        candidate = f"{stem}-{duplicate}{suffix}"
-                    safe_name = candidate
-                used_names.add(safe_name)
-                source_suffix = Path(safe_name).suffix.lower()
-                readiness_suffix = source_suffix if source_suffix in IMG_EXTS else ".png"
-                stage_path = stage_dir / f"{index:04d}{readiness_suffix}"
-                stage_path.write_bytes(await upload.read())
-                staged.append((stage_path, img_dir / safe_name))
-
-            try:
-                AssetReadinessEngine().assert_ready([stage_path for stage_path, _ in staged])
-            except AssetReadinessError as error:
-                blocked_statuses = {item.status for item in error.report.blocked_items}
-                status_code = 409 if blocked_statuses & {"checksum-mismatch", "dataless", "cloud-only"} else 400
-                raise HTTPException(status_code, "Image upload blocked by asset readiness checks") from error
-
-            for stage_path, destination in staged:
-                os.replace(stage_path, destination)
-    except HTTPException:
-        raise
-    except (OSError, ValueError) as error:
-        raise HTTPException(400, "Image upload could not be staged safely") from error
-
-    saved = [destination.name for _, destination in staged]
+    saved = []
+    for f in files:
+        dest = img_dir / f.filename
+        dest.write_bytes(await f.read())
+        saved.append(f.filename)
     return {"ok": True, "saved": saved}
 
 @app.delete("/api/products/{row}/images/{filename}")
@@ -4929,6 +2214,21 @@ async def sse_logs(request: Request):
     return StreamingResponse(event_gen(), media_type="text/event-stream")
 
 # ── API: Service Status ──────────────────────────────────────────────────────────
+async def _port_open_async(port: int) -> bool:
+    try:
+        _, writer = await asyncio.wait_for(
+            asyncio.open_connection("127.0.0.1", port),
+            timeout=0.15
+        )
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except:
+            pass
+        return True
+    except:
+        return False
+
 async def _check_watcher_async() -> bool:
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -4941,138 +2241,15 @@ async def _check_watcher_async() -> bool:
     except:
         return False
 
-
-# These status probes run on the dashboard's initial render and on a short
-# polling cadence.  They must never make an unavailable *optional* local AI
-# service feel like the dashboard itself is unavailable.
-_RUNTIME_SERVICE_CHECK_TIMEOUT_SECONDS = 0.35
-_RUNTIME_SERVICE_SNAPSHOT_TIMEOUT_SECONDS = 0.5
-
-
-def _normalize_http_url(base_url: str) -> str:
-    return base_url[:-1] if base_url.endswith("/") else base_url
-
-
-async def _check_http_json_identity(
-    base_url: str,
-    path: str,
-    *,
-    required_fields: tuple[str, ...] = (),
-    response_validator: Callable[[Any], bool] | None = None,
-    timeout_seconds: float = _RUNTIME_SERVICE_CHECK_TIMEOUT_SECONDS,
-) -> bool:
-    try:
-        import httpx as _httpx
-    except Exception:
-        return False
-
-    url = f"{_normalize_http_url(base_url)}{path}"
-    timeout = _httpx.Timeout(timeout=timeout_seconds)
-    try:
-        # The targets are fixed loopback services.  Do not consult proxy
-        # environment variables here: a missing/broken proxy can otherwise
-        # turn a local readiness probe into a multi-second network wait.
-        async with _httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
-            response = await client.get(url)
-        if response.status_code != 200:
-            return False
-        payload = response.json()
-        if not isinstance(payload, Mapping):
-            return False
-        for field in required_fields:
-            if field not in payload:
-                return False
-        if response_validator is not None:
-            return bool(response_validator(payload))
-        return True
-    except Exception:
-        return False
-
-
-def _has_core_service_identity(
-    payload: Mapping[str, Any],
-    *,
-    required_paths: tuple[str, ...] = (),
-) -> bool:
-    if payload.get("openapi") is None:
-        return False
-    paths = payload.get("paths")
-    if not isinstance(paths, Mapping):
-        return False
-    return any(path in paths for path in required_paths)
-
-
-def _has_openai_identity(payload: Mapping[str, Any]) -> bool:
-    if payload.get("object") != "list":
-        return False
-    data = payload.get("data")
-    return isinstance(data, list)
-
-
-async def _check_vertex_service_async() -> bool:
-    openapi_check, health_check = await asyncio.gather(
-        _check_http_json_identity(
-            VERTEX_URL,
-            "/openapi.json",
-            required_fields=("openapi", "paths"),
-            response_validator=lambda payload: _has_core_service_identity(
-                payload, required_paths=("/api/upload-and-analyze", "/api/generate")
-            ),
-        ),
-        _check_http_json_identity(
-            VERTEX_URL,
-            "/api/health",
-            required_fields=("status",),
-            response_validator=lambda payload: isinstance(payload.get("status"), (str, int, bool)),
-        ),
-    )
-    return openapi_check or health_check
-
-
-async def _check_mlx_service_async() -> bool:
-    models_check, openapi_check = await asyncio.gather(
-        _check_http_json_identity(
-            MLX_URL,
-            "/v1/models",
-            required_fields=("object", "data"),
-            response_validator=_has_openai_identity,
-        ),
-        _check_http_json_identity(
-            MLX_URL,
-            "/health/openapi",
-            required_fields=("openapi", "paths"),
-            response_validator=lambda payload: _has_core_service_identity(
-                payload, required_paths=("/v1/models",)
-            ),
-        ),
-    )
-    return models_check or openapi_check
-
-
 @app.get("/api/services")
 async def service_status():
-    return await _service_status_snapshot()
-
-
-async def _service_status_snapshot() -> dict[str, Any]:
     watcher_task = asyncio.create_task(_check_watcher_async())
-    vertex_task = asyncio.create_task(_check_vertex_service_async())
-    mlx_task = asyncio.create_task(_check_mlx_service_async())
+    vertex_task = asyncio.create_task(_port_open_async(8080))
+    mlx_task = asyncio.create_task(_port_open_async(8000))
 
-    try:
-        watcher, vertex_app, mlx_ai = await asyncio.wait_for(
-            asyncio.gather(watcher_task, vertex_task, mlx_task),
-            timeout=_RUNTIME_SERVICE_SNAPSHOT_TIMEOUT_SECONDS,
-        )
-    except (asyncio.TimeoutError, Exception):
-        # A readiness indicator is strictly best-effort.  Return all services
-        # as offline rather than holding up the main dashboard API if a future
-        # probe regresses or an optional process becomes wedged.
-        for task in (watcher_task, vertex_task, mlx_task):
-            if not task.done():
-                task.cancel()
-        await asyncio.gather(watcher_task, vertex_task, mlx_task, return_exceptions=True)
-        watcher, vertex_app, mlx_ai = False, False, False
+    watcher, vertex_app, mlx_ai = await asyncio.gather(
+        watcher_task, vertex_task, mlx_task
+    )
 
     return {
         "vertex_app": vertex_app,
@@ -5081,32 +2258,6 @@ async def _service_status_snapshot() -> dict[str, Any]:
         "running":    list(dict.fromkeys(list(_running_processes.keys()) + list(_running_tasks.keys()))),
         "running_tasks": list(_running_tasks.keys()),
     }
-
-
-@app.get("/api/runtime-health")
-async def runtime_health() -> dict[str, Any]:
-    services = await _service_status_snapshot()
-    active_shop = get_active_shop()
-    optional_service_readiness = {
-        key: bool(value)
-        for key, value in services.items()
-        if isinstance(value, bool) and key in {"vertex_app", "mlx_ai", "watcher"}
-    }
-    return runtime_identity.runtime_health_payload(
-        runtime_root=BASE_DIR,
-        listen_host=_dashboard_listen_host(),
-        listen_port=8090,
-        service_readiness=services,
-        core_service_readiness={"ok": True, "checks": {"dashboard_endpoint": True}},
-        optional_service_readiness={
-            "ok": all(optional_service_readiness.values())
-            if optional_service_readiness
-            else False,
-            "checks": optional_service_readiness,
-        },
-        active_shop_id=_active_shop_id,
-        active_shop_name=str(active_shop.get("name", "")).strip(),
-    )
 
 @app.post("/api/services/watcher/start")
 async def start_watcher():
@@ -5122,17 +2273,11 @@ async def start_watcher():
 # ── API: Sync Etsy Shop Manager ─────────────────────────────────────────────────
 @app.post("/api/etsy/sync")
 async def sync_etsy_shop():
+    if "__ETSY_SYNC__" in _running_processes:
+        return JSONResponse({"ok": False, "error": "Đang đồng bộ Etsy rồi — chờ xong giúp em"}, status_code=409)
     shop_id = _active_shop_id
-    command, created = await _enqueue_operation(
-        operation="etsy-shop-sync",
-        shop_id=shop_id,
-        target=shop_id,
-        callback=lambda: _run_etsy_shop_sync(shop_id),
-    )
-    return JSONResponse(
-        status_code=202 if created else 200,
-        content={"ok": True, "created": created, "command": _operation_queue_public(command), "message": f"Đã thêm Sync Etsy shop vào hàng chờ ({shop_id})"},
-    )
+    asyncio.create_task(_run_etsy_shop_sync(shop_id))
+    return {"ok": True, "message": f"Đang đồng bộ Etsy shop → dashboard ({shop_id})"}
 
 
 async def _run_etsy_shop_sync(shop_id: str):
@@ -5204,11 +2349,9 @@ async def _sync_local_from_etsy(
     shop_id: str,
     product_path: Path,
     excel_path: Path,
-    sync_assets: bool = True,
-) -> tuple[dict, dict, dict, bool, list[str]]:
+) -> tuple[dict, dict, dict, bool, str]:
     """Pull metadata/assets from Etsy for a local row and persist synced fields."""
-    sync_log = _ctx_logger("sync_local_from_etsy", shop=shop_id, listing_id=listing_id)
-    sync_log.info("sync start (row=%s, product=%s)", row, product_path.name)
+    _assert_shop_identity(shop_id)
     synced_fields: list[str] = []
     details: dict = {}
     asset_sync: dict = {}
@@ -5217,20 +2360,15 @@ async def _sync_local_from_etsy(
     details = await scrape_listing_details(
         listing_id,
         shop_id=shop_id,
-        product_path=product_path if sync_assets else None,
+        product_path=product_path,
     )
     if not details.get("ok"):
-        sync_log.error("scrape returned no usable listing details")
         raise RuntimeError("Không đọc được thông tin từ Etsy")
 
     details.pop("ok", None)
     asset_sync = details.pop("_asset_sync", {})
     metadata_ok = _is_metadata_sync_complete(details)
-    sync_status = _extract_asset_sync_status(
-        asset_sync,
-        metadata_ok=metadata_ok,
-        include_assets=sync_assets,
-    )
+    sync_status = _extract_asset_sync_status(asset_sync, metadata_ok=metadata_ok)
 
     details = {
         key: value for key, value in details.items()
@@ -5241,38 +2379,7 @@ async def _sync_local_from_etsy(
     if details:
         save_to_excel(row, details, excel_path=excel_path)
 
-    sync_log.info(
-        "sync complete (row=%s, fields=%s, overall=%s)",
-        row,
-        synced_fields,
-        bool(sync_status.get("overall")),
-    )
     return details, asset_sync, sync_status, bool(sync_status.get("overall")), synced_fields
-
-
-def _mapped_etsy_listing_ids(products: list[dict] | None = None) -> set[str]:
-    mapped: set[str] = set()
-    for product in products if products is not None else products_from_excel():
-        listing_id = _extract_etsy_listing_id(str(product.get("etsy_url") or ""))
-        if listing_id:
-            mapped.add(listing_id)
-    return mapped
-
-
-def _status_for_linked_etsy_listing(listing: dict | None, fallback_status: str = "") -> str:
-    status_labels = {
-        "active": "✅ Đã đăng",
-        "draft": "✅ Đã đăng draft",
-        "inactive": "⏸ Inactive trên Etsy",
-        "expired": "⌛ Expired trên Etsy",
-    }
-    manager_status = str((listing or {}).get("managerStatus") or "").lower()
-    if manager_status in status_labels:
-        return status_labels[manager_status]
-    current = str(fallback_status or "").strip()
-    if "URL chưa xác minh" in current or ("Đã đăng" in current and "draft" in current.lower()):
-        return "✅ Đã đăng draft"
-    return current or "✅ Đã đăng draft"
 
 
 @app.get("/api/etsy/match-suggestions/{listing_id}")
@@ -5329,70 +2436,11 @@ async def etsy_match_suggestions(listing_id: str, limit: int = 5):
     }
 
 
-@app.get("/api/etsy/link-suggestions-for-folder/{folder}")
-async def etsy_link_suggestions_for_folder(folder: str, limit: int = 5):
-    """Suggest unmapped Etsy listings that likely belong to a local product folder."""
-    folder = str(folder or "").strip()
-    if not folder:
-        raise HTTPException(400, "Thiếu folder local")
-    limit = max(1, min(int(limit), 10))
-
-    products = products_from_excel()
-    local_product = next((p for p in products if p.get("folder") == folder), None)
-    if not local_product:
-        raise HTTPException(404, f"Không tìm thấy folder local: {folder}")
-    if str(local_product.get("etsy_url") or "").strip():
-        raise HTTPException(409, f"{folder} đã có link Etsy")
-
-    snapshot = latest_etsy_manager_snapshot()
-    mapped_ids = _mapped_etsy_listing_ids(products)
-    local_title = str(local_product.get("title") or "")
-    candidates = []
-    for listing in snapshot.get("listings", []):
-        listing_id = str(listing.get("id") or "").strip()
-        if not listing_id.isdigit() or listing_id in mapped_ids:
-            continue
-        manager_status = str(listing.get("managerStatus") or listing.get("status") or "").lower()
-        if manager_status and manager_status not in {"draft", "active"}:
-            continue
-        score = _listing_match_score(str(listing.get("title") or ""), local_title)
-        candidates.append({
-            "id": listing_id,
-            "title": listing.get("title") or "",
-            "status": listing.get("managerStatus") or listing.get("status") or "",
-            "url": listing.get("url") or f"https://www.etsy.com/listing/{listing_id}",
-            "score": score,
-            "confidence": "high" if score >= 0.90 else "medium" if score >= 0.75 else "low",
-        })
-    candidates.sort(key=lambda item: (-item["score"], str(item.get("id") or "")))
-    suggestions = candidates[:limit]
-    top_score = suggestions[0]["score"] if suggestions else 0.0
-    second_score = suggestions[1]["score"] if len(suggestions) > 1 else 0.0
-    auto_fill_listing_id = None
-    if suggestions and top_score >= 0.90 and (top_score >= 0.96 or top_score - second_score >= 0.06):
-        auto_fill_listing_id = suggestions[0]["id"]
-
-    return {
-        "ok": True,
-        "folder": folder,
-        "row": local_product.get("row"),
-        "title": local_title,
-        "status": local_product.get("status"),
-        "suggestions": suggestions,
-        "auto_fill_listing_id": auto_fill_listing_id,
-        "scanned_etsy_total": len(candidates),
-        "snapshot_total": len(snapshot.get("listings", [])),
-    }
-
-
 @app.post("/api/etsy/map-listing")
 async def map_etsy_listing(request: Request):
     data = await request.json()
     listing_id = str(data.get("listing_id") or "").strip()
     folder = str(data.get("folder") or "").strip()
-    raw_url = str(data.get("etsy_url") or "").strip()
-    if not listing_id and raw_url:
-        listing_id = _extract_etsy_listing_id(raw_url)
     if not re.fullmatch(r"\d+", listing_id):
         raise HTTPException(400, "Listing ID Etsy không hợp lệ")
     if not folder:
@@ -5413,17 +2461,20 @@ async def map_etsy_listing(request: Request):
         (item for item in snapshot.get("listings", []) if str(item.get("id", "")) == listing_id),
         None,
     )
-    allow_manual = bool(data.get("allow_manual")) or bool(raw_url)
-    if not listing and not allow_manual:
+    if not listing:
         raise HTTPException(404, "Listing không có trong bản đồng bộ Etsy mới nhất")
 
-    etsy_url = str((listing or {}).get("url") or raw_url or f"https://www.etsy.com/listing/{listing_id}")
-    if not _extract_etsy_listing_id(etsy_url):
-        etsy_url = f"https://www.etsy.com/listing/{listing_id}"
-    status_value = _status_for_linked_etsy_listing(listing, local_product.get("status") or "")
+    status_labels = {
+        "active": "✅ Đã đăng",
+        "draft": "✅ Đã đăng draft",
+        "inactive": "⏸ Inactive trên Etsy",
+        "expired": "⌛ Expired trên Etsy",
+    }
+    manager_status = str(listing.get("managerStatus") or "").lower()
+    etsy_url = str(listing.get("url") or f"https://www.etsy.com/listing/{listing_id}")
     save_to_excel(local_product["row"], {
         "etsy_url": etsy_url,
-        "status": status_value,
+        "status": status_labels.get(manager_status, local_product.get("status") or "⏳ Chờ đăng"),
     })
     broadcast(f"[ETSY-MAP] ✅ {listing_id} → {folder}")
     return {
@@ -5432,8 +2483,6 @@ async def map_etsy_listing(request: Request):
         "folder": folder,
         "row": local_product["row"],
         "etsy_url": etsy_url,
-        "status": status_value,
-        "from_snapshot": bool(listing),
     }
 
 
@@ -5444,14 +2493,6 @@ async def create_local_product_from_etsy(request: Request):
     listing_id = str(data.get("listing_id") or "").strip()
     if not re.fullmatch(r"\d+", listing_id):
         raise HTTPException(400, "Listing ID Etsy không hợp lệ")
-
-    try:
-        metadata_only = _parse_request_bool(data, "metadata_only", False)
-        sync_assets = _parse_request_bool(data, "sync_assets", True)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc))
-    if metadata_only:
-        sync_assets = False
 
     snapshot = latest_etsy_manager_snapshot()
     listing = next(
@@ -5493,7 +2534,7 @@ async def create_local_product_from_etsy(request: Request):
             if target_row is None and not folder_value:
                 target_row = row_num
 
-        reusable_slots = [] if not sync_assets else _find_reusable_empty_product_slots(ws, shop_dir)
+        reusable_slots = _find_reusable_empty_product_slots(ws, shop_dir)
         used_folders = set()
 
         if existing_row is not None:
@@ -5597,13 +2638,14 @@ async def create_local_product_from_etsy(request: Request):
             shop_id=shop_id,
             product_path=product_path,
             excel_path=excel_path,
-            sync_assets=sync_assets,
         )
+        broadcast(f"[ETSY-CREATE] ✅ {'Ghép lại' if existing else 'Đã sync'} Etsy {listing_id} → {folder_name} (row {target_row})")
     except Exception as exc:
         sync_error = str(exc)
 
     if not sync_error and not sync_ok:
         sync_error = "Sync Etsy không hoàn tất đủ (thiếu metadata hoặc assets)."
+
     if sync_error:
         try:
             save_to_excel(target_row, {"status": "⚠ Sync lỗi"}, excel_path=excel_path)
@@ -5622,8 +2664,6 @@ async def create_local_product_from_etsy(request: Request):
             except Exception as status_write_exc:
                 sync_error = f"{sync_error}; không ghi được trạng thái lỗi: {status_write_exc}"
             sync_ok = False
-        else:
-            broadcast(f"[ETSY-CREATE] ✅ {'Ghép lại' if existing else 'Đã sync'} Etsy {listing_id} → {folder_name} (row {target_row})")
 
     return {
         "ok": True,
@@ -5643,47 +2683,49 @@ async def create_local_product_from_etsy(request: Request):
 
 
 @app.post("/api/products/{row}/sync-from-etsy")
-async def sync_from_etsy(row: int, request: Request = cast(Any, None)):
+async def sync_from_etsy(row: int):
     p = get_product_by_row(row)
-    payload = await _read_optional_json_payload(request)
-    context = _resolve_update_context(row, p, payload, operation="etsy_sync_from")
-    shop_id, folder, listing_id = context.shop_id, context.folder, context.listing_id
-    product_path = BASE_DIR / "shops" / shop_id / folder
-    excel_path = BASE_DIR / "shops" / shop_id / "Etsy_SEO_Generator.xlsx"
+    etsy_url = p.get("etsy_url", "")
+    if not etsy_url:
+        raise HTTPException(400, "Sản phẩm này chưa có link Etsy để đồng bộ")
 
-    async def run_listing_sync():
-        sync_status = _extract_asset_sync_status({}, metadata_ok=False)
-        _etsy_single_sync_busy_shops.add(shop_id)
-        try:
-            broadcast(f"[ETSY-SINGLE-SYNC] 🔄 Đang cào dữ liệu cho Listing {listing_id} ({folder})...")
-            _, asset_sync, sync_status, sync_ok, synced_fields = await _sync_local_from_etsy(
-                listing_id=listing_id,
-                row=row,
-                shop_id=shop_id,
-                product_path=product_path,
-                excel_path=excel_path,
-            )
-            sync_complete = bool(sync_ok and sync_status.get("overall"))
-            if sync_complete:
-                broadcast(f"[ETSY-SINGLE-SYNC] ✅ Hoàn tất đồng bộ Listing {listing_id} vào Excel dòng {row}!")
-            else:
-                broadcast(f"[ETSY-SINGLE-SYNC] ⚠️ Chưa hoàn tất đồng bộ Listing {listing_id}: metadata_ok={sync_status.get('metadata_ok')}, assets_complete={sync_status.get('assets_complete')}")
-        except Exception as e:
-            broadcast(f"[ETSY-SINGLE-SYNC] ❌ Thất bại: {str(e)}")
-            raise
-        finally:
-            _etsy_single_sync_busy_shops.discard(shop_id)
+    import re
+    m = re.search(r"/listing/(\d+)", etsy_url)
+    if not m:
+        raise HTTPException(400, f"Link Etsy không hợp lệ: {etsy_url}")
+    listing_id = m.group(1)
 
-    command, created = await _enqueue_operation(
-        operation="etsy-listing-sync",
-        shop_id=shop_id,
-        target=f"{folder}:{listing_id}",
-        callback=run_listing_sync,
-    )
-    return JSONResponse(
-        status_code=202 if created else 200,
-        content={"ok": True, "created": created, "queued": True, "command": _operation_queue_public(command)},
-    )
+    broadcast(f"[ETSY-SINGLE-SYNC] 🔄 Đang cào dữ liệu cho Listing {listing_id} ({p['folder']})...")
+
+    sync_status = _extract_asset_sync_status({}, metadata_ok=False)
+    try:
+        _, asset_sync, sync_status, sync_ok, synced_fields = await _sync_local_from_etsy(
+            listing_id=listing_id,
+            row=row,
+            shop_id=_active_shop_id,
+            product_path=SHOP_DIR() / p["folder"],
+            excel_path=EXCEL_FILE(),
+        )
+        broadcast(f"[ETSY-SINGLE-SYNC] ✅ Hoàn tất đồng bộ Listing {listing_id} vào Excel dòng {row}!")
+        return {
+            "ok": True,
+            "details": {},
+            "assets": asset_sync,
+            "synced_fields": synced_fields,
+            "sync_status": sync_status,
+            "sync_ok": sync_ok,
+        }
+    except Exception as e:
+        broadcast(f"[ETSY-SINGLE-SYNC] ❌ Thất bại: {str(e)}")
+        if not sync_status:
+            sync_status = _extract_asset_sync_status({}, metadata_ok=False)
+        return JSONResponse({
+            "ok": False,
+            "error": str(e),
+            "assets": {},
+            "sync_status": sync_status,
+            "sync_ok": False,
+        }, status_code=500)
 
 
 def _local_asset_summary(folder_path: Path, subfolder: str, allowed_exts: set[str]) -> dict:
@@ -5761,11 +2803,18 @@ def _seo_zip_member_samples(zip_path: Path, *, limit: int = 24) -> list[str]:
         return []
 
 
-def _build_seo_asset_context(p: dict) -> str:
+def _resolve_shop_id(value: object) -> str:
+    return str(value or "").strip()
+
+
+def _build_seo_asset_context(
+    p: dict,
+    *,
+    shop_dir: Optional[Path] = None,
+) -> str:
     folder = str(p.get("folder") or "")
-    captured_shop_dir = p.get("_shop_dir")
-    shop_dir = Path(captured_shop_dir) if captured_shop_dir else SHOP_DIR()
-    folder_path = shop_dir / folder
+    base_dir = shop_dir or SHOP_DIR()
+    folder_path = base_dir / folder
     image_items, image_total = _seo_asset_items(folder_path / "images", IMG_EXTS)
     file_items, file_total = _seo_asset_items(
         folder_path / "files",
@@ -5895,201 +2944,36 @@ async def compare_local_product_with_etsy(row: int):
 
 
 # ── API: Post to Etsy ────────────────────────────────────────────────────────────
-@app.get("/api/etsy/session")
-async def get_etsy_session():
-    shop_id = _active_shop_id
-    try:
-        return {"ok": True, "session": _etsy_session_payload(shop_id)}
-    except (KeyError, ValueError) as exc:
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=409)
-
-
-@app.post("/api/etsy/session/open")
-async def open_etsy_session(request: Request):
-    """Open the active shop's exact poster profile at Shop Manager."""
-    shop_id = _active_shop_id
-    try:
-        body = await request.json()
-    except (ValueError, json.JSONDecodeError):
-        body = {}
-    requested_shop_id = str(body.get("shop_id") or "").strip()
-    if not requested_shop_id:
-        return JSONResponse(
-            {"ok": False, "error": "Thiếu shop_id để mở session Etsy"},
-            status_code=400,
-        )
-    if requested_shop_id != shop_id:
-        return JSONResponse(
-            {
-                "ok": False,
-                "error": (
-                    f"Shop không khớp: dashboard={shop_id or 'chưa chọn'}, "
-                    f"yêu cầu={requested_shop_id}"
-                ),
-            },
-            status_code=409,
-        )
-    try:
-        _assert_shop_identity(shop_id)
-        session = resolve_etsy_session(BASE_DIR, SHOPS, shop_id)
-        ready = await asyncio.to_thread(open_etsy_login_browser, session)
-        _assert_shop_identity(shop_id)
-    except EtsyProfileLockedError as exc:
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=409)
-    except (FileNotFoundError, KeyError, OSError, ValueError, RuntimeError) as exc:
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=409)
-    if not ready:
-        return JSONResponse(
-            {
-                "ok": False,
-                "error": "Chrome không mở được đúng profile Etsy của shop",
-            },
-            status_code=503,
-        )
-    payload = _etsy_session_payload(shop_id)
-    payload["browser_ready"] = True
-    return {
-        "ok": True,
-        "session": payload,
-        "message": (
-            f"Đã mở Shop Manager bằng profile Etsy dùng để Post cho {shop_id}. "
-            "Sau khi đăng nhập, có thể giữ cửa sổ này mở khi nhấn Post."
-        ),
-    }
-
-
 @app.post("/api/products/{row}/post")
 async def post_to_etsy(row: int):
     p = get_product_by_row(row)
     folder = p["folder"]
+    if folder in _running_processes or folder in _running_tasks:
+        return JSONResponse({"ok": False, "error": f"{folder} đang chạy rồi"}, status_code=409)
     shop_id = _active_shop_id
-
-    async def run_post():
-        save_to_excel(row, {"status": "⏳ Chờ đăng"})
-        broadcast(f"[DASH] 🔄 Reset → ⏳ Chờ đăng: {folder}")
-        await _run_poster(row, folder, shop_id)
-
-    command, created = await _enqueue_operation(
-        operation="etsy-post",
-        shop_id=shop_id,
-        target=f"{row}:{folder}",
-        callback=run_post,
-    )
-    return JSONResponse(
-        status_code=202 if created else 200,
-        content={"ok": True, "created": created, "command": _operation_queue_public(command), "message": f"Đã thêm Post {folder} vào hàng chờ"},
-    )
-
-
-@app.post("/api/run-selected-products")
-async def run_selected_products(req: Request):
-    data = await _read_delete_payload(req)
-    shop_id, items = _parse_run_selected_request_payload(data)
-    valid_items, rejected = _partition_selected_local_products(shop_id, items)
-    excel_path = EXCEL_FILE()
-
-    # Mark skipped products with per-card error reasons; do not abort the batch.
-    if rejected:
-        try:
-            _mark_selected_row_errors(excel_path, rejected)
-        except Exception as error:
-            raise HTTPException(500, "Không ghi được trạng thái lỗi cho sản phẩm bị bỏ qua") from error
-        for item in rejected:
-            broadcast(f"[BATCH] ⏭ Bỏ qua {item['folder']}: {item['reason']}")
-
-    if not valid_items:
-        raise HTTPException(
-            400,
-            f"Không có sản phẩm hợp lệ để đăng trong {len(items)} đã chọn"
-            + (f" (đã bỏ qua {len(rejected)})" if rejected else ""),
-        )
-
-    if _is_poster_locked_for_shop(shop_id):
-        raise HTTPException(
-            409,
-            "Một bài đăng đang chạy cho shop này. Vui lòng đợi hoàn tất rồi thử lại",
-        )
-
-    rows = [row for row, _ in valid_items]
-    lock_key = _acquire_poster_lock(shop_id)
-    try:
-        _set_selected_rows_pending(excel_path, rows)
-    except HTTPException:
-        _release_poster_lock(shop_id)
-        raise
-    except Exception as error:
-        _release_poster_lock(shop_id)
-        raise HTTPException(500, "Đặt trạng thái Chờ đăng thất bại") from error
-
-    try:
-        task = asyncio.create_task(_run_selected_poster(shop_id, valid_items, lock_key=lock_key))
-    except Exception:
-        _release_poster_lock(shop_id)
-        raise
-    _register_background_task(lock_key, task)
-    skipped_payload = [
-        {"row": item["row"], "folder": item["folder"], "reason": item["reason"]}
-        for item in rejected
-    ]
-    message = f"Đã xếp hàng {len(valid_items)} sản phẩm vào queue, chạy 1 Chrome lần lượt"
-    if rejected:
-        message += f" (bỏ qua {len(rejected)} sản phẩm không đủ điều kiện)"
-    return JSONResponse(
-        status_code=202,
-        content={
-            "ok": True,
-            "shop": shop_id,
-            "queued": len(valid_items),
-            "skipped": len(rejected),
-            "items": [{"row": row, "folder": folder} for row, folder in valid_items],
-            "folders": [folder for _, folder in valid_items],
-            "rejected": skipped_payload,
-            "job": lock_key,
-            "message": message,
-        },
-    )
-
-
-def _assert_product_images_ready_for_push(context: OperationContext) -> None:
-    shop_root = (BASE_DIR / "shops" / context.shop_id).resolve()
-    product_root = (shop_root / context.folder).resolve()
-    if product_root.parent != shop_root:
-        raise HTTPException(400, "Product asset path is invalid")
-
-    images_dir = product_root / "images"
-    try:
-        image_paths = sorted(
-            path for path in images_dir.iterdir()
-            if path.is_file() and path.suffix.lower() in IMG_EXTS
-        )
-    except FileNotFoundError:
-        image_paths = []
-    except OSError as error:
-        raise HTTPException(409, "Local image assets could not be inspected") from error
-
-    if not image_paths:
-        raise HTTPException(400, "No local image assets are available for image push")
-    try:
-        AssetReadinessEngine().assert_ready(image_paths)
-    except AssetReadinessError as error:
-        blocked_statuses = {item.status for item in error.report.blocked_items}
-        status_code = 409 if blocked_statuses & {"checksum-mismatch", "dataless", "cloud-only"} else 400
-        raise HTTPException(status_code, "Image push blocked by asset readiness checks") from error
+    save_to_excel(row, {"status": "⏳ Chờ đăng"})
+    broadcast(f"[DASH] 🔄 Reset → ⏳ Chờ đăng: {folder}")
+    task = asyncio.create_task(_run_poster(row, folder, shop_id))
+    _running_tasks[folder] = task
+    return {"ok": True, "message": f"Đang chạy poster cho {folder}"}
 
 
 @app.post("/api/products/{row}/push-to-etsy")
 async def push_local_updates_to_etsy(row: int, request: Request):
     """Push selected local fields into the product's already-mapped Etsy listing."""
     p = get_product_by_row(row)
-    data = await _read_optional_json_payload(request)
-    if data is None:
-        raise HTTPException(400, "Payload phải là JSON object")
-    context = _resolve_update_context(
-        row=row,
-        product=p,
-        payload=data,
-        operation="etsy_push_update",
-    )
+    folder = p["folder"]
+    if folder in _running_processes:
+        return JSONResponse({"ok": False, "error": f"{folder} đang chạy rồi"}, status_code=409)
+    if folder in _running_tasks:
+        return JSONResponse({"ok": False, "error": f"{folder} đang khởi động rồi"}, status_code=409)
+
+    etsy_url = str(p.get("etsy_url") or "").strip()
+    listing_match = re.search(r"/listing/(\d+)", etsy_url)
+    if not listing_match:
+        raise HTTPException(400, "Sản phẩm chưa có Etsy listing ID hợp lệ")
+
+    data = await request.json()
     requested_fields = data.get("fields", []) if isinstance(data, dict) else []
     if not isinstance(requested_fields, list):
         raise HTTPException(400, "fields phải là danh sách")
@@ -6099,41 +2983,36 @@ async def push_local_updates_to_etsy(row: int, request: Request):
     fields = list(dict.fromkeys(fields))
     if not fields:
         raise HTTPException(400, "Chưa chọn nội dung cần cập nhật")
-    if "images" in fields:
-        _assert_product_images_ready_for_push(context)
 
-    dedupe_key = context.context_key
-    job_record, created = _get_job_store().create_or_get_deduplicated_job(
-        shop_id=context.shop_id,
-        operation=context.operation,
-        row=context.row,
-        folder=context.folder,
-        listing_id=context.listing_id,
-        request_id=context.request_id,
-        dedupe_key=dedupe_key,
-        operation_receipt={
-            "listing_id": context.listing_id,
-            "fields": fields,
-            "requested_shop": context.shop_id,
-            "request_id": context.request_id,
-        },
-        fields=fields,
-    )
-    if not created and str(job_record.get("status")) in {JOB_STATUS_QUEUED, JOB_STATUS_RUNNING}:
-        return {
-            "ok": True,
-            "created": False,
-            "message": f"Update {context.folder} đã có trong hàng chờ",
-            "listing_id": context.listing_id,
-            "fields": fields,
-            "job_id": str(job_record.get("job_id") or ""),
-        }
-
-    job_id = await _queue_etsy_update_job(context, fields, job_record)
+    shop_id = _active_shop_id
+    listing_id = listing_match.group(1)
+    job_id = f"{shop_id}:{folder}:{time.time_ns()}"
+    if any(
+        job.get("folder") == folder and job.get("status") in {"starting", "preflight", "running"}
+        for job in _etsy_update_jobs.values()
+    ):
+        return JSONResponse({"ok": False, "error": f"{folder} đang chạy rồi"}, status_code=409)
+    if len(_etsy_update_jobs) > 100:
+        oldest = sorted(_etsy_update_jobs, key=lambda key: _etsy_update_jobs[key].get("created_at", 0))[:25]
+        for old_job_id in oldest:
+            _etsy_update_jobs.pop(old_job_id, None)
+    _etsy_update_jobs[job_id] = {
+        "job_id": job_id,
+        "status": "starting",
+        "folder": folder,
+        "listing_id": listing_id,
+        "fields": fields,
+        "shop_id": shop_id,
+        "created_at": time.time(),
+        "last_message": "Runtime started; waiting for Chrome marker",
+        "logs": [],
+    }
+    task = asyncio.create_task(_run_etsy_updater(folder, row, listing_id, fields, shop_id, job_id))
+    _running_tasks[folder] = task
     return {
         "ok": True,
-        "message": f"Đang cập nhật {context.folder} lên Etsy {context.listing_id}",
-        "listing_id": context.listing_id,
+        "message": f"Đang cập nhật {folder} lên Etsy {listing_id}",
+        "listing_id": listing_id,
         "fields": fields,
         "job_id": job_id,
     }
@@ -6141,191 +3020,33 @@ async def push_local_updates_to_etsy(row: int, request: Request):
 
 @app.get("/api/etsy/update-status")
 async def etsy_update_status(job_id: str):
-    store_job = _get_job_store().get_job(job_id)
-    if store_job:
-        job = _job_payload_for_frontend(store_job)
-        _cache_job_status(job_id, job)
-    else:
-        job = _etsy_update_jobs.get(job_id)
+    job = _etsy_update_jobs.get(job_id)
     if not job:
         raise HTTPException(404, "Không tìm thấy tiến trình cập nhật")
-    return {"ok": True, **(_job_payload_for_frontend(job) or job)}
-
-
-@app.get("/api/etsy/jobs")
-async def list_etsy_jobs(status: str | None = None, limit: int = 50):
-    """Read the active shop's durable job inbox without exposing raw receipts."""
-    try:
-        bounded_limit = max(1, min(int(limit), 100))
-    except (TypeError, ValueError) as error:
-        raise HTTPException(400, "limit phải là số nguyên") from error
-    requested_status: set[str] | None = None
-    if status:
-        requested_status = {item.strip().lower() for item in status.split(",") if item.strip()}
-        allowed = {
-            JOB_STATUS_QUEUED,
-            JOB_STATUS_RUNNING,
-            JOB_STATUS_SUCCEEDED,
-            JOB_STATUS_FAILED,
-            JOB_STATUS_CANCELLED,
-        }
-        if not requested_status.issubset(allowed):
-            raise HTTPException(400, "status job không hợp lệ")
-    records = _get_job_store().list_jobs(
-        shop_id=_active_shop_id,
-        status=requested_status,
-        limit=bounded_limit,
-    )
-    return {
-        "ok": True,
-        "shop_id": _active_shop_id,
-        "jobs": [payload for record in records if (payload := _job_center_payload(record))],
-    }
-
-
-def _job_context_from_record(job: dict[str, object]) -> OperationContext:
-    listing_id = str(job.get("listing_id") or "").strip()
-    folder = str(job.get("folder") or "").strip()
-    shop_id = str(job.get("shop_id") or "").strip()
-    row = _coerce_int(job.get("row"), 0)
-    if not listing_id or not folder or not shop_id or row < 1:
-        raise HTTPException(409, "Job thiếu định danh an toàn để thao tác")
-    try:
-        return OperationContext.from_request(
-            operation=str(job.get("operation") or "etsy_push_update"),
-            row=row,
-            payload={
-                "shop": shop_id,
-                "folder": folder,
-                "listing_id": listing_id,
-            },
-            active_shop_id=_active_shop_id,
-            current_folder=folder,
-            current_etsy_url=f"https://www.etsy.com/listing/{listing_id}",
-        )
-    except OperationContextError as error:
-        _raise_context_error(error)
-        raise  # pragma: no cover
-
-
-@app.post("/api/etsy/jobs/{job_id}/cancel")
-async def cancel_etsy_job(job_id: str):
-    store = _get_job_store()
-    job = store.get_job(job_id)
-    if not job:
-        raise HTTPException(404, "Không tìm thấy job")
-    if str(job.get("shop_id")) != str(_active_shop_id):
-        raise HTTPException(409, "Job không thuộc shop đang hoạt động")
-    if str(job.get("status")) not in {JOB_STATUS_QUEUED, JOB_STATUS_RUNNING}:
-        raise HTTPException(409, "Job đã kết thúc, không thể huỷ lại")
-
-    task = _running_tasks.get(job_id)
-    if task is not None and not task.done():
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
-    proc = _running_processes.get(job_id)
-    if proc is not None:
-        try:
-            proc.kill()
-        except (ProcessLookupError, OSError):
-            pass
-    store.cancel_job(job_id)
-    _cache_job_status(
-        job_id,
-        {
-            "status": "cancelled",
-            "finished_at": time.time(),
-            "last_message": "Đã hủy bởi Job Center",
-        },
-    )
-    return {"ok": True, "job_id": job_id, "status": "cancelled"}
-
-
-@app.post("/api/etsy/jobs/{job_id}/retry")
-async def retry_etsy_job(job_id: str):
-    store = _get_job_store()
-    previous = store.get_job(job_id)
-    if not previous:
-        raise HTTPException(404, "Không tìm thấy job")
-    if str(previous.get("shop_id")) != str(_active_shop_id):
-        raise HTTPException(409, "Job không thuộc shop đang hoạt động")
-    previous_status = str(previous.get("status") or "")
-    if previous_status in {JOB_STATUS_QUEUED, JOB_STATUS_RUNNING}:
-        raise HTTPException(409, "Job đang chạy, không thể retry")
-    if previous_status == JOB_STATUS_SUCCEEDED:
-        raise HTTPException(409, "Job đã thành công, không cần retry")
-    if previous_status not in {JOB_STATUS_FAILED, JOB_STATUS_CANCELLED}:
-        raise HTTPException(409, "Job không ở trạng thái retry được")
-
-    context = _job_context_from_record(previous)
-    fields = previous.get("fields")
-    if not isinstance(fields, list) or not fields:
-        raise HTTPException(409, "Job không lưu được fields để retry an toàn")
-    normalized_fields = [str(field) for field in fields if str(field) in {"title", "description", "tags", "price", "qty", "images", "files"}]
-    if not normalized_fields:
-        raise HTTPException(409, "Job không có field hợp lệ để retry")
-    if "images" in normalized_fields:
-        _assert_product_images_ready_for_push(context)
-
-    retry_record, created = store.create_or_get_deduplicated_job(
-        shop_id=context.shop_id,
-        operation=context.operation,
-        row=context.row,
-        folder=context.folder,
-        listing_id=context.listing_id,
-        request_id=context.request_id,
-        dedupe_key=context.context_key,
-        operation_receipt=previous.get("operation_receipt") or {"retry_parent_job_id": job_id},
-        fields=normalized_fields,
-        parent_job_id=job_id,
-    )
-    if not created:
-        raise HTTPException(409, "Đã có một retry đang chờ hoặc đang chạy")
-    new_job_id = await _queue_etsy_update_job(context, normalized_fields, retry_record)
-    return {
-        "ok": True,
-        "job_id": new_job_id,
-        "retry_parent_job_id": job_id,
-        "status": JOB_STATUS_QUEUED,
-    }
+    return {"ok": True, **job}
 
 
 async def _run_etsy_updater(
-    context: OperationContext,
+    folder: str,
+    row: int,
+    listing_id: str,
     fields: list[str],
+    shop_id: str,
     job_id: str,
 ):
-    job = _etsy_update_jobs.get(job_id, {})
-    folder = context.folder
-    shop_id = context.shop_id
-    listing_id = context.listing_id
-    row = context.row
+    job = _etsy_update_jobs[job_id]
     proc: asyncio.subprocess.Process | None = None
-    terminal_status: str | None = None
-    terminal_message: str | None = None
-    store = _get_job_store()
-    runtime_key = job_id
     env = {**__import__('os').environ, "PYTHONUNBUFFERED": "1"}
     try:
-        _cache_job_status(
-            job_id,
-            {
-                "operation": context.operation,
-                "status": "starting",
-                "folder": folder,
-                "listing_id": listing_id,
-                "shop_id": shop_id,
-                "row": row,
-            },
-        )
+        job["status"] = "preflight"
         preflight_ok, preflight_msg = await _runtime_prefetch_import_check(
             PYTHON_BIN,
             f"[ETSY-UPDATE] {folder}",
             _RUNTIME_PRECHECK_MODULES_UPDATER,
         )
         if not preflight_ok:
-            terminal_status = "error"
-            terminal_message = preflight_msg
+            job["status"] = "error"
+            job["last_message"] = preflight_msg
             broadcast(f"[ETSY-UPDATE] ❌ {preflight_msg}")
             return
         cmd = [
@@ -6339,14 +3060,6 @@ async def _run_etsy_updater(
             f"[ETSY-UPDATE] Runtime started: {folder} → {listing_id} "
             f"({', '.join(fields)})"
         )
-        _cache_job_status(
-            job_id,
-            {
-                "status": "preflight",
-                "last_message": "Runtime started; creating Chrome process",
-                "operation": context.operation,
-            },
-        )
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -6354,70 +3067,38 @@ async def _run_etsy_updater(
             cwd=str(BASE_DIR),
             env=env,
         )
-        _running_processes[runtime_key] = proc
-        _cache_job_status(
-            job_id,
-            {
-                "status": "running",
-                "pid": proc.pid,
-                "last_message": "Runtime started; waiting for Chrome marker",
-                "operation": context.operation,
-            },
-        )
-        store.mark_running(job_id, pid=proc.pid)
+        _running_processes[folder] = proc
+        job["status"] = "running"
+        job["last_message"] = "Runtime started; waiting for Chrome marker"
         if proc.stdout:
             async for line in proc.stdout:
                 text = line.decode("utf-8", errors="replace").rstrip()
                 if text and not any(noise in text for noise in _LOG_NOISE):
                     broadcast(f"[ETSY-UPDATE] {text}")
-                    _cache_job_status(
-                        job_id,
-                        {
-                            "last_message": text,
-                            "operation": context.operation,
-                        },
-                    )
-                    store.append_log_excerpt(job_id, text)
+                    job["last_message"] = text
+                    job["logs"] = (job.get("logs", []) + [text])[-40:]
         code = await proc.wait()
         result = "✅ Xong" if code == 0 else f"❌ Lỗi exit {code}"
-        terminal_status = "success" if code == 0 else "error"
-        _cache_job_status(job_id, {"exit_code": code, "operation": context.operation})
-        terminal_message = result if code == 0 else (job.get("last_message") or result)
+        job["status"] = "success" if code == 0 else "error"
+        job["exit_code"] = code
+        job["last_message"] = result if code == 0 else (job.get("last_message") or result)
         broadcast(f"[ETSY-UPDATE] {result}: {folder} → {listing_id}")
     except asyncio.CancelledError:
-        terminal_status = "cancelled"
-        terminal_message = "Đã hủy cập nhật"
+        job["status"] = "cancelled"
+        job["last_message"] = "Đã hủy cập nhật"
         broadcast(f"[ETSY-UPDATE] ⚠️ Hủy: {folder} → {listing_id}")
         raise
     except Exception as exc:
-        terminal_status = "error"
-        terminal_message = str(exc)
+        job["status"] = "error"
+        job["last_message"] = str(exc)
         broadcast(f"[ETSY-UPDATE] ❌ {folder}: {exc}")
     finally:
+        job["finished_at"] = time.time()
         await _terminate_subprocess(proc)
-        _pop_background_task(runtime_key)
-        _running_processes.pop(runtime_key, None)
-        terminal_status = terminal_status or "error"
-        if terminal_status == "success":
-            store.mark_succeeded(job_id, exit_code=0 if proc is None else proc.returncode or 0, log_excerpt=terminal_message or "")
-        elif terminal_status == "cancelled":
-            store.cancel_job(job_id)
-            _cache_job_status(job_id, {"operation": context.operation, "status": "cancelled", "finished_at": time.time(), "last_message": terminal_message or ""})
-        else:
-            store.mark_failed(job_id, exit_code=(proc.returncode if proc is not None else None) or 1, log_excerpt=terminal_message or "")
-        _cache_job_status(
-            job_id,
-            {
-                "operation": context.operation,
-                "status": terminal_status,
-                "finished_at": time.time(),
-                "last_message": terminal_message or "",
-            },
-        )
+        _pop_background_task(folder)
+        _running_processes.pop(folder, None)
 
-async def _run_poster(row: int, folder: str, shop_id: str, lock_key: str | None = None):
-    if lock_key is None:
-        lock_key = _etsy_post_lock_key(shop_id)
+async def _run_poster(row: int, folder: str, shop_id: str):
     proc: asyncio.subprocess.Process | None = None
     env = {**__import__('os').environ, "PYTHONUNBUFFERED": "1"}
     try:
@@ -6437,7 +3118,6 @@ async def _run_poster(row: int, folder: str, shop_id: str, lock_key: str | None 
             *cmd, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT, cwd=str(BASE_DIR), env=env)
         _running_processes[folder] = proc
-        _running_processes[lock_key] = proc
         if proc.stdout:
             async for line in proc.stdout:
                 text = line.decode("utf-8", errors="replace").rstrip()
@@ -6449,24 +3129,17 @@ async def _run_poster(row: int, folder: str, shop_id: str, lock_key: str | None 
         broadcast(f"[POSTER] ❌ {e}")
     finally:
         await _terminate_subprocess(proc)
-        _running_processes.pop(lock_key, None)
         _running_processes.pop(folder, None)
         _pop_background_task(folder)
-        _pop_background_task(lock_key)
 
 # ── API: Run ALL pending — 1 Chrome duy nhất, tuần tự ────────────────────────────
 @app.post("/api/run-all-pending")
 async def run_all_pending():
-    shop_id = _active_shop_id
-    if _is_poster_locked_for_shop(shop_id):
+    if "__BATCH__" in _running_processes or "__BATCH__" in _running_tasks:
         return JSONResponse({"ok": False, "error": "Batch đang chạy rồi — chờ xong mới chạy tiếp"}, status_code=409)
-    lock_key = _acquire_poster_lock(shop_id)
-    try:
-        task = asyncio.create_task(_run_batch_poster(shop_id, lock_key=lock_key))
-    except Exception:
-        _release_poster_lock(shop_id)
-        raise
-    _register_background_task(lock_key, task)
+    shop_id = _active_shop_id
+    task = asyncio.create_task(_run_batch_poster(shop_id))
+    _register_background_task("__BATCH__", task)
     return {"ok": True, "message": "Đã khởi động batch poster (1 Chrome)"}
 
 # Noise patterns to filter from live logs
@@ -6475,7 +3148,7 @@ _LOG_NOISE = (
     "LibreSSL", "site-packages/urllib",
 )
 
-async def _run_batch_poster(shop_id: str, lock_key: str):
+async def _run_batch_poster(shop_id: str):
     proc: asyncio.subprocess.Process | None = None
     env = {**__import__('os').environ, "PYTHONUNBUFFERED": "1"}
     try:
@@ -6492,7 +3165,7 @@ async def _run_batch_poster(shop_id: str, lock_key: str):
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT, cwd=str(BASE_DIR), env=env)
-        _running_processes[lock_key] = proc
+        _running_processes["__BATCH__"] = proc
         if proc.stdout:
             async for line in proc.stdout:
                 text = line.decode("utf-8", errors="replace").rstrip()
@@ -6504,55 +3177,16 @@ async def _run_batch_poster(shop_id: str, lock_key: str):
         broadcast(f"[BATCH] ❌ {e}")
     finally:
         await _terminate_subprocess(proc)
-        _running_processes.pop(lock_key, None)
-        _pop_background_task(lock_key)
-
-
-async def _run_selected_poster(shop_id: str, items: list[tuple[int, str]], lock_key: str):
-    cmd = [PYTHON_BIN, "-u", ETSY_POSTER, "--shop", shop_id]
-    for row, folder in items:
-        cmd.extend(["--selected-product", f"{row}:{folder}"])
-
-    proc: asyncio.subprocess.Process | None = None
-    env = {**__import__('os').environ, "PYTHONUNBUFFERED": "1"}
-    try:
-        preflight_ok, preflight_msg = await _runtime_prefetch_import_check(
-            PYTHON_BIN,
-            "[BATCH]",
-            _RUNTIME_PRECHECK_MODULES_POSTER,
-        )
-        if not preflight_ok:
-            broadcast(f"[BATCH] ❌ {preflight_msg}")
-            return
-        broadcast("[BATCH] 🚀 Khởi động đăng hàng loạt local đã chọn — 1 Chrome, xử lý tuần tự...")
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT, cwd=str(BASE_DIR), env=env)
-        _running_processes[lock_key] = proc
-        if proc.stdout:
-            async for line in proc.stdout:
-                text = line.decode("utf-8", errors="replace").rstrip()
-                if text and not any(n in text for n in _LOG_NOISE):
-                    broadcast(f"[BATCH] {text}")
-        code = await proc.wait()
-        broadcast(f"[BATCH] {'✅ Hoàn tất hàng loạt đã chọn!' if code == 0 else f'❌ Lỗi exit {code}'}")
-    except Exception as e:
-        broadcast(f"[BATCH] ❌ {e}")
-    finally:
-        await _terminate_subprocess(proc)
-        _running_processes.pop(lock_key, None)
-        _pop_background_task(lock_key)
+        _running_processes.pop("__BATCH__", None)
+        _pop_background_task("__BATCH__")
 
 # ── API: Stop all running posters ────────────────────────────────────────────────
 @app.post("/api/stop-all")
 async def stop_all():
     killed = []
     cancelled = []
-    store = _get_job_store()
     process_cleanup = []
     for key, proc in list(_running_processes.items()):
-        if proc is None:
-            continue
         try:
             proc.kill()
             killed.append(key)
@@ -6569,36 +3203,6 @@ async def stop_all():
         await asyncio.gather(*process_cleanup, return_exceptions=True)
     if cancelled:
         await asyncio.gather(*[_running_tasks[k] for k in cancelled if k in _running_tasks], return_exceptions=True)
-    for job in store.list_jobs(status={JOB_STATUS_QUEUED, JOB_STATUS_RUNNING}):
-        job_id = str(job.get("job_id") or "")
-        if not job_id:
-            continue
-        store.cancel_job(job_id)
-        _cache_job_status(
-            job_id,
-            {
-                "status": "cancelled",
-                "finished_at": time.time(),
-                "last_message": "Đã hủy bởi stop-all",
-            },
-        )
-    # A scheduled cloud upload is an external write too.  Clear both legacy
-    # per-shop workers and the unified-queue cards before returning success, so
-    # no command accepted before Stop all can begin afterwards.
-    cloud_workers = list(_CLOUD_ASSET_UPLOAD_WORKERS.values())
-    for worker in cloud_workers:
-        if not worker.done():
-            worker.cancel()
-    if cloud_workers:
-        await asyncio.gather(*cloud_workers, return_exceptions=True)
-    async with _CLOUD_ASSET_UPLOAD_QUEUE_GUARD:
-        _CLOUD_ASSET_UPLOAD_WORKERS.clear()
-        _CLOUD_ASSET_UPLOAD_QUEUE_BY_SHOP.clear()
-        _CLOUD_ASSET_UPLOAD_SCHEDULES.clear()
-    async with _OPERATION_QUEUE_GUARD:
-        for command in _OPERATION_QUEUE_COMMANDS.values():
-            if command.get("status") == "queued":
-                command.update({"status": "cancelled", "finished_at": time.time(), "updated_at": time.time()})
     _running_tasks.clear()
     _running_processes.clear()
     broadcast(f"[DASH] 🛑 Đã dừng {len(killed)} tiến trình, hủy {len(cancelled)} nhiệm vụ nền")
@@ -6663,10 +3267,41 @@ async def regen_seo(row: int, request: Request):
         return {"ok": True, "seo": result}
     return JSONResponse({"ok": False, "error": "Vertex AI không phản hồi"}, 500)
 
-async def _run_seo(p: dict, extra_hint: str = "", field: str = "all"):
+def _seo_context_from_payload(p: dict) -> tuple[str, Path, dict]:
+    shop_id = _resolve_shop_id(p.get("_shop_id") or _active_shop_id)
+    shop_dir_raw = p.get("_shop_dir")
+    if isinstance(shop_dir_raw, Path):
+        shop_dir = shop_dir_raw
+    elif isinstance(shop_dir_raw, str) and shop_dir_raw:
+        shop_dir = Path(shop_dir_raw)
+    else:
+        shop_dir = SHOP_DIR()
+
+    shop_config = p.get("_shop_config")
+    if not isinstance(shop_config, dict):
+        shop_config = get_active_shop()
+    return shop_id, shop_dir, shop_config
+
+
+async def _run_seo(
+    p: dict,
+    extra_hint: str = "",
+    field: str = "all",
+    *,
+    shop_id: Optional[str] = None,
+    shop_dir: Optional[Path] = None,
+    shop_config: Optional[dict] = None,
+):
     folder = p["folder"]
     title  = p["title"] or folder
-    asset_context = _build_seo_asset_context(p)
+    seo_shop_id, seo_shop_dir, seo_shop_config = _seo_context_from_payload(p)
+    if shop_id is not None:
+        seo_shop_id = shop_id
+    if shop_dir is not None:
+        seo_shop_dir = shop_dir
+    if shop_config is not None:
+        seo_shop_config = shop_config
+    asset_context = _build_seo_asset_context(p, shop_dir=seo_shop_dir)
 
     def smart_trim(raw: str, max_len: int = 140) -> str:
         if len(raw) <= max_len:
@@ -6682,11 +3317,10 @@ async def _run_seo(p: dict, extra_hint: str = "", field: str = "all"):
         return result
 
     try:
-        captured_shop_config = p.get("_shop_config")
-        shop_config = captured_shop_config if isinstance(captured_shop_config, dict) else get_active_shop()
+        shop_config = seo_shop_config or get_active_shop()
         shop_info = shop_config.get("shop_info", "")
         social_links = shop_config.get("social_links", "")
-        etsy_link = shop_config.get("etsy_link", f"https://{shop_config.get('id', 'shop')}.etsy.com")
+        etsy_link = shop_config.get("etsy_link", f"https://{shop_config.get('id', seo_shop_id or 'shop')}.etsy.com")
 
         shop_context_str = f"SHOP INFO: {shop_info}\n" if shop_info else ""
 
@@ -6757,7 +3391,7 @@ STRICT RULES:
 
 	PRODUCT CONTEXT FROM LOCAL ASSETS:
 	{asset_context}
-
+	
 	CURRENT TITLE FROM FORM / EXCEL: {title}
 	KEYWORDS TO TARGET: {p.get('keywords', 'Not provided')}
 USER INSTRUCTIONS / EXTRA INFO: {extra_hint if extra_hint else 'Not provided'}
@@ -6787,7 +3421,7 @@ Whether you're [use case 1], [use case 2], or [use case 3], this [product keywor
 📄 Product Details
 
 	[1-2 sentences describing the product structure, design style, formats, and scope shown by the asset context.]
-
+	
 	Key Features:
 
 [Feature 1 — specific, keyword-rich, based on product type]
@@ -6938,12 +3572,7 @@ If you enjoy using this [product keyword], please consider leaving a review — 
             excel_updates["tags"] = seo_tags
         if field in ("all", "description") and seo_desc:
             excel_updates["description"] = seo_desc
-        captured_excel_file = p.get("_excel_file")
-        save_to_excel(
-            p["row"],
-            excel_updates,
-            excel_path=Path(captured_excel_file) if captured_excel_file else None,
-        )
+        save_to_excel(p["row"], excel_updates)
 
         label = {"title": "Title", "tags": "Tags", "description": "Description"}.get(field, "SEO")
         display_val = seo_title or (seo_desc[:60] if seo_desc else "") or (seo_tags[:60] if seo_tags else "")
@@ -7009,7 +3638,8 @@ async def _run_batch_seo(targets: list):
     try:
         for i, p in enumerate(targets, 1):
             broadcast(f"[BATCH-SEO] [{i}/{len(targets)}] Đang xử lý {p['folder']}...")
-            await _run_seo(p, "")
+            shop_id, shop_dir, shop_config = _seo_context_from_payload(p)
+            await _run_seo(p, "", shop_id=shop_id, shop_dir=shop_dir, shop_config=shop_config)
             await asyncio.sleep(2)  # throttle to avoid Vertex overload
         broadcast(f"[BATCH-SEO] ✅ Hoàn thành {len(targets)} sản phẩm!")
     finally:
@@ -7067,17 +3697,15 @@ async def get_social_posts(row: int):
     twitter_post = f"🆕 {short_title} — instant digital download! ✨\n\n🛒 {etsy_url}\n\n#printable #digitaldownload #etsyshop"
     twitter_post = twitter_post[:280]
 
-    # Medium research note / how-to article
-    medium_intro = make_medium_research_article(title, desc, tags, etsy_url)
+    # Medium
+    keywords_prose = ", ".join(tag_list[:5])
+    medium_intro = f"# {title}\n\n{desc}\n\n---\n\n## Get It Now\n\nThis is an **instant digital download** — you'll receive the file immediately after purchase. No waiting, no shipping.\n\n👉 **[Get it on Etsy]({etsy_url})**\n\n---\n\n*Tags: {keywords_prose}*"
 
     return {
         "ok": True,
         "folder": folder,
         "title": title,
         "etsy_url": etsy_url,
-        "social_statuses": get_product_social_statuses(
-            BASE_DIR, _active_shop_id, str(folder), row
-        ),
         "posts": {
             "instagram": ig_caption,
             "pinterest": pinterest_desc,
@@ -7088,88 +3716,33 @@ async def get_social_posts(row: int):
     }
 
 
-def _social_session_payload(shop_id: str) -> dict:
-    session = resolve_social_session(BASE_DIR, SHOPS, shop_id)
-    return {
-        "shop_id": shop_id,
-        "shop_name": SHOPS.get(shop_id, {}).get("name", shop_id),
-        "profile_dir": str(session.profile_dir),
-        "debug_port": session.debug_port,
-        "browser_ready": is_session_ready(session),
-        "authentication": "unknown",
-        "platforms": SOCIAL_URLS,
-    }
-
-
-@app.get("/api/social/session")
-async def get_social_session():
-    return {"ok": True, "session": _social_session_payload(_active_shop_id)}
-
-
-@app.post("/api/social/session/open")
-async def open_social_session(request: Request):
-    shop_id = _active_shop_id
-    body = await request.json()
-    platform = str(body.get("platform", "")).lower()
-    if platform not in SOCIAL_URLS:
-        return JSONResponse(
-            {"ok": False, "error": "Nền tảng social không được hỗ trợ"},
-            status_code=400,
-        )
-    session = resolve_social_session(BASE_DIR, SHOPS, shop_id)
-    try:
-        ready = await asyncio.to_thread(open_social_browser, session, platform)
-    except (FileNotFoundError, OSError, ValueError) as exc:
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
-    if not ready:
-        return JSONResponse(
-            {
-                "ok": False,
-                "error": "Chrome social không mở được tab trong đúng session của shop",
-            },
-            status_code=503,
-        )
-    payload = _social_session_payload(shop_id)
-    payload["browser_ready"] = ready
-    payload["opened_platform"] = platform
-    return {
-        "ok": True,
-        "session": payload,
-        "message": (
-            f"Đã mở {platform.upper()} bằng session riêng của shop {shop_id}. "
-            "Trạng thái đăng nhập chưa được xác nhận."
-        ),
-    }
-
-
 @app.post("/api/products/{row}/post-social")
 async def post_to_social(row: int, request: Request):
-    shop_id = _active_shop_id
     p = get_product_by_row(row)
     if not p:
         raise HTTPException(404, "Không tìm thấy sản phẩm")
 
     body = await request.json()
     platform = body.get("platform")
-    if platform not in SOCIAL_URLS:
+    if not platform:
         return JSONResponse({"ok": False, "error": "Thiếu nền tảng (platform)"}, status_code=400)
 
     folder = p["folder"]
-    process_key = f"social_{shop_id}_{folder}_{platform}"
+    process_key = f"social_{folder}_{platform}"
     if process_key in _running_processes:
         return JSONResponse({"ok": False, "error": f"Tiến trình đăng {platform.upper()} đang chạy rồi!"}, status_code=409)
 
-    asyncio.create_task(_run_social_poster(shop_id, row, folder, platform))
+    asyncio.create_task(_run_social_poster(row, folder, platform))
     return {"ok": True, "message": f"Đang khởi động auto-post lên {platform.upper()}"}
 
-async def _run_social_poster(shop_id: str, row: int, folder: str, platform: str):
-    process_key = f"social_{shop_id}_{folder}_{platform}"
+async def _run_social_poster(row: int, folder: str, platform: str):
+    process_key = f"social_{folder}_{platform}"
     env = {**__import__('os').environ, "PYTHONUNBUFFERED": "1"}
 
     script_path = str(BASE_DIR / "social_auto_post.py")
-    cmd = [PYTHON_BIN, "-u", script_path, "--row", str(row), "--platform", platform, "--shop", shop_id]
+    cmd = [PYTHON_BIN, "-u", script_path, "--row", str(row), "--platform", platform, "--shop", _active_shop_id]
 
-    broadcast(f"[SOCIAL] 🚀 [{shop_id}] Bắt đầu đăng lên {platform.upper()}: {folder}")
+    broadcast(f"[SOCIAL] 🚀 Bắt đầu đăng lên {platform.upper()}: {folder}")
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE,
@@ -7188,124 +3761,40 @@ async def _run_social_poster(shop_id: str, row: int, folder: str, platform: str)
         _running_processes.pop(process_key, None)
 
 
-@app.post("/api/products/{row}/post-social-all")
-async def post_to_all_social(row: int):
-    """Post one product to ALL social platforms sequentially."""
-    shop_id = _active_shop_id
-    p = get_product_by_row(row)
-    if not p:
-        raise HTTPException(404, "Không tìm thấy sản phẩm")
-
-    folder = p["folder"]
-    process_key = f"social_all_{shop_id}_{folder}"
-    if process_key in _running_processes:
-        return JSONResponse(
-            {"ok": False, "error": "Tiến trình đăng tất cả nền tảng đang chạy rồi!"},
-            status_code=409,
-        )
-
-    # Also check if any individual platform poster is running for this product
-    for platform in SOCIAL_URLS:
-        individual_key = f"social_{shop_id}_{folder}_{platform}"
-        if individual_key in _running_processes:
-            return JSONResponse(
-                {"ok": False, "error": f"Tiến trình đăng {platform.upper()} đang chạy cho sản phẩm này. Vui lòng đợi hoàn tất."},
-                status_code=409,
-            )
-
-    asyncio.create_task(_run_social_poster_all(shop_id, row, folder))
-    return {"ok": True, "message": f"Đang khởi động auto-post lên TẤT CẢ nền tảng cho {folder}"}
-
-
-async def _run_social_poster_all(shop_id: str, row: int, folder: str):
-    """Post one product to all social platforms sequentially."""
-    process_key = f"social_all_{shop_id}_{folder}"
-    env = {**__import__('os').environ, "PYTHONUNBUFFERED": "1"}
-
-    script_path = str(BASE_DIR / "social_auto_post.py")
-    platforms = list(SOCIAL_URLS.keys())
-    total = len(platforms)
-    success_count = 0
-    fail_count = 0
-
-    broadcast(f"[SOCIAL] 🚀 [{shop_id}] BẮT ĐẦU ĐĂNG LÊN TẤT CẢ {total} NỀN TẢNG: {folder}")
-
-    try:
-        for i, platform in enumerate(platforms, 1):
-            broadcast(f"[SOCIAL] 📢 [{i}/{total}] Đang đăng lên {platform.upper()}...")
-            cmd = [PYTHON_BIN, "-u", script_path, "--row", str(row), "--platform", platform, "--shop", shop_id]
-
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    *cmd, stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.STDOUT, cwd=str(BASE_DIR), env=env)
-                # Track under individual key too so stop-all can find it
-                individual_key = f"social_{shop_id}_{folder}_{platform}"
-                _running_processes[individual_key] = proc
-                if proc.stdout:
-                    async for line in proc.stdout:
-                        text = line.decode("utf-8", errors="replace").rstrip()
-                        if text:
-                            broadcast(f"[SOCIAL] {text}")
-                code = await proc.wait()
-                if code == 0:
-                    success_count += 1
-                    broadcast(f"[SOCIAL] ✅ [{i}/{total}] Đăng xong {platform.upper()} - {folder}")
-                else:
-                    fail_count += 1
-                    broadcast(f"[SOCIAL] ❌ [{i}/{total}] Lỗi đăng {platform.upper()} (exit {code}) - {folder}")
-                _running_processes.pop(individual_key, None)
-            except Exception as e:
-                fail_count += 1
-                broadcast(f"[SOCIAL] ❌ [{i}/{total}] Lỗi đăng {platform.upper()}: {e}")
-                _running_processes.pop(f"social_{shop_id}_{folder}_{platform}", None)
-
-        broadcast(
-            f"[SOCIAL] {'🎉' if fail_count == 0 else '⚠️'} HOÀN TẤT đăng tất cả nền tảng cho {folder}: "
-            f"✅ {success_count}/{total} thành công"
-            + (f", ❌ {fail_count} lỗi" if fail_count else "")
-        )
-    except Exception as e:
-        broadcast(f"[SOCIAL] ❌ Lỗi đăng tất cả nền tảng: {e}")
-    finally:
-        _running_processes.pop(process_key, None)
-
-
 @app.post("/api/social/bulk-post")
 async def bulk_post_social(request: Request):
-    shop_id = _active_shop_id
     body = await request.json()
     platform = body.get("platform")
     start_row = body.get("start")
     end_row = body.get("end")
     delay = body.get("delay", 180)
 
-    if platform not in {"instagram", "pinterest", "facebook", "twitter", "medium"} or not start_row or not end_row:
+    if not platform or not start_row or not end_row:
         return JSONResponse({"ok": False, "error": "Thiếu dữ liệu (platform, start, end)"}, status_code=400)
 
-    process_key = f"social_bulk_{shop_id}_{platform}"
+    process_key = "social_bulk"
     if process_key in _running_processes:
         return JSONResponse({"ok": False, "error": "Tiến trình đăng hàng loạt đang chạy rồi!"}, status_code=409)
 
-    asyncio.create_task(_run_social_bulk_poster(shop_id, start_row, end_row, platform, delay))
+    asyncio.create_task(_run_social_bulk_poster(start_row, end_row, platform, delay))
     return {"ok": True, "message": f"Đang khởi động auto-post hàng loạt lên {platform.upper()}"}
 
 
-async def _run_social_bulk_poster(shop_id: str, start_row: int, end_row: int, platform: str, delay: int):
-    process_key = f"social_bulk_{shop_id}_{platform}"
+async def _run_social_bulk_poster(start_row: int, end_row: int, platform: str, delay: int):
+    process_key = "social_bulk"
     env = {**__import__('os').environ, "PYTHONUNBUFFERED": "1"}
 
     script_path = str(BASE_DIR / "social_bulk_post.py")
     cmd = [
         PYTHON_BIN, "-u", script_path,
-        "--shop", shop_id,
+        "--shop", _active_shop_id,
         "--platform", platform,
         "--start", str(start_row),
         "--end", str(end_row),
         "--delay", str(delay)
     ]
 
-    broadcast(f"[SOCIAL] 🚀 [{shop_id}] BẮT ĐẦU ĐĂNG HÀNG LOẠT LÊN {platform.upper()} (Dòng {start_row} ➔ {end_row})")
+    broadcast(f"[SOCIAL] 🚀 BẮT ĐẦU ĐĂNG HÀNG LOẠT LÊN {platform.upper()} (Dòng {start_row} ➔ {end_row})")
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE,
@@ -7708,96 +4197,75 @@ async def api_clean_duplicates():
 
 
 # ── API: Import from Image Factory ──────────────────────────────────────────────
-# Image Factory intake and catalog state always belong to the active shop.  This
-# prevents a shop from scanning or importing another shop's source folders.
-
-_FACTORY_SOURCE_EXCLUDE_DIRS = {
+# Image Factory products are promoted into this canonical, shop-neutral source.
+# Each shop then receives its own derived copy (including its watermark).
+FACTORY_SHOP_ID = "templystudios"
+IMAGE_FACTORY_OUTPUT = BASE_DIR / "shops" / FACTORY_SHOP_ID
+FACTORY_IMAGE_LAYOUT_DIR = "etsy-images-chatgpt-final"
+FACTORY_DOWNLOAD_LAYOUT_DIR = "source-zip"
+FACTORY_EXCLUDED_SOURCE_NAMES = {
     "_deleted_products",
     "_asset_quarantine",
     "_failed_local_imports",
     "master_products",
 }
+_FACTORY_SOURCE_FOLDER_RE = re.compile(r"^product-(\d+)$")
 
-_FACTORY_IMAGE_DIR_NAME = "etsy-images-chatgpt-final"
-_FACTORY_ZIP_DIR_NAME = "source-zip"
-_FACTORY_PRODUCT_RE = re.compile(r"^product-\d+$")
 
-def _factory_shop_active() -> bool:
-    return bool(_active_shop_id) and _active_shop_id in SHOPS
-
-def _factory_shop_dir() -> Path:
-    return SHOP_DIR()
-
-def _factory_excel_file() -> Path:
-    return _factory_shop_dir() / "Etsy_SEO_Generator.xlsx"
-
-def _is_supported_factory_source(folder: Path) -> bool:
-    """Return True only for a complete direct-child active-shop intake folder."""
-    if folder.is_symlink() or not folder.is_dir():
+def _is_supported_factory_source_root(item: Path) -> bool:
+    """A valid source slug is immediate child folder with exact required layout."""
+    if (
+        not item.is_dir()
+        or item.is_symlink()
+        or item.name.startswith(".")
+        or item.name in FACTORY_EXCLUDED_SOURCE_NAMES
+        or _FACTORY_SOURCE_FOLDER_RE.fullmatch(item.name) is not None
+    ):
         return False
-    if folder.name.startswith(".") or folder.name.startswith("_"):
-        return False
-    if _FACTORY_PRODUCT_RE.fullmatch(folder.name) or folder.name in _FACTORY_SOURCE_EXCLUDE_DIRS:
-        return False
-    image_dir = folder / _FACTORY_IMAGE_DIR_NAME
-    zip_dir = folder / _FACTORY_ZIP_DIR_NAME
-    if image_dir.is_symlink() or zip_dir.is_symlink():
-        return False
-    try:
-        folder_resolved = folder.resolve()
-        return (
-            image_dir.is_dir()
-            and image_dir.resolve().parent == folder_resolved
-            and zip_dir.is_dir()
-            and zip_dir.resolve().parent == folder_resolved
-        )
-    except OSError:
-        return False
+    image_dir = item / FACTORY_IMAGE_LAYOUT_DIR
+    download_dir = item / FACTORY_DOWNLOAD_LAYOUT_DIR
+    return image_dir.is_dir() and download_dir.is_dir()
 
 
-def _factory_asset_is_usable(path: Path, allowed_suffixes: set[str]) -> bool:
-    if path.is_symlink() or not path.is_file() or path.suffix.lower() not in allowed_suffixes:
+def _is_usable_factory_image_file(path: Path) -> bool:
+    if path.is_symlink():
         return False
-    try:
-        stat = path.stat()
-    except OSError:
+    if not path.is_file() or path.name == ".DS_Store":
         return False
-    return stat.st_size > 0 and getattr(stat, "st_blocks", 1) > 0
+    if path.suffix.lower() not in IMG_EXTS:
+        return False
+    return _asset_file_is_usable(path)
 
-def _factory_asset_dir_is_contained(parent: Path) -> bool:
-    if parent.is_symlink() or not parent.is_dir():
-        return False
-    try:
-        return parent.resolve().parent == parent.parent.resolve()
-    except OSError:
-        return False
 
-def _collect_image_nodes(parent: Path) -> list[Path]:
-    if not _factory_asset_dir_is_contained(parent):
-        return []
-    return sorted([
-        item for item in parent.iterdir()
-        if _factory_asset_is_usable(item, IMG_EXTS)
-    ], key=lambda p: (p.name != "01_hero_image.png", p.name.lower()))
-
-def _collect_download_nodes(parent: Path) -> list[Path]:
-    if not _factory_asset_dir_is_contained(parent):
-        return []
-    return sorted([
-        item for item in parent.iterdir()
-        if _factory_asset_is_usable(item, {".zip"})
-    ], key=lambda p: p.name.lower())
+def _is_usable_factory_download_file(path: Path) -> bool:
+    if path.is_symlink():
+        return False
+    if not path.is_file() or path.name == ".DS_Store":
+        return False
+    if path.suffix.lower() != ".zip":
+        return False
+    return _asset_file_is_usable(path)
 
 def _normalize_factory_identity(value: object) -> str:
     text = str(value or "").lower().replace("-", " ").replace("_", " ").strip()
     return re.sub(r"\s+", " ", text)
 
 def _factory_image_files(folder: Path) -> list[Path]:
-    """Return usable preview images from the exact Image Factory image folder."""
-    return _collect_image_nodes(folder / _FACTORY_IMAGE_DIR_NAME)
+    """Return usable Image Factory preview images from strict layout."""
+    images_dir = folder / FACTORY_IMAGE_LAYOUT_DIR
+    if not images_dir.is_dir():
+        return []
+    candidates: list[Path] = [f for f in images_dir.iterdir() if _is_usable_factory_image_file(f)]
+    return sorted(candidates, key=lambda p: (p.name != "01_hero_image.png", p.name.lower()))
 
 def _factory_download_files(folder: Path) -> list[Path]:
-    return _collect_download_nodes(folder / _FACTORY_ZIP_DIR_NAME)
+    files_dir = folder / FACTORY_DOWNLOAD_LAYOUT_DIR
+    if not files_dir.is_dir():
+        return []
+    return sorted([
+        f for f in files_dir.iterdir()
+        if _is_usable_factory_download_file(f)
+    ], key=lambda p: p.name.lower())
 
 def _factory_source_keyword(folder: Path, files: Optional[list[Path]] = None) -> str:
     download_files = files if files is not None else _factory_download_files(folder)
@@ -7822,22 +4290,20 @@ def _factory_shop_import_index(shop_dir: Path, excel_file: Path) -> tuple[dict, 
             ws = wb["Listings"]
             for row_num in range(4, ws.max_row + 1):
                 folder = str(ws.cell(row=row_num, column=2).value or "").strip()
-                keyword = _normalize_factory_identity(ws.cell(row=row_num, column=3).value)
-                if not _FACTORY_PRODUCT_RE.fullmatch(folder):
+                if _FACTORY_SOURCE_FOLDER_RE.fullmatch(folder) is None:
                     continue
                 product_dir = shop_dir / folder
-                try:
-                    if (
-                        product_dir.is_symlink()
-                        or not product_dir.is_dir()
-                        or product_dir.resolve().parent != shop_dir.resolve()
-                    ):
-                        continue
-                except OSError:
+                if (
+                    not product_dir.is_dir()
+                    or product_dir.is_symlink()
+                    or product_dir.resolve().parent != shop_dir.resolve()
+                ):
                     continue
-                folder_rows[folder] = row_num
-                if keyword:
-                    keyword_targets[keyword] = (folder, row_num)
+                keyword = _normalize_factory_identity(ws.cell(row=row_num, column=3).value)
+                if folder:
+                    folder_rows[folder] = row_num
+                    if keyword:
+                        keyword_targets[keyword] = (folder, row_num)
             wb.close()
         except (OSError, KeyError, ValueError):
             pass
@@ -7846,24 +4312,23 @@ def _factory_shop_import_index(shop_dir: Path, excel_file: Path) -> tuple[dict, 
     if shop_dir.exists():
         try:
             for product_dir in shop_dir.iterdir():
+                if (
+                    _FACTORY_SOURCE_FOLDER_RE.fullmatch(product_dir.name) is None
+                    or not product_dir.is_dir()
+                    or product_dir.is_symlink()
+                    or product_dir.resolve().parent != shop_dir.resolve()
+                ):
+                    continue
                 files_dir = product_dir / "files"
                 # Only catalog-backed folders belong to the active shop's
                 # imported state. Quarantine/orphan folders must not hide a
                 # source product from the importer.
-                if (
-                    product_dir.name not in folder_rows
-                    or not _FACTORY_PRODUCT_RE.fullmatch(product_dir.name)
-                    or product_dir.is_symlink()
-                    or not product_dir.is_dir()
-                    or not files_dir.is_dir()
-                    or files_dir.is_symlink()
-                    or files_dir.resolve().parent != product_dir.resolve()
-                ):
+                if product_dir.name not in folder_rows or not files_dir.is_dir():
                     continue
                 names = frozenset(
                     source_file.name.casefold()
                     for source_file in files_dir.iterdir()
-                    if _factory_asset_is_usable(source_file, {".zip", ".pdf", ".001", ".002", ".003", ".004", ".005"})
+                    if _is_usable_factory_download_file(source_file)
                 )
                 if names:
                     file_targets.setdefault(names, product_dir.name)
@@ -7896,25 +4361,17 @@ def _scan_factory_folders(source_dir: Path, shop_dir: Path, excel_file: Path) ->
     keyword_targets, file_targets, folder_rows = _factory_shop_import_index(shop_dir, excel_file)
     folders = []
     for item in sorted(source_dir.iterdir(), key=lambda p: p.name.lower()):
-        try:
-            if item.is_symlink() or item.resolve().parent != source_dir.resolve():
-                continue
-        except OSError:
-            continue
-        if not _is_supported_factory_source(item):
+        if not _is_supported_factory_source_root(item):
             continue
 
         images_in_folder = _factory_image_files(item)
         files_in_folder = _factory_download_files(item)
-        # Incomplete intake folders are not importable products.
+        # Empty staging placeholders are not products and should not appear.
         if not images_in_folder or not files_in_folder:
             continue
 
         thumb_url = None
         if images_in_folder:
-            # The thumbnail endpoint serves only a direct basename from the
-            # exact image directory; do not expose the internal subdirectory
-            # name in the URL.
             rel_thumb = images_in_folder[0].name
             thumb_url = (
                 f"/api/image-factory/thumb/"
@@ -7937,45 +4394,17 @@ def _scan_factory_folders(source_dir: Path, shop_dir: Path, excel_file: Path) ->
         })
     return folders
 
-
-def _factory_scan_summary(source_dir: Path, folders: list[dict]) -> dict[str, int]:
-    """Return aggregate-only scan context without exposing excluded paths.
-
-    ``product-NN`` directories are the local catalog targets created by import,
-    not Image Factory intake sources.  The UI needs their count to explain why
-    they are absent, but must never receive their names or make them importable.
-    """
-    excluded_product_folder_count = 0
-    try:
-        source_root = source_dir.resolve()
-        for item in source_dir.iterdir():
-            if item.is_symlink() or not item.is_dir() or not _FACTORY_PRODUCT_RE.fullmatch(item.name):
-                continue
-            try:
-                if item.resolve().parent == source_root:
-                    excluded_product_folder_count += 1
-            except OSError:
-                continue
-    except OSError:
-        pass
-    return {
-        "eligible_intake_folders": len(folders),
-        "excluded_catalog_product_folders": excluded_product_folder_count,
-    }
-
 def _resolve_factory_source_folder(folder_name: object) -> Optional[Path]:
     if not isinstance(folder_name, str) or not folder_name or Path(folder_name).name != folder_name:
         return None
-    shop_dir = _factory_shop_dir()
-    candidate = shop_dir / folder_name
+    candidate = IMAGE_FACTORY_OUTPUT / folder_name
     try:
-        if candidate.is_symlink() or not candidate.is_dir():
-            return None
-        if candidate.resolve().parent != shop_dir.resolve():
-            return None
-        if not _is_supported_factory_source(candidate):
-            return None
-        if not _factory_image_files(candidate) or not _factory_download_files(candidate):
+        if (
+            candidate.resolve().parent != IMAGE_FACTORY_OUTPUT.resolve()
+            or not candidate.is_dir()
+            or candidate.is_symlink()
+            or not _is_supported_factory_source_root(candidate)
+        ):
             return None
     except OSError:
         return None
@@ -7987,51 +4416,49 @@ async def scan_image_factory():
     Scan canonical Image Factory products for the active shop and include both
     imported and not-yet-imported products for filtering in the UI.
     """
-    if not _factory_shop_active():
-        return {
+    if _active_shop_id != FACTORY_SHOP_ID:
+        return JSONResponse({
             "ok": False,
-            "error": "Image Factory cần một active shop hợp lệ.",
-            "factory_path": str(_factory_shop_dir()),
+            "error": "Image Factory scan is only available for Temply Studio",
             "shop_id": _active_shop_id,
-            "shop_name": _active_shop_id,
-        }
-    shop_dir = _factory_shop_dir()
-    if not shop_dir.exists():
-        return {"ok": False, "error": f"Image Factory output not found: {shop_dir}", "folders": []}
+        }, status_code=409)
+
+    if not IMAGE_FACTORY_OUTPUT.exists():
+        return {"ok": False, "error": f"Image Factory output not found: {IMAGE_FACTORY_OUTPUT}", "folders": []}
+
+    shop_dir = BASE_DIR / "shops" / FACTORY_SHOP_ID
+    excel_file = shop_dir / "Etsy_SEO_Generator.xlsx"
 
     try:
-        folders = _scan_factory_folders(shop_dir, shop_dir, _factory_excel_file())
+        folders = _scan_factory_folders(IMAGE_FACTORY_OUTPUT, shop_dir, excel_file)
     except OSError as exc:
         return {"ok": False, "error": f"Could not scan Image Factory: {exc}", "folders": []}
-    shop = get_active_shop()
     return {
         "ok": True,
         "folders": folders,
-        "scan_summary": _factory_scan_summary(shop_dir, folders),
-        "factory_path": str(shop_dir),
-        "source_label": shop.get("name") or _active_shop_id,
+        "factory_path": str(IMAGE_FACTORY_OUTPUT),
         "shop_id": _active_shop_id,
-        "shop_name": shop.get("name") or _active_shop_id,
     }
 
 
-@app.get("/api/image-factory/thumb/{folder_name}/{filename:path}")
+@app.get("/api/image-factory/thumb/{folder_name}/{filename}")
 async def factory_thumb(folder_name: str, filename: str):
-    """Serve only direct preview images from an active-shop Image Factory source."""
-    if not _factory_shop_active():
-        raise HTTPException(409, "Image Factory cần một active shop hợp lệ.")
+    """Serve thumbnail images from the image factory output folder."""
+    if _active_shop_id != FACTORY_SHOP_ID:
+        raise HTTPException(409, "Image Factory thumbnails are only available for Temply Studio")
     folder = _resolve_factory_source_folder(folder_name)
     if not folder:
         raise HTTPException(404)
-    if not filename or Path(filename).name != filename:
+    if "/" in filename or "\\" in filename or Path(filename).name != filename:
         raise HTTPException(404)
-    image_dir = folder / _FACTORY_IMAGE_DIR_NAME
-    path = image_dir / filename
+    path = folder / filename
     try:
         if (
-            not _factory_asset_is_usable(path, IMG_EXTS)
-            or path.resolve().parent != image_dir.resolve()
+            not _is_usable_factory_image_file(path)
+            or path.parent != folder / FACTORY_IMAGE_LAYOUT_DIR
         ):
+            raise HTTPException(404)
+        if not path.resolve().is_relative_to(IMAGE_FACTORY_OUTPUT.resolve()):
             raise HTTPException(404)
     except OSError:
         raise HTTPException(404)
@@ -8050,25 +4477,41 @@ async def import_from_factory(request: Request):
     """
     import shutil
     data = await request.json()
-    requested_shop_id = str(data.get("shop_id") or "").strip()
     folder_names = data.get("folders", [])   # list of folder names to import
     auto_seo     = data.get("auto_seo", True)
+    request_shop_id = _resolve_shop_id(data.get("shop_id"))
+    if request_shop_id != FACTORY_SHOP_ID:
+        return JSONResponse({
+            "ok": False,
+            "error": "Image Factory import is only allowed for Temply Studio",
+        }, status_code=409)
+    if _active_shop_id != FACTORY_SHOP_ID:
+        return JSONResponse({
+            "ok": False,
+            "error": f"Shop mismatch: active={_active_shop_id}, requested={request_shop_id}",
+            "shop_id": _active_shop_id,
+        }, status_code=409)
 
     if not isinstance(folder_names, list) or not folder_names:
         return {"ok": False, "error": "No folders specified"}
 
-    if requested_shop_id != _active_shop_id or not _factory_shop_active():
-        return {
-            "ok": False,
-            "error": "Image Factory import cần shop_id khớp active shop.",
-        }
-    shop_dir = _factory_shop_dir()
-    if not shop_dir.exists():
-        return {"ok": False, "error": f"Image Factory output not found: {shop_dir}"}
+    if not IMAGE_FACTORY_OUTPUT.exists():
+        return {"ok": False, "error": f"Image Factory output not found: {IMAGE_FACTORY_OUTPUT}"}
 
-    shop_id = _active_shop_id
-    excel_file = _factory_excel_file()
-    shop_config = dict(SHOPS.get(shop_id, {}))
+    shop_id = FACTORY_SHOP_ID
+    shop_dir = BASE_DIR / "shops" / shop_id
+    excel_file = shop_dir / "Etsy_SEO_Generator.xlsx"
+    shop_config = get_active_shop()
+    if request_shop_id != shop_id:
+        return JSONResponse({
+            "ok": False,
+            "error": f"Shop mismatch: payload={request_shop_id}, current active={_active_shop_id}",
+            "shop_id": shop_id,
+        }, status_code=409)
+    if not shop_dir.exists():
+        return JSONResponse({"ok": False, "error": f"Shop directory not found: {shop_dir}"}, status_code=400)
+    if not excel_file.exists():
+        return JSONResponse({"ok": False, "error": f"Shop Excel not found: {excel_file}"}, status_code=400)
 
     # Find next empty Excel row
     wb        = openpyxl.load_workbook(excel_file)
@@ -8093,7 +4536,7 @@ async def import_from_factory(request: Request):
         images = _factory_image_files(src)
         files = _factory_download_files(src)
         if not images or not files:
-            results.append({"folder": factory_folder_name, "ok": False, "error": "Source folder is incomplete"})
+            results.append({"folder": factory_folder_name, "ok": False, "error": "Source folder is empty"})
             continue
 
         existing = _factory_import_match(src, keyword_targets, file_targets, folder_rows)
@@ -8171,8 +4614,9 @@ async def import_from_factory(request: Request):
             "description": "", "tags": "",
             "price":    4.99,
             "section":  "Digital Planner",
-            "_shop_dir": shop_dir,
-            "_excel_file": excel_file,
+            "_shop_id": shop_id,
+            "_shop_dir": str(shop_dir),
+            "_excel_file": str(excel_file),
             "_shop_config": shop_config,
         })
 
@@ -8207,9 +4651,6 @@ async def import_from_factory(request: Request):
     return {
         "ok":      True,
         "imported": len([r for r in results if r.get("ok")]),
-        "skipped": len([r for r in results if r.get("already_imported")]),
-        "failed": len([r for r in results if not r.get("ok") and not r.get("already_imported")]),
-        "shop_id": shop_id,
         "results":  results,
         "auto_seo": auto_seo,
     }
@@ -8219,14 +4660,9 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 @app.get("/")
 async def root():
-    return Response(_dashboard_index_html(), media_type="text/html")
+    return FileResponse(STATIC_DIR / "index.html")
 
 if __name__ == "__main__":
-    startup_guard = runtime_identity.startup_guard_message(BASE_DIR)
-    if startup_guard is not None:
-        raise SystemExit(startup_guard)
-
     import uvicorn
-    listen_host = _dashboard_listen_host()
-    print(f"🚀 Etsy Dashboard → http://{listen_host}:8090")
-    uvicorn.run("dashboard_app:app", host=listen_host, port=8090, reload=False)
+    print("🚀 Etsy Dashboard → http://localhost:8090")
+    uvicorn.run("dashboard_app:app", host="0.0.0.0", port=8090, reload=False)

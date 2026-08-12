@@ -14,8 +14,6 @@ Cách dùng:
     python3 etsy_push_update.py --listing-id 4511156098 --row 117 --shop templystudios \\
         --fields title,description,tags,price,qty,images,files
 """
-from __future__ import annotations
-
 import argparse
 import asyncio
 import json
@@ -38,100 +36,10 @@ def ensure_deps():
         import subprocess
         subprocess.run([sys.executable, "-m", "pip", "install", "playwright", "--quiet"], check=True)
 
-def initialize_push_runtime() -> None:
-    """Install/check runtime dependencies only when the CLI is executed."""
-    ensure_deps()
-
-if __name__ == "__main__":
-    initialize_push_runtime()
+ensure_deps()
 
 import openpyxl
 from playwright.async_api import async_playwright
-from cloud_asset_store import CloudAssetError, CloudAssetStore
-from cloud_asset_store_config import load_config as load_cloud_asset_config
-
-CLOUD_ASSET_STORE: CloudAssetStore | None = None
-
-
-def get_cloud_asset_store() -> CloudAssetStore:
-    global CLOUD_ASSET_STORE
-    if CLOUD_ASSET_STORE is None:
-        config = load_cloud_asset_config(BASE_DIR)
-        CLOUD_ASSET_STORE = CloudAssetStore(
-            repo_root=config.repo_root,
-            remote=config.remote,
-            parent_id=config.parent_id,
-            rclone_bin=config.rclone_bin,
-            cache_root=config.cache_root,
-            lock_timeout_seconds=config.lock_timeout_seconds,
-            success_ttl_seconds=config.success_ttl_seconds,
-            failure_ttl_seconds=config.failure_ttl_seconds,
-            offload_age_days=config.offload_age_days,
-        )
-    return CLOUD_ASSET_STORE
-
-
-def resolve_product_asset_paths(
-    product: dict,
-    shop_id: str,
-    store: CloudAssetStore | None = None,
-) -> dict:
-    """Resolve verified local/cache paths before any Etsy editor navigation."""
-
-    folder = str(product.get("folder") or "").strip()
-    if not re.fullmatch(r"product-\d+", folder):
-        raise RuntimeError(f"Product folder không hợp lệ: {folder}")
-    product_root = BASE_DIR / "shops" / str(shop_id).strip() / folder
-    if not product_root.is_dir() or product_root.is_symlink():
-        raise RuntimeError(f"Không tìm thấy product folder an toàn: {product_root}")
-    asset_store = store or get_cloud_asset_store()
-    try:
-        resolution = asset_store.resolve_asset_root(product_root)
-    except (CloudAssetError, OSError, ValueError, TypeError, KeyError) as exc:
-        raise RuntimeError(f"Không hydrate được asset {shop_id}/{folder}: {exc}") from exc
-
-    if not isinstance(resolution, dict):
-        raise RuntimeError(f"Asset resolver trả về kết quả không hợp lệ cho {shop_id}/{folder}")
-    source = str(resolution.get("source") or "")
-    if source not in {"local", "cloud-cache"}:
-        raise RuntimeError(f"Asset resolver không xác nhận được nguồn cho {shop_id}/{folder}")
-    asset_root = Path(str(resolution.get("asset_root") or product_root))
-    if asset_root.is_symlink() or not asset_root.is_dir():
-        raise RuntimeError(f"Asset root không an toàn cho {shop_id}/{folder}: {asset_root}")
-    allowed_root = product_root if source == "local" else asset_root
-
-    def verified_paths(raw_paths, allowed_suffixes: set[str]) -> list[str]:
-        if not isinstance(raw_paths, (list, tuple)):
-            raise RuntimeError(f"Danh sách asset không hợp lệ cho {shop_id}/{folder}")
-        verified = []
-        for raw_path in raw_paths:
-            path = Path(str(raw_path))
-            if path.is_symlink() or not path.is_file():
-                raise RuntimeError(f"Asset path không tồn tại/an toàn cho {shop_id}/{folder}: {path}")
-            try:
-                path.absolute().relative_to(allowed_root.absolute())
-            except ValueError as exc:
-                raise RuntimeError(f"Asset path nằm ngoài vùng đã xác minh: {path}") from exc
-            if path.suffix.lower() in allowed_suffixes:
-                verified.append(str(path))
-        return sorted(verified)
-
-    product["image_paths"] = verified_paths(resolution.get("image_paths", []), IMG_EXTS)
-    product["file_paths"] = verified_paths(resolution.get("file_paths", []), FILE_EXTS)
-    product["asset_root"] = str(asset_root)
-    product["_cloud_asset_resolution"] = resolution
-    product["shop_id"] = str(shop_id)
-    return resolution
-
-
-def mark_product_asset_operation_success(
-    product: dict,
-    store: CloudAssetStore | None = None,
-) -> dict:
-    resolution = product.get("_cloud_asset_resolution")
-    if not resolution:
-        return {"ok": True, "marked": False}
-    return (store or get_cloud_asset_store()).mark_hydration_cleanup_eligible(resolution)
 
 
 # ── Logging ────────────────────────────────────────────────────────────────────
@@ -238,11 +146,7 @@ def trim_title(title: str, max_len: int = 140) -> str:
     return cut
 
 
-def read_product_from_excel(
-    row: int,
-    shop_id: str,
-    store: CloudAssetStore | None = None,
-) -> dict:
+def read_product_from_excel(row: int, shop_id: str) -> dict:
     excel_file = BASE_DIR / "shops" / shop_id / "Etsy_SEO_Generator.xlsx"
     wb = openpyxl.load_workbook(excel_file, data_only=True)
     ws = wb["Listings"]
@@ -250,10 +154,20 @@ def read_product_from_excel(
 
     folder = str(c(2) or "")
     shop_dir = BASE_DIR / "shops" / shop_id / folder
-    asset_product = {"folder": folder}
-    resolve_product_asset_paths(asset_product, shop_id, store=store)
-    image_paths = list(asset_product.get("image_paths") or [])
-    file_paths = list(asset_product.get("file_paths") or [])
+
+    # Collect local images sorted by name
+    img_dir = shop_dir / "images"
+    image_paths = sorted(
+        [str(p) for p in img_dir.iterdir() if p.suffix.lower() in IMG_EXTS],
+        key=lambda p: Path(p).name
+    ) if img_dir.exists() else []
+
+    # Collect local files
+    files_dir = shop_dir / "files"
+    file_paths = sorted(
+        [str(p) for p in files_dir.iterdir() if p.suffix.lower() in FILE_EXTS],
+        key=lambda p: Path(p).name
+    ) if files_dir.exists() else []
 
     val_price = c(5)
     price = float(val_price) if isinstance(val_price, (int, float)) else (float(str(val_price)) if val_price else 0.0)
@@ -272,9 +186,6 @@ def read_product_from_excel(
         "etsy_url":    str(c(16) or ""),
         "image_paths": image_paths,
         "file_paths":  file_paths,
-        "asset_root":  asset_product.get("asset_root", str(shop_dir)),
-        "_cloud_asset_resolution": asset_product.get("_cloud_asset_resolution"),
-        "shop_id":      shop_id,
     }
 
 
@@ -1113,12 +1024,6 @@ async def save_listing(page) -> bool:
 
 # ── Main push orchestrator ─────────────────────────────────────────────────────
 async def push_all(page, listing_id: str, product: dict, fields: set) -> bool:
-    if not product.get("_cloud_asset_resolution"):
-        try:
-            resolve_product_asset_paths(product, str(product.get("shop_id") or ""))
-        except (RuntimeError, CloudAssetError, OSError, ValueError, TypeError, KeyError) as exc:
-            log(f"[PUSH] ❌ Asset preflight thất bại; không mở editor: {exc}")
-            return False
     edit_url = build_edit_url(listing_id)
     log(f"[PUSH] 🌐 Đang vào: {edit_url}")
 
@@ -1298,7 +1203,6 @@ async def main():
         ok = await push_all(page, args.listing_id, product, fields)
 
         if ok:
-            mark_product_asset_operation_success(product)
             log(f"\n[PUSH] ✅ Hoàn tất! Đã push {', '.join(sorted(fields))} → listing {args.listing_id}")
         else:
             log(f"\n[PUSH] ❌ Thất bại.")

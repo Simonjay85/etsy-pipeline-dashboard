@@ -1,85 +1,212 @@
 # CLAUDE.md
 
-## Imported Claude Cowork project instructions
+## Project scope
 
-- At the start of each conversation, read this file before performing operations.
-- This dashboard project manages Etsy + eBay/WordPress tooling and product pipelines.
-- Common tasks are already defined by the existing API routes in:
-  - `dashboard_app.py` (Etsy pipeline, default port 8090)
-  - `ebay_wp_dashboard/dashboard_app.py` (eBay + WordPress, default port 8091)
-- Use the existing queue/process model for task safety:
-  - Etsy: `push-to-etsy`, `sync-from-etsy`, `post`, `run-all-pending`
-  - Stop-all should terminate tracked subprocesses and clear pending queues.
+- Read this file before performing any operation in this project.
+- This project is exclusively for Etsy product and shop management.
+- Supported workflows include:
+  - syncing Etsy listing data and assets to local storage;
+  - pushing selected local product changes to existing Etsy listings;
+  - creating draft or live Etsy listings through the existing dashboard workflow;
+  - creating and managing Etsy product images and digital files;
+  - managing shop-local product catalogs;
+  - verified cloud backup, restore, and asset offload.
+- Do not add eBay, WordPress, Shopify, or unrelated website-management scope to
+  this project unless the user explicitly requests a separate integration.
 
-## Canonical workspace (only root)
+## Canonical checkout and runtime identity
 
-This repo is the **only** canonical Etsy project root:
+- Do not assume the current directory is the checkout serving the live local
+  dashboard.
+- Before editing, restarting, or claiming activation of the dashboard:
+  1. identify the process listening on port `8090`;
+  2. identify that process's working directory;
+  3. verify `GET http://127.0.0.1:8090/` returns HTTP 200 and the expected
+     `Etsy Pipeline Dashboard` page;
+  4. perform code changes in the verified canonical checkout.
+- Keep the following claims separate:
+  - source file changed;
+  - local tests passed;
+  - dashboard process reloaded;
+  - live dashboard read-back passed;
+  - Etsy or cloud state was remotely verified.
 
-| Role | Canonical path |
-|------|----------------|
-| Project root | `/Users/aaronnguyen/Developer/Etsy` |
-| Factory source | `/Users/aaronnguyen/Developer/Etsy/master_products` |
-| Shop data | `/Users/aaronnguyen/Developer/Etsy/shops` |
-| Backups | `/Users/aaronnguyen/Developer/Etsy/output/backup` |
+## Dashboard API operations
 
-- Import Factory reads `master_products`. Asset-intake / image-factory output must land under `master_products` in this repo.
-- Resolve paths from the repo root (`Path(__file__).resolve().parent` for root-level scripts). Do not hardcode the obsolete tree.
-- `/Users/aaronnguyen/Documents/Claude/Projects/Etsy` is obsolete — never use it as source or destination.
+Common operations are defined by the API routes in `dashboard_app.py`, normally
+served on port `8090`. Relevant operations may include:
 
-**Before claiming completion:** confirm generated `master_products/product-NN` folders exist in this repo and that the dashboard Import Factory scan can see them.
+- `POST /api/products/{row}/post`
+- `POST /api/products/{row}/push-to-etsy`
+- `POST /api/products/{row}/sync-from-etsy`
+- `POST /api/run-all-pending`
+- `POST /api/stop-all`
 
-## Operational notes
+The canonical checkout may also expose an operation-queue API. Inspect the
+actual active checkout before relying on a route or queue contract.
 
-- `shops_config.json` / `ebay_wp_config.json` and secret files are JSON configs and should be treated defensively.
-- Active context is persisted in:
-  - `active_shop.txt` for Etsy
-  - `ebay_wp_dashboard/active_site.txt` for eBay/WordPress
-- Before changing live behavior, prefer queue-key scoping by active shop/site + folder/row to avoid cross-context clashes.
+An accepted request, HTTP 202 response, `queued` status, or `{"ok": true}`
+response proves admission only. It does not prove completion. Observe the
+authoritative job/queue status and logs, then verify the resulting local,
+Etsy, or cloud state before reporting success.
 
-## Testing & validation
+## Shop and product scoping
 
-- Run tests: `.venv/bin/python -m pytest` (207 tests collected, all passing as of 2026-08-04)
-- Config: `pytest.ini` at project root; `conftest.py` excludes non-test scripts.
+- Resolve the active shop from `active_shop.txt` before shop-specific work.
+- Do not treat `active_shop.txt` as proof of which Etsy account is authenticated
+  in Chrome.
+- Scope each operation using:
+  - shop ID;
+  - operation type;
+  - product folder or workbook row;
+  - Etsy listing ID when applicable.
+- Queue and job keys should follow the equivalent of:
 
-### Test-to-module map (all tracked pytest modules)
+  `<shop_id>:<operation>:<product-or-row>:<listing_id-if-any>`
 
-| Test file | Covers |
-|-----------|--------|
-| `test_dashboard_image_previews.py` | `dashboard_app._renderable_image_url`, image preview/hydration logic |
-| `test_dashboard_etsy_single_sync.py` | `dashboard_app` single-sync Etsy scrape session routing + identity gates |
-| `test_dashboard_etsy_listing_links.py` | `dashboard_app` status-aware Etsy listing-link enrichment (snapshot fail-closed) |
-| `test_dashboard_etsy_manager_links.py` | `dashboard_app.enrich_products_with_etsy_manager` read-only link decoration |
-| `test_dashboard_etsy_public_images.py` | `dashboard_app` public Etsy listing image fallback |
-| `test_dashboard_latest_snapshot_normalization.py` | `dashboard_app` normalized Etsy snapshot loading |
-| `test_etsy_asset_sync_status.py` | `dashboard_app._size_text_to_bytes`, `_etsy_size_matches`, `_extract_asset_sync_status` |
-| `test_etsy_draft_delete.py` | `dashboard_app` draft-delete route + `etsy_clean_duplicates` |
-| `test_etsy_link_local.py` | `dashboard_app._status_for_linked_etsy_listing`, local Etsy link status logic |
-| `test_etsy_local_delete.py` | `dashboard_app` local-delete route + `etsy_catalog` cleanup |
-| `test_etsy_selected_post.py` | `dashboard_app` selected-products post flow (translation mocked) |
-| `test_image_factory_import.py` | `dashboard_app` image-factory scan/import endpoints |
-| `test_etsy_auto_post.py` | `etsy_auto_post` browser session resolution, draft filter |
-| `test_etsy_browser_session.py` | `etsy_browser_session` / `etsy_auto_post` per-shop profile resolution |
-| `test_etsy_shop_sync_session.py` | `etsy_shop_sync.crawl_etsy_shop` CDP session reuse, temp-page ownership |
-| `test_etsy_catalog_ordering.py` | `etsy_catalog.build_unified_catalog`, `load_local_catalog` |
-| `test_merge_safe_duplicates.py` | `etsy_catalog.merge_safe_duplicates` digital-hash guard |
-| `test_medium_content.py` | `medium_content` article generation + integration seams in `dashboard_app`, `generate_social_posts`, `social_auto_post` |
-| `test_social_auto_post.py` | `social_auto_post` Pinterest publish-success detection, title/description normalization |
-| `test_social_browser_session.py` | `social_browser_session.resolve_social_session` per-shop defaults + `dashboard_app` capture |
-| `test_social_post_store.py` | `social_post_store` record/status persistence, multi-process safety |
+- Before any live Etsy mutation, verify:
+  1. active dashboard shop;
+  2. job shop ID;
+  3. intended workbook and row;
+  4. intended product folder;
+  5. numeric Etsy listing ID and mapped Etsy URL;
+  6. selected fields or requested operation;
+  7. current task, process, and queue state;
+  8. the exact authenticated Etsy shop in the Chrome/CDP context used by the
+     operation.
 
-### Excluded scripts (not real tests)
+- Do not change `active_shop.txt` merely to bypass a shop-specific guard.
 
-`test_seo_fail.py`, `test_tag_pills.py`, `test_tags.py`, `test_translate.py` are manual/interactive scripts excluded via `conftest.py` (`collect_ignore`).
+## Sources of truth
 
-### JavaScript test files (manual scripts — no automated runner)
+- `active_shop.txt` defines the current dashboard shop context.
+- `shops/<shop>/Etsy_SEO_Generator.xlsx` is the operational workbook for that
+  shop.
+- `shops/<shop>/product-XX/` contains shop-local product assets.
+- `product_source_map.json` records source and cross-shop mapping history; it is
+  not proof of current Etsy or cloud state.
+- Etsy Shop Manager and listing-editor read-back are authoritative for live
+  Etsy state.
+- Verified remote manifest, file hashes, and current revision pointer are
+  authoritative for cloud state.
+- Keep each shop's editable workbook and product operations isolated. Do not
+  merge Daisy Flow and Temply Studio into a shared editable workbook without
+  redesigning every reader, writer, queue key, and product mapping.
 
-The `test_*.js` files at the repo root are **manual, standalone scripts** for the dashboard frontend layer (`dashboard_static/`), not automated test suites. Each is a plain Node script using `node:assert` (some drive a live browser via Playwright-style interaction) and must be run individually, e.g. `node test_image_lightbox.js`. There is **no automated JS test runner** configured — no `package.json`, no Jest/Mocha/Playwright-test setup — so these scripts are never collected or executed by any CI/test command in this repo.
+## Product-folder and asset rules
 
-| Script | Checks |
-|--------|--------|
-| `test_batch_post_ui.js` | Batch post/SEO button markup + ordering in `dashboard_static/index.html` / `app.js` |
-| `test_batch_selection.js` | Batch selection logic in `dashboard_static/app.js` |
-| `test_catalog_sort.js` | Catalog sort behavior in `dashboard_static/app.js` |
-| `test_edit_save.js` | Edit/save flow in `dashboard_static/app.js` |
-| `test_etsy_link_unverified_ui.js` | Unverified Etsy link UI states |
-| `test_image_lightbox.js` | Image lightbox behavior in `dashboard_static/app.js` (via `node:vm`) |
+- Validate product files before copy, import, upload, sync, or backup:
+  - the file exists;
+  - the file is materialized locally;
+  - size is greater than zero;
+  - it is not an iCloud `compressed,dataless` placeholder;
+  - the file type and expected dimensions or archive contents are valid.
+- Hydrate only the required iCloud files. Do not hydrate the full project tree
+  unless necessary.
+- Never upload, sync, copy, or back up a zero-byte or dataless placeholder.
+- Preserve source/hash manifests so repeated intake is idempotent.
+- Do not silently overwrite an existing product folder or mapped workbook row.
+
+## Temply Studio and Daisy Flow boundaries
+
+- Image Factory is Temply Studio-only unless the canonical implementation
+  explicitly changes that contract.
+- Do not modify `FACTORY_SHOP_ID`, `active_shop.txt`, routes, or shop
+  configuration merely to force Daisy Flow through Image Factory.
+- Daisy Flow asset intake is shop-local.
+- When allocating a new Daisy Flow folder:
+  - use the smallest genuinely unused `product-XX`;
+  - treat workbook mappings and metadata-only records as used, even if their
+    asset folders are empty;
+  - create separate `images/` and `files/` directories;
+  - deduplicate imported sources using filenames, sizes, and hashes.
+- Keep customer-delivery files and listing-gallery images separate.
+- Keep product files as separate files unless the user explicitly requests a
+  ZIP.
+
+## Task, process, and queue safety
+
+- Use the existing dashboard task/process/queue model.
+- Do not start duplicate work for the same scoped shop, operation, and target.
+- Serialize operations that share an Etsy Chrome/CDP session or the same
+  product/cloud lock.
+- `Stop All` must:
+  - terminate only tracked subprocesses;
+  - cancel and await tracked background tasks;
+  - clear pending in-memory queue entries;
+  - report which work was killed, cancelled, discarded, or already completed.
+- Do not kill unrelated Chrome, Python, Playwright, rclone, or user-owned
+  processes.
+- Do not delete a lock file merely because an operation timed out. Identify the
+  lock holder and active transfer first.
+- A dashboard restart discards in-memory queued work. Report discarded commands
+  as cancelled or not attempted, never as completed.
+
+## Live Etsy mutation rules
+
+- Use read-only inspection first.
+- For posting, publishing, updating, deleting, or syncing Etsy state, verify the
+  exact shop, listing, product, requested fields, authenticated session, and
+  queue state immediately before mutation.
+- Prefer the narrowest operation, such as `images` only, instead of repushing
+  unrelated listing fields.
+- Do not call a draft a published listing.
+- Do not report a listing as updated until the live editor or Shop Manager state
+  has been reloaded and verified.
+- Preserve partial-failure truth:
+  - metadata success does not imply assets success;
+  - image success does not imply digital-file success;
+  - queued does not imply completed;
+  - subprocess exit does not replace Etsy read-back.
+
+## Cloud asset and offload safety
+
+- Cloud upload, cloud verification, local offload, and restore are separate
+  operations.
+- A prior cloud revision is not proof that the current local files are uploaded.
+- Require a verified remote manifest, SHA-256 hashes, file counts, sizes, and
+  current-revision pointer before reporting cloud completion.
+- Do not delete local assets merely because upload started or an old revision
+  exists.
+- Local deletion/offload is permitted only by the explicitly requested offload
+  workflow after current-source upload and remote verification.
+- Report local deletion separately and state whether recovery is possible.
+
+## Secrets and private configuration
+
+- Treat `shops_config.json`, browser profiles, cookies, OAuth tokens, API keys,
+  secret files, order/customer information, and shop-private configuration
+  defensively.
+- Never print, copy into logs, expose in responses, overwrite unintentionally,
+  or commit credentials or private shop configuration.
+- Do not add secrets to command lines, patches, manifests, test fixtures, or Git.
+- Review exact staged files before any commit. Never use a broad staging command
+  in a mixed or dirty worktree.
+
+## Backup policy
+
+- Use `backup_etsy_to_drive.py` for scheduled daily and weekly snapshots.
+- Keep the Google Drive destination scoped to `Etsy Automated Backups`.
+- Retain at least 30 versions for each cadence.
+- Every snapshot must contain `manifest.json` with SHA-256 hashes.
+- Fail closed when a source is zero-byte, missing, unreadable, symlink-escaping,
+  or an iCloud `compressed,dataless` placeholder.
+- A local backup archive is not proof of a successful Drive backup. Verify the
+  uploaded snapshot and manifest by remote read-back.
+
+## Verification and reporting
+
+Use precise lifecycle language:
+
+- `prepared`: local data or files are ready;
+- `queued`: operation was admitted but has not completed;
+- `running`: authoritative job or process is active;
+- `local_verified`: local files, workbook, or tests were verified;
+- `remote_verified`: Etsy or cloud state was read back successfully;
+- `partial`: only part of the requested operation succeeded;
+- `failed`: attempted and failed;
+- `not_attempted`: blocked before execution.
+
+Never collapse these states into a generic “done”. Report the active shop,
+target product/listing, requested operation, verification performed, and any
+remaining live or remote step.

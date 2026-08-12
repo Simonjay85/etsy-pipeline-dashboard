@@ -1,0 +1,1176 @@
+{
+  "schema": "etsy-image-generation-v3",
+  "tool_mode": "built-in-imagegen",
+  "compositing_mode": "deterministic-source-composite",
+  "canva_used": false,
+  "campaign_id": "cute-soft-pastel-undated-planner-daisy-20260806",
+  "transaction_id": "daisy-cute-soft-pastel-undated-planner-20260806-01",
+  "shop_key": "daisy",
+  "source": "/Users/aaronnguyen/Downloads/PLR-Resell-Digital-Planner-115250858/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER.pdf",
+  "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+  "source_review_status": "complete",
+  "rights_status": "verified",
+  "license_terms_status": "verified",
+  "delivery_claim_status": "unknown",
+  "reference_usage": "merchandising_only",
+  "shared_gallery": false,
+  "master_gallery": false,
+  "art_direction_id": "daisy-cute-soft-pastel-source-led-20260806-v1",
+  "art_direction_summary": "Soft pastel kawaii product-gallery scenes with large source-page evidence panels, gentle flowers, hearts, stars, rounded tabs, and a clean Daisy Flow Digital merchandising treatment.",
+  "source_theme_rationale": "The 71 rendered pages consistently use a soft pastel kawaii system; exact source pages will be composited into distinct product-focused Etsy scenes.",
+  "inspection_manifest_path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/inspection-manifest.json",
+  "inspection_manifest_sha256": "69f4a86e4ebe2af7d11fa11455fe3763e7ff6ec919c7eb63740b1663a5ac1584",
+  "preflight_contract_path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/daisy-preflight.json",
+  "preflight_contract_sha256": "b62cd30d15f0056cd2cb461825861f624767ad941876aae2a8ce82d6f219851e",
+  "manual_visual_qa_required": true,
+  "source_map": [
+    {
+      "source_unit_id": "pdf-42169210530e-page-0001",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-01.png",
+      "render_sha256": "4960cc94f017977411e3a2361532c645ee73a94be7dd88aac31f3f97630b1f2b",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 1
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0002",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-02.png",
+      "render_sha256": "3feea2d08b2983d2cc4e04267a98fe4349db5b84d70a44a724ea14994a39f69d",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 2
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0003",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-03.png",
+      "render_sha256": "95b72bcbe6679c94c07f2a7a99e3f14ce1708dd85cd45436c4d5e553415e5b58",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 3
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0004",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-04.png",
+      "render_sha256": "25c63486a19838bda8dad44f8f5dcb2e4bdc9038d3b69bfe05bdf8d66e0ecf28",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 4
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0005",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-05.png",
+      "render_sha256": "55f91c7ca47253f418b4c8940772282b31a1fa8315fa267283c2ac97863d0a49",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 5
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0006",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-06.png",
+      "render_sha256": "bd9f617683915c4afa7022db14c357c0ef86825bbfd4309091e27085989c60bd",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 6
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0007",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-07.png",
+      "render_sha256": "7660ad9b189a04e6dd62593b5084d94f57708429f1f2b758da7e2d21920f6066",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 7
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0008",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-08.png",
+      "render_sha256": "367feb57550796665ad0b4a6e9c02649eaed9634a23e8b593b63ad8d77793ce9",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 8
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0009",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-09.png",
+      "render_sha256": "76a4fd1074d7d65b6069d1475508aec7574855f231b10c7aaacbd0f91a7564c9",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 9
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0010",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-10.png",
+      "render_sha256": "4187d7b72a8887f62f80a6e0a1b5616bc26e4419a1841b431af5674aedbc0a2c",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 10
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0011",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-11.png",
+      "render_sha256": "8e57fe39295c0de3088ec75ee1066a1781a6d1fe5010f960d8839448b31d8bc6",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 11
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0012",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-12.png",
+      "render_sha256": "3fc8e635a69a24daf63e352a5ac795a4bcbfd3d9810c7d604ac247d11dc9c146",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 12
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0013",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-13.png",
+      "render_sha256": "efdc9876511555a1c66043ebaaca225f2183b866a0a7c8301f0af4cc9694ddce",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 13
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0014",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-14.png",
+      "render_sha256": "1feafd921013dfb7be1941c288ee5479f95df94e229995c042e0a42459d9aafc",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 14
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0015",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-15.png",
+      "render_sha256": "5a5ce5188742b48257fa3d710e0fa33a1ca1b001e581558b8df655acaeeede8e",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 15
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0016",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-16.png",
+      "render_sha256": "aac953ad05d7eb242bed598bdcaa0236b462c2c598cfe6870ab2a05e973a22f9",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 16
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0017",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-17.png",
+      "render_sha256": "16caf0bcf0b6e12519069b33127b423d72059285ffe7a208e499f9ea64fdd2c0",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 17
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0018",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-18.png",
+      "render_sha256": "c86fd7061584c3187ada987d420556805483c090e40c01d68bf31619991b348e",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 18
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0019",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-19.png",
+      "render_sha256": "90e615d310468f6784c1561b0d8905b33f4c2ee1803563e9c2ffcfa51982042f",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 19
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0020",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-20.png",
+      "render_sha256": "f466ecd28ffe14e888374e3fc5771ef8fc4ca9aeba183e2c124118f90d4d6513",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 20
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0021",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-21.png",
+      "render_sha256": "731ae2a1955a4df064e533b536f8e83e5fbbbdaec5e57a0f170e10d08ebfb9b4",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 21
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0022",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-22.png",
+      "render_sha256": "34bfb3d0704fb708bc3d0478727322d77c6e0deef9384152f059723eabe2a80c",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 22
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0023",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-23.png",
+      "render_sha256": "5259b8845f7fd7d251c1ff29d8697dfec4cf436cb43bbe10c743b8c15f2ed841",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 23
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0024",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-24.png",
+      "render_sha256": "904ae51cd823025296565268d42d6cb76cf2d4d6657fdb451e304f66a677946b",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 24
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0025",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-25.png",
+      "render_sha256": "42087910255a0b6986af71a186aaa26295685640df038c21db02c14f8367d1f9",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 25
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0026",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-26.png",
+      "render_sha256": "bfeb89ee4928819b6917f649ae342c2b56c33e218da819b6a43cc6fe85d7967c",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 26
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0027",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-27.png",
+      "render_sha256": "9843dc93580cdfd952ecfb7e7de31cd7187bcc4d183c66fbfa327ed0731accd6",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 27
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0028",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-28.png",
+      "render_sha256": "41c06015982855c7cf4a8b4759d281359aa669e673132bd18bf23ebf86c6b5af",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 28
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0029",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-29.png",
+      "render_sha256": "a435c3905932f69639a7e90564dff18a9b9315771f2e6dcfb853e506128ec1ae",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 29
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0030",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-30.png",
+      "render_sha256": "89604d2143ec8d1ebc717bf0bde6d496f1c63f7f8895153857dae1620f92be8f",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 30
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0031",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-31.png",
+      "render_sha256": "77d17263fd337c621021985ffcb8dea43039ef466b009115c90797d3216054dc",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 31
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0032",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-32.png",
+      "render_sha256": "efa46d3f0364b9869cb6dfa76c85e15e4780060e0b2b105fd0dbbb9b79593409",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 32
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0033",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-33.png",
+      "render_sha256": "8a7ac12b5fd9e551d36fe1a73e2dbe1105393cf874aad6e2ef89472957e407c1",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 33
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0034",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-34.png",
+      "render_sha256": "dc8688cf404b4d184d8a840784b7908eae912dc4ec8ddcae2f1020a76ac230c1",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 34
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0035",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-35.png",
+      "render_sha256": "97d8c4e726f25f67efaacf20343c2f6885f16d6c60bb31c190b1e91ad7e4b949",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 35
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0036",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-36.png",
+      "render_sha256": "5a0b40c19c52c2db3df6f4725edb0c96299c61471e0e083298edd1d7c0e0712a",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 36
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0037",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-37.png",
+      "render_sha256": "0bcb75457104726a3a00412d69866a7e9aa728deb11a97e93008e7bb6af2e813",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 37
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0038",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-38.png",
+      "render_sha256": "94bfc07cd19283f74641f9c5c83ea9e56067fd129101e8748db32c2a301ff965",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 38
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0039",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-39.png",
+      "render_sha256": "0b5caa379779e9f2885b00ed58d6643a0ce4262e5e679037572a578f2ff51f82",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 39
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0040",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-40.png",
+      "render_sha256": "5722fb613cf7f2a71ff9adf407fe3b969636f68c260159997ac253ca67d74894",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 40
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0041",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-41.png",
+      "render_sha256": "f7f27a57c9d97afbe1f1fa5b8f6f6585a936f0386dbf13db060173591643affd",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 41
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0042",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-42.png",
+      "render_sha256": "9c85fdb989d122df83a2bc04cc887976c9ab5dbcef90eb9dc5579d535551c078",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 42
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0043",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-43.png",
+      "render_sha256": "7955b8600c0861562434d882004a78445f135687b715b9f23f5f45d2dd676f26",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 43
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0044",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-44.png",
+      "render_sha256": "fd6c15419ec55fcf55d78f5f76f4fe9f97c27e46a36e7f8e40ea2c11face146b",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 44
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0045",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-45.png",
+      "render_sha256": "d192c61768db81ef904032bb71f948b1d0b1d048eabefe00c5579d74c62d3101",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 45
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0046",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-46.png",
+      "render_sha256": "2abc24fc464ee2ba039caa81686f28b3c1a54754c3c0382f5b036c2c761509f6",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 46
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0047",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-47.png",
+      "render_sha256": "a2101cc8af2ac51e4e8a7429fdcf253bc8bd45536cd07b099f79f2d9acd951ea",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 47
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0048",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-48.png",
+      "render_sha256": "21d80ed3b1c352a0fc38347975fa78eb6bd9a1cd658966797d979da71499ca05",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 48
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0049",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-49.png",
+      "render_sha256": "65d691a137dd2b3539b8ac0e058cb07cc13f47bd1869f6b1546fac44f40848a5",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 49
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0050",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-50.png",
+      "render_sha256": "a0e62ea01a324a2a9f43950d1ec3f63bd4a109feaf9e8555857c31fdcb1faf76",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 50
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0051",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-51.png",
+      "render_sha256": "f74cea7304c1cb59ed3beeec72e2b315f18b127026472ac4d314eea4c0969758",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 51
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0052",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-52.png",
+      "render_sha256": "85203eb58d3d03dcba8aaf95b9c1d4219f01f887a4f0bcc7201fab4af10087aa",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 52
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0053",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-53.png",
+      "render_sha256": "d94b6c87ad128a1de8230934bd22e892852bf00d61704609b3dd07f4d4334d87",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 53
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0054",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-54.png",
+      "render_sha256": "093c5d8036a07a5955fccc91d7e8238530d582a484f3f9655d4cd4218438068a",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 54
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0055",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-55.png",
+      "render_sha256": "e4eab5d6ab06e3363e2a2c55cbe8c73e766c24416848ee5fe9487b45f68362bc",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 55
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0056",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-56.png",
+      "render_sha256": "da546e8ff026cccbb70aec3bd0b08c870cfdad94b94c2b2e2f17ae3d0daad9ec",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 56
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0057",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-57.png",
+      "render_sha256": "709931ddee28e20502e1195bfe8de3957782f6fc47b5d0c37e3a420202776002",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 57
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0058",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-58.png",
+      "render_sha256": "0ef1745cd45340b65bccd332bb3f282720e2714a0a05666c8cc6c97ee8170857",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 58
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0059",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-59.png",
+      "render_sha256": "398ab96f56e36a80a61c57f1c755c07066d5ab2e13f319efc602072efa31db86",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 59
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0060",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-60.png",
+      "render_sha256": "801ac1325eef5bb8970e6c2c6623bcb22ffbae0e7b82ac6bc703645fcb513592",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 60
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0061",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-61.png",
+      "render_sha256": "70dc69372e5088ea98d5e233aa01a4727e7d04f3beb31a034b48c25657ec1a8f",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 61
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0062",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-62.png",
+      "render_sha256": "1ec56862e26e4df94ed515011c472cc0c6d99354e8e521848551a187ee8857a7",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 62
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0063",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-63.png",
+      "render_sha256": "667b32b064fcf854103e1f4faf2a3626d6b9bce05eb50550a32b7102775a05be",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 63
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0064",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-64.png",
+      "render_sha256": "d729bac894a332165b172783fd1aaa9b3fdfe93fbf11adeaa4a0fac110430a8c",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 64
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0065",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-65.png",
+      "render_sha256": "6b915deb7124d4111837e281a871ebbb383cf7fc2865d9bae6066ca21108efe6",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 65
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0066",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-66.png",
+      "render_sha256": "584c9b2c62d07e1d0394ea9c2cd6f569d8e4120754deeb7c88de6f23ff0148df",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 66
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0067",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-67.png",
+      "render_sha256": "afef92d0260bbc9cac124ab0f94cbe6681d9fcbe1126458ed7927ad33c9b8ecc",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 67
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0068",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-68.png",
+      "render_sha256": "b7bf2a64f7cc049befb8311dcb8cf153f17ce8619acf32abedacba7a8f4ace43",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 68
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0069",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-69.png",
+      "render_sha256": "300a935a25257b1524e3e45209f1d44d44099c8e274df294b4e338cc0e271cb6",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 69
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0070",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-70.png",
+      "render_sha256": "79cfba55fc6894177cc75ba49bdaaa156b6e4cc9e0c5661e0a2c61fe16a81394",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 70
+    },
+    {
+      "source_unit_id": "pdf-42169210530e-page-0071",
+      "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-71.png",
+      "render_sha256": "6443cf08d4feb270aaf04f29d3c24a03b6048cc80a20fb41609dc48b670e5ed1",
+      "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+      "page_number": 71
+    }
+  ],
+  "claims_register": [
+    {
+      "id": "claim_pastel_kawaii_theme",
+      "status": "verified",
+      "claim_type": "source_theme",
+      "claim_text": "The planner uses a cute soft pastel visual system with cats, hearts, stars, flowers, cream fields, and dark outlines.",
+      "source_unit_ids": [
+        "pdf-42169210530e-page-0001",
+        "pdf-42169210530e-page-0053",
+        "pdf-42169210530e-page-0065"
+      ],
+      "evidence_location": "Visual review of rendered source pages: page-01.png, page-53.png, page-65.png",
+      "evidence_excerpt": "Visual review of rendered pages 01, 53, and 65 shows the recurring soft pastel palette, kawaii illustrations, hearts, stars, flowers, cream fields, and dark outlines.",
+      "evidence_sha256": "7f75a8ff92923441956e3093b66918e2cfaace8b4077d2b5e73fc9f9dce4d9b5",
+      "evidence_review_status": "verified"
+    },
+    {
+      "id": "claim_monthly_planning",
+      "status": "verified",
+      "claim_type": "planner_section",
+      "claim_text": "A monthly planning layout is included.",
+      "source_unit_ids": [
+        "pdf-42169210530e-page-0003"
+      ],
+      "evidence_location": "Visual review of rendered source pages: page-03.png",
+      "evidence_excerpt": "Rendered page 03 shows a monthly planning layout with a large structured calendar grid and pastel section styling.",
+      "evidence_sha256": "b1c4193e11761102e69ec47cf8bd912c12e1920d489edae56735a8a6c6a3e906",
+      "evidence_review_status": "verified"
+    },
+    {
+      "id": "claim_weekly_planning",
+      "status": "verified",
+      "claim_type": "planner_section",
+      "claim_text": "Weekly planning layouts are included.",
+      "source_unit_ids": [
+        "pdf-42169210530e-page-0005",
+        "pdf-42169210530e-page-0006",
+        "pdf-42169210530e-page-0017",
+        "pdf-42169210530e-page-0028",
+        "pdf-42169210530e-page-0039"
+      ],
+      "evidence_location": "Visual review of rendered source pages: page-05.png, page-06.png, page-17.png, page-28.png, page-39.png",
+      "evidence_excerpt": "Rendered pages 05, 06, 17, 28, and 39 show weekly planning introductions and weekly layouts with organized writing areas.",
+      "evidence_sha256": "6185f5c81307eb51b8e953bad8a433f33420b7d1067af5ad408c52e839aed25c",
+      "evidence_review_status": "verified"
+    },
+    {
+      "id": "claim_daily_planning",
+      "status": "verified",
+      "claim_type": "planner_section",
+      "claim_text": "Daily planning pages cover individual days of the week.",
+      "source_unit_ids": [
+        "pdf-42169210530e-page-0010",
+        "pdf-42169210530e-page-0011",
+        "pdf-42169210530e-page-0012",
+        "pdf-42169210530e-page-0013",
+        "pdf-42169210530e-page-0014",
+        "pdf-42169210530e-page-0015",
+        "pdf-42169210530e-page-0016"
+      ],
+      "evidence_location": "Visual review of rendered source pages: page-10.png, page-11.png, page-12.png, page-13.png, page-14.png, page-15.png, page-16.png",
+      "evidence_excerpt": "Rendered pages 10 through 16 show individual Sunday, Monday, Tuesday, Wednesday, Thursday, Friday, and Saturday planning pages.",
+      "evidence_sha256": "e4207d2d5ab426b60d05a0da56471e413b675471c8ed576e01a6f050051c81e5",
+      "evidence_review_status": "verified"
+    },
+    {
+      "id": "claim_wellness_tools",
+      "status": "verified",
+      "claim_type": "planner_section",
+      "claim_text": "Wellness tools include self-care, medication, water, vitamins, doctor visits, and mental-health challenge pages.",
+      "source_unit_ids": [
+        "pdf-42169210530e-page-0008",
+        "pdf-42169210530e-page-0009",
+        "pdf-42169210530e-page-0060",
+        "pdf-42169210530e-page-0062",
+        "pdf-42169210530e-page-0063",
+        "pdf-42169210530e-page-0064"
+      ],
+      "evidence_location": "Visual review of rendered source pages: page-08.png, page-09.png, page-60.png, page-62.png, page-63.png, page-64.png",
+      "evidence_excerpt": "Rendered pages 08, 09, 60, 62, 63, and 64 show self-care, medication, water, vitamin, doctor-visit, and mental-health planning tools.",
+      "evidence_sha256": "8a5df8ce83bb0d4bce398904b4eed5ee5fe1b287b914f8faab9d80c33dd40932",
+      "evidence_review_status": "verified"
+    },
+    {
+      "id": "claim_productivity_tools",
+      "status": "verified",
+      "claim_type": "planner_section",
+      "claim_text": "Productivity tools include study, to-do, meeting, goal, and project pages.",
+      "source_unit_ids": [
+        "pdf-42169210530e-page-0054",
+        "pdf-42169210530e-page-0055",
+        "pdf-42169210530e-page-0056",
+        "pdf-42169210530e-page-0057",
+        "pdf-42169210530e-page-0058"
+      ],
+      "evidence_location": "Visual review of rendered source pages: page-54.png, page-55.png, page-56.png, page-57.png, page-58.png",
+      "evidence_excerpt": "Rendered pages 54 through 58 show study, to-do, meeting notes, goal, and project planning layouts.",
+      "evidence_sha256": "cc78f09bce253599aab08a77c9c9f4c90852e4373f29bba7202a32f5bb63afb2",
+      "evidence_review_status": "verified"
+    },
+    {
+      "id": "claim_finance_tools",
+      "status": "verified",
+      "claim_type": "planner_section",
+      "claim_text": "Finance tools include debt, sinking-funds, savings, monthly-budget, and bill-tracking pages.",
+      "source_unit_ids": [
+        "pdf-42169210530e-page-0066",
+        "pdf-42169210530e-page-0067",
+        "pdf-42169210530e-page-0068",
+        "pdf-42169210530e-page-0069",
+        "pdf-42169210530e-page-0070"
+      ],
+      "evidence_location": "Visual review of rendered source pages: page-66.png, page-67.png, page-68.png, page-69.png, page-70.png",
+      "evidence_excerpt": "Rendered pages 66 through 70 show debt, sinking-funds, savings, monthly-budget, and bill-tracking layouts.",
+      "evidence_sha256": "723fc40fa566398ed321a8173a821268261eb196718adbe9c52297494f9e4d0e",
+      "evidence_review_status": "verified"
+    },
+    {
+      "id": "claim_undated_layouts",
+      "status": "verified",
+      "claim_type": "planner_format",
+      "claim_text": "The layouts are undated and use open fields rather than prefilled calendar dates.",
+      "source_unit_ids": [
+        "pdf-42169210530e-page-0003",
+        "pdf-42169210530e-page-0005",
+        "pdf-42169210530e-page-0010"
+      ],
+      "evidence_location": "Visual review of rendered source pages: page-03.png, page-05.png, page-10.png",
+      "evidence_excerpt": "Visual review of rendered pages 03, 05, and 10 shows open month, week, and day fields without prefilled calendar dates.",
+      "evidence_sha256": "71f2afb40e9be25cf2d97f7fdbad70f3eeb2e0bb6618b4d9151d1273f76b957f",
+      "evidence_review_status": "verified"
+    },
+    {
+      "id": "claim_certificate_page",
+      "status": "verified",
+      "claim_type": "planner_section",
+      "claim_text": "A certificate page is included at the end of the planner.",
+      "source_unit_ids": [
+        "pdf-42169210530e-page-0071"
+      ],
+      "evidence_location": "Visual review of rendered source pages: page-71.png",
+      "evidence_excerpt": "Rendered page 71 shows the closing certificate page.",
+      "evidence_sha256": "aba3bebdf2088b2f04b802f166a8ae2efd86c007a3333783643e6126fa8445ee",
+      "evidence_review_status": "verified"
+    }
+  ],
+  "concept_board": {
+    "hero": "source cover and page previews dominate each square gallery image",
+    "palette": "blush pink, lilac, powder blue, butter yellow, cream, charcoal outlines",
+    "mockup": "clean cream tablet and paper display surfaces with perimeter stationery",
+    "gallery_rhythm": "cover, index, planning, daily, wellness, productivity, finance, challenge, goals, thank-you",
+    "iconography": "cats, hearts, stars, flowers, pastel tabs, rounded stationery"
+  },
+  "assets": [
+    {
+      "slot": "01",
+      "output": "01-foundation.png",
+      "prompt": "Create a source-led Etsy product listing gallery image for the cute soft pastel undated digital planner. Show the real planner page as the dominant product evidence area, preserve its pastel kawaii visual language, and keep the scene polished, clear, and purchase-oriented. Etsy listing product gallery evidence: Cover-first product hero that makes the pastel kawaii style immediately visible. A hero product presentation with the cover page large and centered. Large centered cream tablet display with exact cover-page composite; perimeter décor only; preserve readable source art.",
+      "buyer_question": "Can I see the planner cover and overall aesthetic?",
+      "composition": "Large centered cream tablet display with exact cover-page composite; perimeter décor only; preserve readable source art.",
+      "scene": "pastel cover hero flat-lay",
+      "source_evidence_reason": "The cover page and recurring pastel theme are visible on rendered pages 01, 03, and 10.",
+      "merchandising_intent": "Cover-first product hero that makes the pastel kawaii style immediately visible.",
+      "composition_rule": "Large centered cream tablet display with exact cover-page composite; perimeter décor only; preserve readable source art.",
+      "factual_claim": "The planner uses a cute soft pastel visual system with cats, hearts, stars, flowers, cream fields, and dark outlines. The layouts are undated and use open fields rather than prefilled calendar dates.",
+      "alt_text": "Soft pastel Etsy product listing scene showing planner source page 0001 inside a cream display with pink, lavender, blue, yellow, flower, heart, and star accents.",
+      "claim_ids": [
+        "claim_pastel_kawaii_theme",
+        "claim_undated_layouts"
+      ],
+      "source_assets": [
+        {
+          "source_unit_id": "pdf-42169210530e-page-0001",
+          "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-01.png",
+          "render_sha256": "4960cc94f017977411e3a2361532c645ee73a94be7dd88aac31f3f97630b1f2b",
+          "crop_box": [
+            0,
+            0,
+            1684,
+            1191
+          ],
+          "destination_box": [
+            140,
+            220,
+            1860,
+            1680
+          ],
+          "transform": "contain-box"
+        }
+      ],
+      "source_theme_tokens": [
+        "Pastel pink",
+        "kawaii cats",
+        "hearts",
+        "stars",
+        "friendly cover",
+        "cream field"
+      ],
+      "product_evidence_target": 0.52,
+      "overlay_text": [
+        "Cute Undated Planner",
+        "Soft pastel pages for everyday planning"
+      ]
+    },
+    {
+      "slot": "02",
+      "output": "02-foundation.png",
+      "prompt": "Create a source-led Etsy product listing gallery image for the cute soft pastel undated digital planner. Show the real planner page as the dominant product evidence area, preserve its pastel kawaii visual language, and keep the scene polished, clear, and purchase-oriented. Etsy listing product gallery evidence: Use the index page as a quick scope preview without inventing extra sections. An index-led product view that lets a buyer understand the collection at a glance. Place the exact index page as the dominant product preview in the central display; keep the pastel tab scene visible around it.",
+      "buyer_question": "What is inside the planner?",
+      "composition": "Place the exact index page as the dominant product preview in the central display; keep the pastel tab scene visible around it.",
+      "scene": "index and scope preview",
+      "source_evidence_reason": "Rendered page 02 is the source index; pages 03 through 70 evidence the listed planner sections.",
+      "merchandising_intent": "Use the index page as a quick scope preview without inventing extra sections.",
+      "composition_rule": "Place the exact index page as the dominant product preview in the central display; keep the pastel tab scene visible around it.",
+      "factual_claim": "A monthly planning layout is included. Weekly planning layouts are included. Wellness tools include self-care, medication, water, vitamins, doctor visits, and mental-health challenge pages. Productivity tools include study, to-do, meeting, goal, and project pages. Finance tools include debt, sinking-funds, savings, monthly-budget, and bill-tracking pages.",
+      "alt_text": "Soft pastel Etsy product listing scene showing planner source page 0002 inside a cream display with pink, lavender, blue, yellow, flower, heart, and star accents.",
+      "claim_ids": [
+        "claim_monthly_planning",
+        "claim_weekly_planning",
+        "claim_wellness_tools",
+        "claim_productivity_tools",
+        "claim_finance_tools"
+      ],
+      "source_assets": [
+        {
+          "source_unit_id": "pdf-42169210530e-page-0002",
+          "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-02.png",
+          "render_sha256": "3feea2d08b2983d2cc4e04267a98fe4349db5b84d70a44a724ea14994a39f69d",
+          "crop_box": [
+            0,
+            0,
+            1684,
+            1191
+          ],
+          "destination_box": [
+            110,
+            180,
+            1890,
+            1690
+          ],
+          "transform": "contain-box"
+        }
+      ],
+      "source_theme_tokens": [
+        "Index page",
+        "pastel tabs",
+        "clear sections",
+        "airy layout",
+        "kawaii accents"
+      ],
+      "product_evidence_target": 0.52,
+      "overlay_text": [
+        "See What Is Inside",
+        "Monthly, weekly, wellness, productivity, and finance pages"
+      ]
+    },
+    {
+      "slot": "03",
+      "output": "03-foundation.png",
+      "prompt": "Create a source-led Etsy product listing gallery image for the cute soft pastel undated digital planner. Show the real planner page as the dominant product evidence area, preserve its pastel kawaii visual language, and keep the scene polished, clear, and purchase-oriented. Etsy listing product gallery evidence: Make the monthly page the clearest proof while the surrounding soft pastel scene communicates weekly planning rhythm. A planning-focused product view featuring the monthly layout. Composite the exact monthly page large in the main product area; use pastel tabs and stationery only as contextual framing.",
+      "buyer_question": "Does it include monthly and weekly planning?",
+      "composition": "Composite the exact monthly page large in the main product area; use pastel tabs and stationery only as contextual framing.",
+      "scene": "monthly planning flat-lay",
+      "source_evidence_reason": "Rendered pages 03, 05, and 06 show monthly and weekly planning layouts with open fields.",
+      "merchandising_intent": "Make the monthly page the clearest proof while the surrounding soft pastel scene communicates weekly planning rhythm.",
+      "composition_rule": "Composite the exact monthly page large in the main product area; use pastel tabs and stationery only as contextual framing.",
+      "factual_claim": "A monthly planning layout is included. Weekly planning layouts are included. The layouts are undated and use open fields rather than prefilled calendar dates.",
+      "alt_text": "Soft pastel Etsy product listing scene showing planner source page 0003 inside a cream display with pink, lavender, blue, yellow, flower, heart, and star accents.",
+      "claim_ids": [
+        "claim_monthly_planning",
+        "claim_weekly_planning",
+        "claim_undated_layouts"
+      ],
+      "source_assets": [
+        {
+          "source_unit_id": "pdf-42169210530e-page-0003",
+          "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-03.png",
+          "render_sha256": "95b72bcbe6679c94c07f2a7a99e3f14ce1708dd85cd45436c4d5e553415e5b58",
+          "crop_box": [
+            0,
+            0,
+            1684,
+            1191
+          ],
+          "destination_box": [
+            100,
+            260,
+            1900,
+            1700
+          ],
+          "transform": "contain-box"
+        }
+      ],
+      "source_theme_tokens": [
+        "Monthly grid",
+        "weekly rhythm",
+        "pastel blocks",
+        "open writing areas",
+        "soft pink and lavender"
+      ],
+      "product_evidence_target": 0.52,
+      "overlay_text": [
+        "Monthly + Weekly Planning",
+        "Open layouts for goals and routines"
+      ]
+    },
+    {
+      "slot": "04",
+      "output": "04-foundation.png",
+      "prompt": "Create a source-led Etsy product listing gallery image for the cute soft pastel undated digital planner. Show the real planner page as the dominant product evidence area, preserve its pastel kawaii visual language, and keep the scene polished, clear, and purchase-oriented. Etsy listing product gallery evidence: Show the everyday planning layer as a concrete product feature. A daily-planning product view with an individual day page clearly readable. Composite the exact Sunday planner page as the dominant preview; preserve the generated stationery around the outer border.",
+      "buyer_question": "Can I plan individual days as well?",
+      "composition": "Composite the exact Sunday planner page as the dominant preview; preserve the generated stationery around the outer border.",
+      "scene": "daily planning desk view",
+      "source_evidence_reason": "Rendered pages 10 through 16 show individual day pages for the full week.",
+      "merchandising_intent": "Show the everyday planning layer as a concrete product feature.",
+      "composition_rule": "Composite the exact Sunday planner page as the dominant preview; preserve the generated stationery around the outer border.",
+      "factual_claim": "Daily planning pages cover individual days of the week. The layouts are undated and use open fields rather than prefilled calendar dates.",
+      "alt_text": "Soft pastel Etsy product listing scene showing planner source page 0004 inside a cream display with pink, lavender, blue, yellow, flower, heart, and star accents.",
+      "claim_ids": [
+        "claim_daily_planning",
+        "claim_undated_layouts"
+      ],
+      "source_assets": [
+        {
+          "source_unit_id": "pdf-42169210530e-page-0004",
+          "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-04.png",
+          "render_sha256": "25c63486a19838bda8dad44f8f5dcb2e4bdc9038d3b69bfe05bdf8d66e0ecf28",
+          "crop_box": [
+            0,
+            0,
+            1684,
+            1191
+          ],
+          "destination_box": [
+            120,
+            180,
+            1880,
+            1660
+          ],
+          "transform": "contain-box"
+        }
+      ],
+      "source_theme_tokens": [
+        "Daily page",
+        "day-by-day planning",
+        "clean fields",
+        "pastel tabs",
+        "cozy desk"
+      ],
+      "product_evidence_target": 0.52,
+      "overlay_text": [
+        "Daily Pages",
+        "A focused page for every day"
+      ]
+    },
+    {
+      "slot": "05",
+      "output": "05-foundation.png",
+      "prompt": "Create a source-led Etsy product listing gallery image for the cute soft pastel undated digital planner. Show the real planner page as the dominant product evidence area, preserve its pastel kawaii visual language, and keep the scene polished, clear, and purchase-oriented. Etsy listing product gallery evidence: Connect the soft pastel theme with practical wellness planning tools shown in the source. A wellness-focused product view with the self-care page as the proof image. Composite the exact self-care page large and readable; keep water and gentle floral props outside the product evidence area.",
+      "buyer_question": "Are there wellness and self-care tools?",
+      "composition": "Composite the exact self-care page large and readable; keep water and gentle floral props outside the product evidence area.",
+      "scene": "wellness planner flat-lay",
+      "source_evidence_reason": "Rendered page 08 shows self-care; pages 09, 60, 62, 63, and 64 show additional wellness tools.",
+      "merchandising_intent": "Connect the soft pastel theme with practical wellness planning tools shown in the source.",
+      "composition_rule": "Composite the exact self-care page large and readable; keep water and gentle floral props outside the product evidence area.",
+      "factual_claim": "Wellness tools include self-care, medication, water, vitamins, doctor visits, and mental-health challenge pages.",
+      "alt_text": "Soft pastel Etsy product listing scene showing planner source page 0005 inside a cream display with pink, lavender, blue, yellow, flower, heart, and star accents.",
+      "claim_ids": [
+        "claim_wellness_tools"
+      ],
+      "source_assets": [
+        {
+          "source_unit_id": "pdf-42169210530e-page-0005",
+          "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-05.png",
+          "render_sha256": "55f91c7ca47253f418b4c8940772282b31a1fa8315fa267283c2ac97863d0a49",
+          "crop_box": [
+            0,
+            0,
+            1684,
+            1191
+          ],
+          "destination_box": [
+            120,
+            240,
+            1880,
+            1690
+          ],
+          "transform": "contain-box"
+        }
+      ],
+      "source_theme_tokens": [
+        "Self-care",
+        "wellness",
+        "gentle pastel",
+        "flowers",
+        "water",
+        "supportive layout"
+      ],
+      "product_evidence_target": 0.52,
+      "overlay_text": [
+        "Wellness Tools",
+        "Self-care, water, vitamins, and more"
+      ]
+    },
+    {
+      "slot": "06",
+      "output": "06-foundation.png",
+      "prompt": "Create a source-led Etsy product listing gallery image for the cute soft pastel undated digital planner. Show the real planner page as the dominant product evidence area, preserve its pastel kawaii visual language, and keep the scene polished, clear, and purchase-oriented. Etsy listing product gallery evidence: Show the practical productivity range without using unsupported feature language. A productivity-focused product view with the to-do page as a concrete example. Composite the exact to-do page as the dominant source page; arrange pastel note cards around the display as a visual rhythm only.",
+      "buyer_question": "Can I use it for study, tasks, meetings, and projects?",
+      "composition": "Composite the exact to-do page as the dominant source page; arrange pastel note cards around the display as a visual rhythm only.",
+      "scene": "productivity desk view",
+      "source_evidence_reason": "Rendered pages 54 through 58 show study, to-do, meeting, goal, and project layouts.",
+      "merchandising_intent": "Show the practical productivity range without using unsupported feature language.",
+      "composition_rule": "Composite the exact to-do page as the dominant source page; arrange pastel note cards around the display as a visual rhythm only.",
+      "factual_claim": "Productivity tools include study, to-do, meeting, goal, and project pages.",
+      "alt_text": "Soft pastel Etsy product listing scene showing planner source page 0006 inside a cream display with pink, lavender, blue, yellow, flower, heart, and star accents.",
+      "claim_ids": [
+        "claim_productivity_tools"
+      ],
+      "source_assets": [
+        {
+          "source_unit_id": "pdf-42169210530e-page-0006",
+          "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-06.png",
+          "render_sha256": "bd9f617683915c4afa7022db14c357c0ef86825bbfd4309091e27085989c60bd",
+          "crop_box": [
+            0,
+            0,
+            1684,
+            1191
+          ],
+          "destination_box": [
+            100,
+            190,
+            1900,
+            1650
+          ],
+          "transform": "contain-box"
+        }
+      ],
+      "source_theme_tokens": [
+        "To-do page",
+        "study planning",
+        "meeting notes",
+        "goals",
+        "projects",
+        "pastel stationery"
+      ],
+      "product_evidence_target": 0.52,
+      "overlay_text": [
+        "Productivity Pages",
+        "Tasks, meetings, goals, and projects"
+      ]
+    },
+    {
+      "slot": "07",
+      "output": "07-foundation.png",
+      "prompt": "Create a source-led Etsy product listing gallery image for the cute soft pastel undated digital planner. Show the real planner page as the dominant product evidence area, preserve its pastel kawaii visual language, and keep the scene polished, clear, and purchase-oriented. Etsy listing product gallery evidence: Make the finance section tangible and easy to understand from the listing gallery. A finance-focused product view with the monthly budget page as the proof image. Composite the exact monthly-budget page large in the central product area; use abstract pastel stationery with no invented numbers.",
+      "buyer_question": "Are there pages for budgeting and money planning?",
+      "composition": "Composite the exact monthly-budget page large in the central product area; use abstract pastel stationery with no invented numbers.",
+      "scene": "finance planning flat-lay",
+      "source_evidence_reason": "Rendered pages 66 through 70 show finance trackers for debt, sinking funds, savings, budget, and bills.",
+      "merchandising_intent": "Make the finance section tangible and easy to understand from the listing gallery.",
+      "composition_rule": "Composite the exact monthly-budget page large in the central product area; use abstract pastel stationery with no invented numbers.",
+      "factual_claim": "Finance tools include debt, sinking-funds, savings, monthly-budget, and bill-tracking pages.",
+      "alt_text": "Soft pastel Etsy product listing scene showing planner source page 0007 inside a cream display with pink, lavender, blue, yellow, flower, heart, and star accents.",
+      "claim_ids": [
+        "claim_finance_tools"
+      ],
+      "source_assets": [
+        {
+          "source_unit_id": "pdf-42169210530e-page-0007",
+          "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-07.png",
+          "render_sha256": "7660ad9b189a04e6dd62593b5084d94f57708429f1f2b758da7e2d21920f6066",
+          "crop_box": [
+            0,
+            0,
+            1684,
+            1191
+          ],
+          "destination_box": [
+            100,
+            230,
+            1900,
+            1690
+          ],
+          "transform": "contain-box"
+        }
+      ],
+      "source_theme_tokens": [
+        "Monthly budget",
+        "finance planning",
+        "savings",
+        "bills",
+        "pastel calculator shape"
+      ],
+      "product_evidence_target": 0.52,
+      "overlay_text": [
+        "Finance Trackers",
+        "Budget, bills, savings, and debt"
+      ]
+    },
+    {
+      "slot": "08",
+      "output": "08-foundation.png",
+      "prompt": "Create a source-led Etsy product listing gallery image for the cute soft pastel undated digital planner. Show the real planner page as the dominant product evidence area, preserve its pastel kawaii visual language, and keep the scene polished, clear, and purchase-oriented. Etsy listing product gallery evidence: Present a distinctive long-term planning feature from the source rather than a generic blank device. A feature-preview product view using the 30-day challenge page. Composite the exact 30-day challenge page as the dominant source evidence; keep abstract sticker-like shapes as perimeter accents.",
+      "buyer_question": "Does the planner support longer-term challenges and routines?",
+      "composition": "Composite the exact 30-day challenge page as the dominant source evidence; keep abstract sticker-like shapes as perimeter accents.",
+      "scene": "challenge and routine preview",
+      "source_evidence_reason": "Rendered pages 61 and 64 show 30-day challenge layouts for productivity and mental health.",
+      "merchandising_intent": "Present a distinctive long-term planning feature from the source rather than a generic blank device.",
+      "composition_rule": "Composite the exact 30-day challenge page as the dominant source evidence; keep abstract sticker-like shapes as perimeter accents.",
+      "factual_claim": "Productivity tools include study, to-do, meeting, goal, and project pages. Wellness tools include self-care, medication, water, vitamins, doctor visits, and mental-health challenge pages.",
+      "alt_text": "Soft pastel Etsy product listing scene showing planner source page 0008 inside a cream display with pink, lavender, blue, yellow, flower, heart, and star accents.",
+      "claim_ids": [
+        "claim_productivity_tools",
+        "claim_wellness_tools"
+      ],
+      "source_assets": [
+        {
+          "source_unit_id": "pdf-42169210530e-page-0008",
+          "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-08.png",
+          "render_sha256": "367feb57550796665ad0b4a6e9c02649eaed9634a23e8b593b63ad8d77793ce9",
+          "crop_box": [
+            0,
+            0,
+            1684,
+            1191
+          ],
+          "destination_box": [
+            130,
+            200,
+            1870,
+            1680
+          ],
+          "transform": "contain-box"
+        }
+      ],
+      "source_theme_tokens": [
+        "30-day challenge",
+        "routines",
+        "pastel shapes",
+        "hearts",
+        "stars",
+        "flowers"
+      ],
+      "product_evidence_target": 0.52,
+      "overlay_text": [
+        "Challenge Pages",
+        "Build routines with gentle structure"
+      ]
+    },
+    {
+      "slot": "09",
+      "output": "09-foundation.png",
+      "prompt": "Create a source-led Etsy product listing gallery image for the cute soft pastel undated digital planner. Show the real planner page as the dominant product evidence area, preserve its pastel kawaii visual language, and keep the scene polished, clear, and purchase-oriented. Etsy listing product gallery evidence: Give buyers a closer look at a focused page for turning intentions into organized plans. A goals-led product view using the goal planner page as proof. Composite the exact goal planner page large and crisp; keep the soft study-desk props secondary to the product page.",
+      "buyer_question": "Can I see a goal or focused planning page?",
+      "composition": "Composite the exact goal planner page large and crisp; keep the soft study-desk props secondary to the product page.",
+      "scene": "goal planning study desk",
+      "source_evidence_reason": "Rendered page 57 shows the goal planner layout; related planning pages appear throughout the source.",
+      "merchandising_intent": "Give buyers a closer look at a focused page for turning intentions into organized plans.",
+      "composition_rule": "Composite the exact goal planner page large and crisp; keep the soft study-desk props secondary to the product page.",
+      "factual_claim": "Productivity tools include study, to-do, meeting, goal, and project pages. The layouts are undated and use open fields rather than prefilled calendar dates.",
+      "alt_text": "Soft pastel Etsy product listing scene showing planner source page 0009 inside a cream display with pink, lavender, blue, yellow, flower, heart, and star accents.",
+      "claim_ids": [
+        "claim_productivity_tools",
+        "claim_undated_layouts"
+      ],
+      "source_assets": [
+        {
+          "source_unit_id": "pdf-42169210530e-page-0009",
+          "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-09.png",
+          "render_sha256": "76a4fd1074d7d65b6069d1475508aec7574855f231b10c7aaacbd0f91a7564c9",
+          "crop_box": [
+            0,
+            0,
+            1684,
+            1191
+          ],
+          "destination_box": [
+            100,
+            210,
+            1900,
+            1690
+          ],
+          "transform": "contain-box"
+        }
+      ],
+      "source_theme_tokens": [
+        "Goal planner",
+        "organized writing space",
+        "lavender",
+        "soft pink",
+        "stars",
+        "flowers"
+      ],
+      "product_evidence_target": 0.52,
+      "overlay_text": [
+        "A Complete Planning System",
+        "Built around your routines"
+      ]
+    },
+    {
+      "slot": "10",
+      "output": "10-foundation.png",
+      "prompt": "Create a source-led Etsy product listing gallery image for the cute soft pastel undated digital planner. Show the real planner page as the dominant product evidence area, preserve its pastel kawaii visual language, and keep the scene polished, clear, and purchase-oriented. Etsy listing product gallery evidence: Close the gallery with the certificate page and a neutral review reminder. A warm closing product presentation that leaves the buyer with a clear source preview and thank-you message. Composite the exact certificate page high in the central product area, leave the lower region clear for the exact THANK YOU overlay, and keep décor subtle. Review the listing description for current usage terms. Include a clear THANK YOU closing and the neutral sentence: Review the listing description for current usage terms.",
+      "buyer_question": "What will I receive after viewing the listing?",
+      "composition": "Composite the exact certificate page high in the central product area, leave the lower region clear for the exact THANK YOU overlay, and keep décor subtle. Review the listing description for current usage terms.",
+      "scene": "thank-you closing preview",
+      "source_evidence_reason": "Rendered page 71 shows the certificate page and closes the 71-page source preview.",
+      "merchandising_intent": "Close the gallery with the certificate page and a neutral review reminder.",
+      "composition_rule": "Composite the exact certificate page high in the central product area, leave the lower region clear for the exact THANK YOU overlay, and keep décor subtle. Review the listing description for current usage terms.",
+      "factual_claim": "A certificate page is included at the end of the planner. The planner uses a cute soft pastel visual system with cats, hearts, stars, flowers, cream fields, and dark outlines.",
+      "alt_text": "Soft pastel Etsy product listing scene showing planner source page 0010 inside a cream display with pink, lavender, blue, yellow, flower, heart, and star accents.",
+      "claim_ids": [
+        "claim_certificate_page",
+        "claim_pastel_kawaii_theme"
+      ],
+      "source_assets": [
+        {
+          "source_unit_id": "pdf-42169210530e-page-0010",
+          "render": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/source-review/rendered/CUTE SOFT PASTEL UNDATED DIGITAL PLANNER/page-10.png",
+          "render_sha256": "4187d7b72a8887f62f80a6e0a1b5616bc26e4419a1841b431af5674aedbc0a2c",
+          "crop_box": [
+            0,
+            0,
+            1684,
+            1191
+          ],
+          "destination_box": [
+            120,
+            100,
+            1880,
+            1460
+          ],
+          "transform": "contain-box"
+        }
+      ],
+      "source_theme_tokens": [
+        "Certificate page",
+        "soft pastel closing",
+        "thank-you",
+        "cream display",
+        "gentle flowers"
+      ],
+      "product_evidence_target": 0.52,
+      "overlay_text": [
+        "THANK YOU",
+        "Review the listing description for current usage terms."
+      ]
+    }
+  ]
+}

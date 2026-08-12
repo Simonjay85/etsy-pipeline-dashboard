@@ -1,87 +1,87 @@
 {
   "01_planners_daily_weekly_monthly/49_capricorn_weekly_planner": {
     "daisyflowdigital": "product-83",
-    "templystudios": "product-41"
+    "templystudios": "product-391"
   },
   "01_planners_daily_weekly_monthly/50_libra_weekly_planner": {
     "daisyflowdigital": "product-84",
-    "templystudios": "product-42"
+    "templystudios": "product-392"
   },
   "01_planners_daily_weekly_monthly/51_scorpio_weekly_planner": {
     "daisyflowdigital": "product-85",
-    "templystudios": "product-43"
+    "templystudios": "product-393"
   },
   "01_planners_daily_weekly_monthly/52_leo_weekly_planner": {
     "daisyflowdigital": "product-86",
-    "templystudios": "product-44"
+    "templystudios": "product-394"
   },
   "01_planners_daily_weekly_monthly/53_plantify_weekly_planner": {
     "daisyflowdigital": "product-87",
-    "templystudios": "product-45"
+    "templystudios": "product-395"
   },
   "01_planners_daily_weekly_monthly/54_plantify_daily_journal": {
     "daisyflowdigital": "product-88",
-    "templystudios": "product-46"
+    "templystudios": "product-396"
   },
   "01_planners_daily_weekly_monthly/59_plantify_daily_brain_dump_goals_noimage": {
     "daisyflowdigital": "product-89",
-    "templystudios": "product-47"
+    "templystudios": "product-397"
   },
   "01_planners_daily_weekly_monthly/60_plantify_2026_monthly_overview_noimage": {
     "daisyflowdigital": "product-90",
-    "templystudios": "product-48"
+    "templystudios": "product-398"
   },
   "01_planners_daily_weekly_monthly/61_plantify_weekly_plan_noimage": {
     "daisyflowdigital": "product-91",
-    "templystudios": "product-49"
+    "templystudios": "product-399"
   },
   "01_planners_daily_weekly_monthly/62_book_lover_work_personal_planner": {
     "daisyflowdigital": "product-92",
-    "templystudios": "product-50"
+    "templystudios": "product-400"
   },
   "01_planners_daily_weekly_monthly/65_nursery_newborn_planner_noimage": {
     "daisyflowdigital": "product-93",
-    "templystudios": "product-51"
+    "templystudios": "product-401"
   },
   "04_lifestyle_home_events/46_spring_journal": {
     "daisyflowdigital": "product-94",
-    "templystudios": "product-52"
+    "templystudios": "product-402"
   },
   "04_lifestyle_home_events/47_spring_cleaning_checklist": {
     "daisyflowdigital": "product-95",
-    "templystudios": "product-53"
+    "templystudios": "product-403"
   },
   "04_lifestyle_home_events/63_book_lover_movie_series_to_watch": {
     "daisyflowdigital": "product-96",
-    "templystudios": "product-54"
+    "templystudios": "product-404"
   },
   "08_study_learning/58_plantify_vocabulary_worksheets": {
     "daisyflowdigital": "product-97",
-    "templystudios": "product-55"
+    "templystudios": "product-405"
   },
   "NoImages/39_shadow_work_worksheet_incomplete": {
     "daisyflowdigital": "product-98",
-    "templystudios": "product-56"
+    "templystudios": "product-406"
   },
   "NoImages/45_meal_plan_noimage": {
     "daisyflowdigital": "product-99",
-    "templystudios": "product-57"
+    "templystudios": "product-407"
   },
   "NoImages/48_spring_bucket_list_noimage": {
     "daisyflowdigital": "product-100",
-    "templystudios": "product-58"
+    "templystudios": "product-408"
   },
   "NoImages/55_plantify_daily_brain_dump": {
     "daisyflowdigital": "product-101",
-    "templystudios": "product-59"
+    "templystudios": "product-409"
   },
   "NoImages/56_plantify_seasonal_intentions": {
     "daisyflowdigital": "product-102",
-    "templystudios": "product-60"
+    "templystudios": "product-410"
   },
   "NoImages/57_plantify_draw_your_pets": {
     "daisyflowdigital": "product-103",
-    "templystudios": "product-61"
+    "templystudios": "product-411"
   },
   "sync:templystudios/product-02": {
     "daisyflowdigital": "product-02"
@@ -787,62 +787,5 @@
   },
   "sync:templystudios/product-411": {
     "daisyflowdigital": "product-103"
-  },
-  "master:product-03": {
-    "daisyflowdigital": "product-409"
-  },
-  "master:product-04": {
-    "daisyflowdigital": "product-410"
-  },
-  "master:product-05": {
-    "daisyflowdigital": "product-411"
-  },
-  "master:product-06": {
-    "daisyflowdigital": "product-412"
-  },
-  "master:product-07": {
-    "daisyflowdigital": "product-413"
-  },
-  "master:product-08": {
-    "daisyflowdigital": "product-414"
-  },
-  "master:product-09": {
-    "daisyflowdigital": "product-415"
-  },
-  "master:product-10": {
-    "daisyflowdigital": "product-416"
-  },
-  "master:product-11": {
-    "daisyflowdigital": "product-417"
-  },
-  "master:product-12": {
-    "daisyflowdigital": "product-418"
-  },
-  "master:product-13": {
-    "daisyflowdigital": "product-419"
-  },
-  "master:product-14": {
-    "daisyflowdigital": "product-420"
-  },
-  "master:product-15": {
-    "daisyflowdigital": "product-421"
-  },
-  "master:product-16": {
-    "daisyflowdigital": "product-422"
-  },
-  "master:product-18": {
-    "daisyflowdigital": "product-423"
-  },
-  "master:product-22": {
-    "daisyflowdigital": "product-424"
-  },
-  "master:product-23": {
-    "daisyflowdigital": "product-425"
-  },
-  "master:product-24": {
-    "daisyflowdigital": "product-426"
-  },
-  "master:product-25": {
-    "daisyflowdigital": "product-427"
   }
 }

@@ -1,0 +1,332 @@
+{
+  "schema": "etsy-post-composite-visual-qa-v1",
+  "status": "pending",
+  "shop_key": "daisy",
+  "campaign_id": "cute-soft-pastel-undated-planner-daisy-20260806",
+  "source_fingerprint": "d400f57b1d13c07607ee37e71edf4c312a43f7e0cc64d59f10cb3f7f82d83be1",
+  "finalized_at": "2026-08-06T10:46:01.311348+00:00",
+  "reviewer": "",
+  "reviewed_at": "",
+  "slots": [
+    {
+      "slot": "01",
+      "final_filename": "01-foundation.png",
+      "final_sha256": "aa36bef6e8b846de4b427faf226ea7402113cd8167c6b6c67a88e5ad0f7f41ad",
+      "final_dimensions": [
+        2000,
+        2000
+      ],
+      "thumbnails": {
+        "1000": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/qa/thumbnails/01-1000.png",
+          "sha256": "81a28ebf96df639b7129a6dd567bfcc2a2e020d7e62026c566f2248a0a05067d",
+          "dimensions": [
+            1000,
+            1000
+          ]
+        },
+        "300": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/qa/thumbnails/01-300.png",
+          "sha256": "cd15e9ac1b5bbc6edeb9f9792db6df986dc418b6572406c9b09d6f586819bdc6",
+          "dimensions": [
+            300,
+            300
+          ]
+        }
+      },
+      "product_dominant": null,
+      "blank_lifestyle_mockup": null,
+      "source_theme_faithful": null,
+      "etsy_merchandising_ready": null,
+      "notes": ""
+    },
+    {
+      "slot": "02",
+      "final_filename": "02-foundation.png",
+      "final_sha256": "b45feb691299b0db4a352390ad51be8f459a86743bb3b5d1d7edbebcbdb1f367",
+      "final_dimensions": [
+        2000,
+        2000
+      ],
+      "thumbnails": {
+        "1000": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/qa/thumbnails/02-1000.png",
+          "sha256": "256e257c7d39ea6331c2ed113b34d08f1fec8190e08572bd69144fe145c16b80",
+          "dimensions": [
+            1000,
+            1000
+          ]
+        },
+        "300": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/qa/thumbnails/02-300.png",
+          "sha256": "ab77febd6dca269aa63fed391149dc85d77eceb65aa27fba460c86053939d0f3",
+          "dimensions": [
+            300,
+            300
+          ]
+        }
+      },
+      "product_dominant": null,
+      "blank_lifestyle_mockup": null,
+      "source_theme_faithful": null,
+      "etsy_merchandising_ready": null,
+      "notes": ""
+    },
+    {
+      "slot": "03",
+      "final_filename": "03-foundation.png",
+      "final_sha256": "d1cb612dc3c307a7996c51e2c9dc19fed83a00d96e288fd0db5634d94096bce7",
+      "final_dimensions": [
+        2000,
+        2000
+      ],
+      "thumbnails": {
+        "1000": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/qa/thumbnails/03-1000.png",
+          "sha256": "d1a9d9308d74b177d9e7eff189660b0184b75473a9ed11a1ef4874f6a22dc460",
+          "dimensions": [
+            1000,
+            1000
+          ]
+        },
+        "300": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/qa/thumbnails/03-300.png",
+          "sha256": "78266c2feb03cb7425489a460549b2c9209776b0fcd573cab65adb5d4bebb9e0",
+          "dimensions": [
+            300,
+            300
+          ]
+        }
+      },
+      "product_dominant": null,
+      "blank_lifestyle_mockup": null,
+      "source_theme_faithful": null,
+      "etsy_merchandising_ready": null,
+      "notes": ""
+    },
+    {
+      "slot": "04",
+      "final_filename": "04-foundation.png",
+      "final_sha256": "bb67a742e034b98f63067ab857de81c34d364a02a965d1f5cc41ee04ee8c21ee",
+      "final_dimensions": [
+        2000,
+        2000
+      ],
+      "thumbnails": {
+        "1000": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/qa/thumbnails/04-1000.png",
+          "sha256": "859b205fe01155e3218a9501334d5750b9053feaee899b022e7d6cb09860de94",
+          "dimensions": [
+            1000,
+            1000
+          ]
+        },
+        "300": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/qa/thumbnails/04-300.png",
+          "sha256": "05953759e06f85db69ddfe712f011b720ac468779c6ffd62a12fa189ee593aa1",
+          "dimensions": [
+            300,
+            300
+          ]
+        }
+      },
+      "product_dominant": null,
+      "blank_lifestyle_mockup": null,
+      "source_theme_faithful": null,
+      "etsy_merchandising_ready": null,
+      "notes": ""
+    },
+    {
+      "slot": "05",
+      "final_filename": "05-foundation.png",
+      "final_sha256": "b2e2e19ee5b05991ca10e8c3065d74070a45bcb3c302a91302756a53dcb47008",
+      "final_dimensions": [
+        2000,
+        2000
+      ],
+      "thumbnails": {
+        "1000": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/qa/thumbnails/05-1000.png",
+          "sha256": "b7577f69cc4eb786627acadc2d6c16a375aa3264a970a38ac948a4458e4b6b19",
+          "dimensions": [
+            1000,
+            1000
+          ]
+        },
+        "300": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/qa/thumbnails/05-300.png",
+          "sha256": "786d3bf184ababfa4d6127f8f3daa8a88ae7eeb7f0492979e7ee036b45358ae9",
+          "dimensions": [
+            300,
+            300
+          ]
+        }
+      },
+      "product_dominant": null,
+      "blank_lifestyle_mockup": null,
+      "source_theme_faithful": null,
+      "etsy_merchandising_ready": null,
+      "notes": ""
+    },
+    {
+      "slot": "06",
+      "final_filename": "06-foundation.png",
+      "final_sha256": "7a0d798d8a2a0a1676eddce3bad543d1baf175440503d27b8cf9f95a03ef3571",
+      "final_dimensions": [
+        2000,
+        2000
+      ],
+      "thumbnails": {
+        "1000": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/qa/thumbnails/06-1000.png",
+          "sha256": "49a717e6c2102ad51b9e091c833df354c454d038097a0f8ca3cb87b8bcb8aa5d",
+          "dimensions": [
+            1000,
+            1000
+          ]
+        },
+        "300": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/qa/thumbnails/06-300.png",
+          "sha256": "4c7c729a593bd96a920226df5c30464c4bea82037b46219b0508f01988a73679",
+          "dimensions": [
+            300,
+            300
+          ]
+        }
+      },
+      "product_dominant": null,
+      "blank_lifestyle_mockup": null,
+      "source_theme_faithful": null,
+      "etsy_merchandising_ready": null,
+      "notes": ""
+    },
+    {
+      "slot": "07",
+      "final_filename": "07-foundation.png",
+      "final_sha256": "2a9028d3ab0846b61dc60cec6f7713df91852335f3545d8213d8d0b756cd1de1",
+      "final_dimensions": [
+        2000,
+        2000
+      ],
+      "thumbnails": {
+        "1000": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/qa/thumbnails/07-1000.png",
+          "sha256": "f0011c507a816e68c2cf7e182c1c4d4db127c32dfd79ed0a9dffedb586ef6afb",
+          "dimensions": [
+            1000,
+            1000
+          ]
+        },
+        "300": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/qa/thumbnails/07-300.png",
+          "sha256": "c3d3cae2bdfefd973bc3caa4b7a74b11c2f254838b1901f867f5156c870056a0",
+          "dimensions": [
+            300,
+            300
+          ]
+        }
+      },
+      "product_dominant": null,
+      "blank_lifestyle_mockup": null,
+      "source_theme_faithful": null,
+      "etsy_merchandising_ready": null,
+      "notes": ""
+    },
+    {
+      "slot": "08",
+      "final_filename": "08-foundation.png",
+      "final_sha256": "634448aedb7e19ddf266d93109def62b1e255355936cff805805cf773ca4c070",
+      "final_dimensions": [
+        2000,
+        2000
+      ],
+      "thumbnails": {
+        "1000": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/qa/thumbnails/08-1000.png",
+          "sha256": "37913e96cf1702cba66a49e3febabc7d66c5b6ce5f36bbff63004f70aff4038e",
+          "dimensions": [
+            1000,
+            1000
+          ]
+        },
+        "300": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/qa/thumbnails/08-300.png",
+          "sha256": "b28943f877c15b1472b4b05d99c3fca605648e92d3926a45d623abde316e5c01",
+          "dimensions": [
+            300,
+            300
+          ]
+        }
+      },
+      "product_dominant": null,
+      "blank_lifestyle_mockup": null,
+      "source_theme_faithful": null,
+      "etsy_merchandising_ready": null,
+      "notes": ""
+    },
+    {
+      "slot": "09",
+      "final_filename": "09-foundation.png",
+      "final_sha256": "680dffccb659d3575d71922d0efe09e24aeb5b619cf90b993dd15f1196c6af10",
+      "final_dimensions": [
+        2000,
+        2000
+      ],
+      "thumbnails": {
+        "1000": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/qa/thumbnails/09-1000.png",
+          "sha256": "e6191d873cae8a1353aaf078f32fb3530e420620a29eba13cf157fb152194246",
+          "dimensions": [
+            1000,
+            1000
+          ]
+        },
+        "300": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/qa/thumbnails/09-300.png",
+          "sha256": "5de4a4eb484ec861042b92db12e1e0cbea82f561fa04ded859f79823040954ff",
+          "dimensions": [
+            300,
+            300
+          ]
+        }
+      },
+      "product_dominant": null,
+      "blank_lifestyle_mockup": null,
+      "source_theme_faithful": null,
+      "etsy_merchandising_ready": null,
+      "notes": ""
+    },
+    {
+      "slot": "10",
+      "final_filename": "10-foundation.png",
+      "final_sha256": "889541bbb98f1a6d1555ffe4a41539ca8b958a38374021833467578692d237ff",
+      "final_dimensions": [
+        2000,
+        2000
+      ],
+      "thumbnails": {
+        "1000": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/qa/thumbnails/10-1000.png",
+          "sha256": "25057b8230111196eaae66f91d3908af25a8bb45937d105b1c0744cce9e0a18d",
+          "dimensions": [
+            1000,
+            1000
+          ]
+        },
+        "300": {
+          "path": "/Users/aaronnguyen/Documents/Claude/Projects/Etsy/staged/cute-soft-pastel-undated-planner-daisy-20260806/qa/thumbnails/10-300.png",
+          "sha256": "a6a93cc5fbe439239ee4074f23235b06a0afd133c750d4ed003aed795d814609",
+          "dimensions": [
+            300,
+            300
+          ]
+        }
+      },
+      "product_dominant": null,
+      "blank_lifestyle_mockup": null,
+      "source_theme_faithful": null,
+      "etsy_merchandising_ready": null,
+      "notes": ""
+    }
+  ]
+}

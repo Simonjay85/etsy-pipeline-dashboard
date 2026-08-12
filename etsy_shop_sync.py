@@ -7,8 +7,10 @@ Etsy API because new Etsy API access is not available for this workflow.
 import argparse
 import asyncio
 import json
+import os
 import re
 import shutil
+import subprocess
 from collections import Counter
 from datetime import datetime
 from difflib import SequenceMatcher
@@ -17,17 +19,14 @@ from pathlib import Path
 import openpyxl
 from playwright.async_api import async_playwright
 
-from cloud_asset_store import CloudAssetError, CloudAssetStore
-from etsy_browser_session import is_session_ready, resolve_etsy_session
-
 BASE_DIR = Path(__file__).parent
+BROWSER_DIR = BASE_DIR / ".browser-session"
+CHROME_PATH = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 SHOP_MANAGER_URL = "https://www.etsy.com/your/shops/me/tools/listings"
 SHOPS_CONFIG_FILE = BASE_DIR / "shops_config.json"
-# Only these statuses are eligible to change local workbook mappings/statuses.
-# The snapshot crawl deliberately includes every Manager status below so the
-# dashboard total remains an honest shop total rather than active+draft only.
+# Only these statuses are crawled/synced during Etsy shop synchronization.
 SYNC_TARGET_STATUSES = ("active", "draft")
-# Manager statuses retained in the read-only snapshot/report.
+# Keep legacy statuses so older snapshots and reports remain parseable.
 ALL_MANAGER_STATUSES = ("active", "draft", "inactive", "expired")
 STATUS_LABELS = {
     "active": "✅ Đã đăng",
@@ -35,50 +34,6 @@ STATUS_LABELS = {
     "inactive": "⏸ Inactive trên Etsy",
     "expired": "⌛ Expired trên Etsy",
 }
-
-
-def record_local_sync_candidate(
-    shop_id: str,
-    folder: str,
-    store: CloudAssetStore,
-) -> dict:
-    """Record a local candidate only after an explicit asset-writing sync.
-
-    ``sync_excel`` only reconciles Etsy listings into the workbook; it does not
-    write product assets, so it deliberately does not call this helper. An
-    asset-writing caller may invoke it after its write succeeds. The strict
-    path checks prevent a shop copy, traversal, or incomplete product root
-    from being treated as a canonical candidate.
-    """
-
-    shop_text = str(shop_id or "").strip()
-    folder_text = str(folder or "").strip()
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", shop_text):
-        return {"ok": True, "marked": False, "reason": "shop is not a safe identifier"}
-    if not re.fullmatch(r"product-\d+", folder_text):
-        return {"ok": True, "marked": False, "reason": "folder is not a product root"}
-
-    shop_dir = BASE_DIR / "shops" / shop_text
-    product_root = shop_dir / folder_text
-    if (
-        shop_dir.is_symlink()
-        or not shop_dir.is_dir()
-        or product_root.is_symlink()
-        or not product_root.is_dir()
-        or product_root.resolve().parent != shop_dir.resolve()
-        or any(
-            (product_root / dirname).is_symlink()
-            or not (product_root / dirname).is_dir()
-            for dirname in ("images", "files")
-        )
-    ):
-        return {"ok": True, "marked": False, "reason": "product root is not clearly resolved"}
-
-    try:
-        result = store.record_local_candidate(product_root)
-    except (CloudAssetError, OSError, ValueError, TypeError, KeyError) as exc:
-        return {"ok": False, "marked": False, "reason": str(exc)}
-    return dict(result) if isinstance(result, dict) else {"ok": False, "marked": False, "reason": "invalid core result"}
 
 
 def normalize_title(value: str) -> str:
@@ -236,7 +191,7 @@ async def crawl_status(page, status: str) -> list[dict]:
     all_items = []
     seen_ids = set()
 
-    for page_num in range(1, 31):
+    for page_num in range(1, 30):
         if page_num > 1:
             # Etsy's manager route keeps filters in the path, e.g.
             # /tools/listings/page:2,state:inactive. A slash before state drops
@@ -262,43 +217,54 @@ async def crawl_status(page, status: str) -> list[dict]:
 
 async def crawl_etsy_shop(shop_id: str) -> dict:
     shops = json.loads(SHOPS_CONFIG_FILE.read_text(encoding="utf-8")) if SHOPS_CONFIG_FILE.exists() else {}
-    session = resolve_etsy_session(BASE_DIR, shops, shop_id)
-    if not is_session_ready(session):
-        raise RuntimeError(
-            "Phiên Etsy chưa sẵn sàng cho shop này (chưa đăng nhập/không đúng Chrome CDP profile). "
-            "Mở đúng cửa sổ Chrome đăng nhập Etsy trước, rồi chạy lại."
-        )
-    async with async_playwright() as pw:
-        browser = await pw.chromium.connect_over_cdp(session.cdp_url, timeout=5000)
-        if not browser.contexts:
-            raise RuntimeError(
-                "Không thấy browser context cho phiên Etsy. Mở cửa sổ Chrome đăng nhập cho shop trước rồi thử lại."
-            )
-        context = browser.contexts[0]
-        page = None
+    configured_session = str(shops.get(shop_id, {}).get("browser_session") or "").strip()
+    if configured_session:
+        browser_dir = Path(os.path.expanduser(configured_session))
+    elif shop_id == "templystudios":
+        browser_dir = BROWSER_DIR
+    else:
+        browser_dir = Path.home() / f".etsy_browser_session_{shop_id}"
+    browser_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["pkill", "-f", f"user-data-dir={browser_dir}"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    await asyncio.sleep(1)
+    for lock_name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
         try:
-            page = await context.new_page()
-            page.set_default_timeout(30000)
-            await page.goto(SHOP_MANAGER_URL, wait_until="domcontentloaded", timeout=60000)
-            await page.wait_for_timeout(3000)
-            if "signin" in page.url or "join" in page.url:
-                raise RuntimeError("Chrome session chưa đăng nhập Etsy. Anh mở Chrome sync rồi login Etsy trước giúp em.")
+            (browser_dir / lock_name).unlink(missing_ok=True)
+        except Exception:
+            pass
+    async with async_playwright() as pw:
+        launch_kw = {
+            "user_data_dir": str(browser_dir),
+            "headless": False,
+            "args": ["--start-maximized", "--disable-blink-features=AutomationControlled"],
+            "viewport": None,
+        }
+        if CHROME_PATH.exists():
+            launch_kw["executable_path"] = str(CHROME_PATH)
+        ctx = await pw.chromium.launch_persistent_context(**launch_kw)
+        page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+        page.set_default_timeout(30000)
+        await page.goto(SHOP_MANAGER_URL, wait_until="domcontentloaded", timeout=60000)
+        await page.wait_for_timeout(3000)
+        if "signin" in page.url or "join" in page.url:
+            await ctx.close()
+            raise RuntimeError("Chrome session chưa đăng nhập Etsy. Anh mở Chrome sync rồi login Etsy trước giúp em.")
 
-            actual_shop = await verify_active_etsy_shop(page, shop_id)
-            result = {
-                "crawledAt": datetime.now().isoformat(timespec="seconds"),
-                "shopId": shop_id,
-                "shopSlug": actual_shop,
-            }
-            for status in ALL_MANAGER_STATUSES:
-                result[status] = await crawl_status(page, status)
-            return result
-        finally:
-            if page is not None:
-                try:
-                    await page.close()
-                except Exception:
-                    pass
+        actual_shop = await verify_active_etsy_shop(page, shop_id)
+        result = {
+            "crawledAt": datetime.now().isoformat(timespec="seconds"),
+            "shopId": shop_id,
+            "shopSlug": actual_shop,
+        }
+        for status in SYNC_TARGET_STATUSES:
+            result[status] = await crawl_status(page, status)
+        await ctx.close()
+        return result
 
 
 def sync_excel(shop_id: str, crawled: dict) -> dict:
@@ -314,9 +280,6 @@ def sync_excel(shop_id: str, crawled: dict) -> dict:
     shutil.copy2(excel_path, backup)
     crawl_path.write_text(json.dumps(crawled, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    # Do not make inactive/expired records candidates for Excel matching.  They
-    # are preserved in ``crawled``/the snapshot for correct dashboard totals,
-    # but cannot overwrite a local URL or status during sync reconciliation.
     listings = []
     for status in SYNC_TARGET_STATUSES:
         for item in _as_status_list(crawled, status):
@@ -461,9 +424,6 @@ def sync_excel(shop_id: str, crawled: dict) -> dict:
         if ws.cell(row=row_num, column=16).value:
             url_count += 1
 
-    snapshot_total = sum(
-        len(_as_status_list(crawled, status)) for status in ALL_MANAGER_STATUSES
-    )
     report = {
         "created_at": ts,
         "shop": shop_id,
@@ -471,8 +431,7 @@ def sync_excel(shop_id: str, crawled: dict) -> dict:
         "backup": str(backup),
         "crawl": str(crawl_path),
         "etsy_counts": {status: len(_as_status_list(crawled, status)) for status in ALL_MANAGER_STATUSES},
-        "etsy_total": snapshot_total,
-        "syncable_etsy_total": len(listings),
+        "etsy_total": len(listings),
         "matched_total": len(matched),
         "changed_total": len(changed),
         "unmatched_dashboard_total": len(unmatched),

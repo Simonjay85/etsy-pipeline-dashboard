@@ -8,13 +8,7 @@ Etsy Auto Draft Poster
 • Delay hợp lý để tránh lỗi
 Dùng: python3 etsy_auto_post.py [--batch 5] [--skip N]
 """
-from __future__ import annotations
-
-import argparse
-import asyncio
-import json
-import subprocess
-import sys
+import asyncio, sys, subprocess, argparse
 from pathlib import Path
 import re
 from difflib import SequenceMatcher
@@ -34,22 +28,11 @@ def ensure_deps():
         print("▶ Cài google-genai...")
         subprocess.run([sys.executable, "-m", "pip", "install", "google-genai", "--quiet"], check=True)
 
-def initialize_poster_runtime() -> None:
-    """Chuẩn bị dependency chỉ khi poster thực sự được chạy (không chạy khi import)."""
-    ensure_deps()
-
-if __name__ == "__main__":
-    initialize_poster_runtime()
+ensure_deps()
 
 import openpyxl
 from playwright.async_api import async_playwright
 from deep_translator import GoogleTranslator
-from etsy_browser_session import (
-    is_session_ready as is_etsy_session_ready,
-    resolve_etsy_session,
-)
-from cloud_asset_store import CloudAssetError, CloudAssetStore
-from cloud_asset_store_config import load_config as load_cloud_asset_config
 
 try:
     from google import genai
@@ -61,221 +44,13 @@ except ImportError:
 BASE_DIR    = Path(__file__).parent
 SHOP_DIR    = BASE_DIR
 EXCEL_FILE  = SHOP_DIR / "Etsy_SEO_Generator.xlsx"
+BROWSER_DIR = BASE_DIR / ".browser-session"
 CHROME_PATH = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
-CONFIG_FILE = BASE_DIR / "shops_config.json"
-SHOPS      = {}
-CLOUD_ASSET_STORE: CloudAssetStore | None = None
-POST_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
-POST_FILE_EXTS = {".pdf", ".zip"}
-
-
-def get_cloud_asset_store() -> CloudAssetStore:
-    global CLOUD_ASSET_STORE
-    if CLOUD_ASSET_STORE is None:
-        config = load_cloud_asset_config(BASE_DIR)
-        CLOUD_ASSET_STORE = CloudAssetStore(
-            repo_root=config.repo_root,
-            remote=config.remote,
-            parent_id=config.parent_id,
-            rclone_bin=config.rclone_bin,
-            cache_root=config.cache_root,
-            lock_timeout_seconds=config.lock_timeout_seconds,
-            success_ttl_seconds=config.success_ttl_seconds,
-            failure_ttl_seconds=config.failure_ttl_seconds,
-            offload_age_days=config.offload_age_days,
-        )
-    return CLOUD_ASSET_STORE
-
-
-def resolve_product_asset_paths(
-    product: dict,
-    shop_id: str,
-    store: CloudAssetStore | None = None,
-) -> dict:
-    """Resolve verified local/cache paths before the Etsy editor is opened."""
-
-    folder = str(product.get("folder") or "").strip()
-    if not re.fullmatch(r"product-\d+", folder):
-        raise RuntimeError(f"❌ Product folder không hợp lệ: {folder}")
-    configured_shop_root = Path(SHOP_DIR)
-    if configured_shop_root.name == str(shop_id).strip() and configured_shop_root.parent.name == "shops":
-        product_root = configured_shop_root / folder
-    else:
-        product_root = BASE_DIR / "shops" / str(shop_id).strip() / folder
-    if not product_root.is_dir() or product_root.is_symlink():
-        raise RuntimeError(f"❌ Không tìm thấy product folder an toàn: {product_root}")
-    asset_store = store or get_cloud_asset_store()
-    store_repo_root = getattr(asset_store, "repo_root", None)
-    if store_repo_root is not None:
-        try:
-            product_root.absolute().relative_to(Path(store_repo_root).absolute())
-        except ValueError:
-            # Unit/in-process callers may intentionally point SHOP_DIR at a
-            # temporary checkout. Preserve local-only compatibility while
-            # keeping CloudAssetStore's canonical path validation active.
-            local_repo_root = product_root.parents[2]
-            asset_store = CloudAssetStore(
-                repo_root=local_repo_root,
-                remote_store=getattr(asset_store, "remote", None),
-                cache_root=local_repo_root / "output" / "cloud-cache",
-                lock_timeout_seconds=getattr(asset_store, "lock_timeout_seconds", 30.0),
-                success_ttl_seconds=getattr(asset_store.cache, "success_ttl_seconds", 24 * 60 * 60),
-                failure_ttl_seconds=getattr(asset_store.cache, "failure_ttl_seconds", 7 * 24 * 60 * 60),
-                offload_age_days=getattr(asset_store, "offload_age_days", 7),
-            )
-    try:
-        resolution = asset_store.resolve_asset_root(product_root)
-    except (CloudAssetError, OSError, ValueError, TypeError, KeyError) as exc:
-        raise RuntimeError(f"❌ Không hydrate được asset {shop_id}/{folder}: {exc}") from exc
-
-    if not isinstance(resolution, dict):
-        raise RuntimeError(f"❌ Asset resolver trả về kết quả không hợp lệ cho {shop_id}/{folder}")
-    source = str(resolution.get("source") or "")
-    if source not in {"local", "cloud-cache"}:
-        raise RuntimeError(f"❌ Asset resolver không xác nhận được nguồn cho {shop_id}/{folder}")
-    asset_root = Path(str(resolution.get("asset_root") or product_root))
-    if asset_root.is_symlink() or not asset_root.is_dir():
-        raise RuntimeError(f"❌ Asset root không an toàn cho {shop_id}/{folder}: {asset_root}")
-    allowed_root = product_root if source == "local" else asset_root
-
-    def verified_paths(raw_paths, allowed_suffixes: set[str]) -> list[str]:
-        if not isinstance(raw_paths, (list, tuple)):
-            raise RuntimeError(f"❌ Danh sách asset không hợp lệ cho {shop_id}/{folder}")
-        verified = []
-        for raw_path in raw_paths:
-            path = Path(str(raw_path))
-            if path.is_symlink() or not path.is_file():
-                raise RuntimeError(f"❌ Asset path không tồn tại/an toàn cho {shop_id}/{folder}: {path}")
-            try:
-                path.absolute().relative_to(allowed_root.absolute())
-            except ValueError as exc:
-                raise RuntimeError(f"❌ Asset path nằm ngoài vùng đã xác minh: {path}") from exc
-            if path.suffix.lower() in allowed_suffixes:
-                verified.append(str(path))
-        return sorted(verified)
-
-    image_paths = verified_paths(resolution.get("image_paths", []), POST_IMAGE_EXTS)[:10]
-    digital_paths = verified_paths(resolution.get("file_paths", []), POST_FILE_EXTS)
-    if resolution.get("source") == "cloud-cache" and not image_paths:
-        raise RuntimeError(f"❌ Cloud asset {shop_id}/{folder} đã hydrate nhưng không có ảnh hợp lệ")
-    product["image_paths"] = image_paths
-    product["pdf_paths"] = digital_paths
-    product["asset_root"] = str(resolution.get("asset_root") or product_root)
-    product["_cloud_asset_resolution"] = resolution
-    return resolution
-
-
-def mark_product_asset_operation_success(
-    product: dict,
-    store: CloudAssetStore | None = None,
-) -> dict:
-    resolution = product.get("_cloud_asset_resolution")
-    if not resolution:
-        return {"ok": True, "marked": False}
-    return (store or get_cloud_asset_store()).mark_hydration_cleanup_eligible(resolution)
-
-def _load_shop_configs(config_file: Path = CONFIG_FILE) -> dict:
-    if not config_file.exists():
-        return {}
-    try:
-        with config_file.open("r", encoding="utf-8") as f:
-            loaded = json.load(f)
-            if isinstance(loaded, dict):
-                return loaded
-    except Exception:
-        pass
-    return {}
-
-SHOPS = _load_shop_configs()
-
-def _expand_user_path(value: str, home_dir: Path) -> Path:
-    raw = str(value or "").strip()
-    if not raw:
-        return Path(raw)
-    if raw.startswith("~"):
-        return Path(str(home_dir) + raw[1:])
-    return Path(raw)
-
-def resolve_browser_session_dir(
-    shop_id: str,
-    *,
-    config: dict | None = None,
-    base_dir: Path | None = None,
-    home_dir: Path | None = None,
-) -> Path:
-    target_shop = str(shop_id or "").strip()
-    target_shop_key = target_shop.lower()
-    shops_config = config if config is not None else SHOPS
-    target_shop_cfg = shops_config.get(target_shop, {}) if isinstance(shops_config, dict) else {}
-    raw_session = str(target_shop_cfg.get("browser_session", "")).strip()
-    base_root = base_dir or BASE_DIR
-    home_root = home_dir or Path.home()
-
-    if raw_session:
-        return _expand_user_path(raw_session, home_root)
-
-    legacy_session = base_root / ".browser-session"
-    if target_shop_key == "templystudios" and legacy_session.exists():
-        return legacy_session
-
-    return home_root / f".etsy_browser_session_{target_shop}"
-
-def _is_profile_in_use(profile_dir: Path) -> tuple[bool, Path | None]:
-    for lock_name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
-        lock_path = profile_dir / lock_name
-        if lock_path.exists():
-            return True, lock_path
-    return False, None
-
-
-async def _open_poster_context(pw, shop_id: str, browser_dir: Path):
-    """Reuse only the verified login browser for this exact poster profile."""
-    session = resolve_etsy_session(BASE_DIR, SHOPS, shop_id)
-    expected_profile = session.profile_dir.resolve()
-    if browser_dir.resolve() != expected_profile:
-        raise RuntimeError(
-            f"❌ Profile Etsy không khớp cấu hình poster: {browser_dir} != {expected_profile}"
-        )
-
-    if is_etsy_session_ready(session):
-        browser = await pw.chromium.connect_over_cdp(session.cdp_url, timeout=5000)
-        if not browser.contexts:
-            raise RuntimeError("❌ Chrome Etsy đúng profile nhưng không có browser context")
-        ctx = browser.contexts[0]
-        page = await ctx.new_page()
-        print(f"  🌐 Dùng lại Chrome Etsy đã đăng nhập (port {session.debug_port})")
-        return ctx, page, False
-
-    in_use, lock_path = _is_profile_in_use(browser_dir)
-    if in_use and lock_path is not None:
-        raise RuntimeError(
-            f"❌ Chrome profile đang bị khóa ({lock_path.name}) nhưng không khớp "
-            f"session Etsy đã xác minh cho shop {shop_id}. Đóng Chrome đó rồi mở lại "
-            "bằng nút “Đăng nhập Etsy cho Post”."
-        )
-
-    launch_kw = dict(
-        user_data_dir=str(browser_dir),
-        headless=False,
-        args=["--start-maximized", "--disable-blink-features=AutomationControlled"],
-        viewport=None,
-    )
-    if CHROME_PATH.exists():
-        launch_kw["executable_path"] = str(CHROME_PATH)
-        print("  🌐 Dùng Google Chrome thật")
-    else:
-        print("  🌐 Dùng Chromium")
-    ctx = await pw.chromium.launch_persistent_context(**launch_kw)
-    page = ctx.pages[0] if ctx.pages else await ctx.new_page()
-    return ctx, page, True
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 FILL_TRANSLATIONS = True
 DEFAULT_BATCH     = 5
-DRAFT_LISTINGS_URL = "https://www.etsy.com/your/shops/me/tools/listings/page:1,state:draft"
-DRAFT_FILTER_POLL_MS = 250
-DRAFT_FILTER_CHECK_TIMEOUT_MS = 1200
-DRAFT_FILTER_FORCE_ATTEMPTS = 10
+DRAFT_LISTINGS_URL = "https://www.etsy.com/your/shops/me/tools/listings?status=draft"
 UNVERIFIED_DRAFT_URL_SENTINEL = "<URL chưa xác minh>"
 DRAFT_DUPLICATE_CHECK_FAILED_SENTINEL = "<DRAFT_DUPLICATE_CHECK_FAILED>"
 
@@ -354,22 +129,18 @@ def generate_alt_texts(title: str, keywords: str, count: int) -> list:
 
 # ── Tag cleaner ───────────────────────────────────────────────────────────────
 def clean_tags(raw: str, max_tags: int = 13) -> list:
-    """Chuẩn hoá danh sách tag: mỗi tag 1-20 ký tự, tối đa max_tags tag duy nhất (case-insensitive)."""
+    """Chuẩn hoá danh sách tag: mỗi tag 1-20 ký tự, tối đa max_tags tag."""
     result = []
-    seen = set()
-    for t in str(raw or "").split(","):
+    for t in raw.split(","):
         t = t.strip()
         if not t:
             continue
         if 1 <= len(t) <= 20:
-            tag_str = t
+            result.append(t)
         else:
-            tag_str = t[:20].rsplit(" ", 1)[0].rstrip(",- ")
-        if 1 <= len(tag_str) <= 20:
-            key = tag_str.lower()
-            if key not in seen:
-                seen.add(key)
-                result.append(tag_str)
+            short = t[:20].rsplit(" ", 1)[0].rstrip(",- ")
+            if 1 <= len(short) <= 20:
+                result.append(short)
     return result[:max_tags]
 
 
@@ -443,95 +214,42 @@ async def _force_draft_filter(page):
     """Điều hướng về drafts và ép filter về Draft status an toàn trước khi đọc listings."""
     print("  🔧 Ép bộ lọc Draft để đọc đúng danh sách.")
     await page.goto(DRAFT_LISTINGS_URL, wait_until="domcontentloaded")
+    draft_radio = page.locator('input[name="item_status"][value="draft"]').first
     for _ in range(24):
-        status_state = await _collect_status_radio_state(page)
-        if status_state["radio_count"] > 0 and status_state["draft_indexes"]:
+        if await draft_radio.count() > 0:
             break
         await page.wait_for_timeout(250)
 
-    status_state = await _collect_status_radio_state(page)
-    if status_state["radio_count"] == 0:
+    if await draft_radio.count() == 0:
         raise RuntimeError("Không tìm thấy bộ lọc Draft trên danh sách listings.")
 
-    all_status_locator = page.locator('input[name="item_status"]')
-    for _ in range(DRAFT_FILTER_FORCE_ATTEMPTS):
-        status_state = await _collect_status_radio_state(page)
-        if _is_exact_draft_filter(status_state):
-            return
-
-        if not status_state["draft_indexes"]:
-            await page.wait_for_timeout(DRAFT_FILTER_POLL_MS)
-            continue
-
-        # Ưu tiên radio Draft đang enabled để tránh lỗi intercept/pointer events.
-        draft_radio_index = None
-        for idx in status_state["draft_indexes"]:
-            if status_state["radios"][idx]["enabled"]:
-                draft_radio_index = idx
-                break
-
-        if draft_radio_index is None:
-            await page.wait_for_timeout(DRAFT_FILTER_POLL_MS)
-            continue
-
-        draft_radio = all_status_locator.nth(draft_radio_index)
+    # Prefer polling and re-check after click/navigation to prove checked state.
+    for _ in range(24):
+        checked = False
         try:
-            await draft_radio.check(force=True, timeout=DRAFT_FILTER_CHECK_TIMEOUT_MS)
+            checked = await draft_radio.is_checked()
+        except Exception as err:
+            raise RuntimeError(f"Lỗi kiểm tra radio Draft: {err}")
+
+        if checked:
+            break
+
+        try:
+            await draft_radio.click()
         except Exception as err:
             raise RuntimeError(f"Không thể bật radio Draft: {err}")
 
-        for _ in range(3):
-            status_state = await _collect_status_radio_state(page)
-            if _is_exact_draft_filter(status_state):
+        await page.wait_for_timeout(300)
+
+    for _ in range(12):
+        try:
+            if await draft_radio.is_checked():
                 return
-            await page.wait_for_timeout(DRAFT_FILTER_POLL_MS)
+        except Exception:
+            pass
+        await page.wait_for_timeout(250)
 
     raise RuntimeError("Không xác nhận được filter Draft đã được bật.")
-
-
-def _is_exact_draft_filter(state: dict) -> bool:
-    checked = state.get("checked_values", [])
-    return len(checked) == 1 and checked[0] == "draft"
-
-
-async def _collect_status_radio_state(page) -> dict:
-    """Thu thập trạng thái nhóm filter item_status trước khi quét listing."""
-    status_locator = page.locator('input[name="item_status"]')
-    status_count = await status_locator.count()
-    radios = []
-    draft_indexes = []
-    for i in range(status_count):
-        loc = status_locator.nth(i)
-        raw_value = await loc.get_attribute("value")
-        value = (raw_value or "").strip().lower()
-        checked = bool(await loc.is_checked())
-        enabled = bool(await loc.is_enabled())
-        radio = {
-            "value": value,
-            "checked": checked,
-            "enabled": enabled,
-        }
-        radios.append(radio)
-        if value == "draft":
-            draft_indexes.append(i)
-    checked_values = sorted([r["value"] for r in radios if r.get("checked") and r.get("value")])
-
-    return {
-        "radio_count": status_count,
-        "radios": radios,
-        "draft_indexes": draft_indexes,
-        "checked_count": len(checked_values),
-        "checked_values": checked_values,
-    }
-
-
-async def _ensure_draft_filter_after_grid(page) -> None:
-    status_state = await _collect_status_radio_state(page)
-    if not _is_exact_draft_filter(status_state):
-        raise RuntimeError(
-            "Lọc Draft không còn chính xác sau khi grid ổn định. "
-            "Dừng để tránh xác minh trùng lặp sai."
-        )
 
 
 def _normalize_listing_field(value) -> str:
@@ -619,55 +337,22 @@ def _dedupe_draft_cards(cards: list[dict]) -> list[dict]:
     return list(merged.values())
 
 
-def _get_media_thumbnail_selectors() -> list[str]:
-    """Primary selectors for uploaded listing photos (delete/remove controls)."""
-    return [
-        'button[data-testid="image-delete-button"]',
-        '[data-testid*="photo" i] button[aria-label*="Remove" i]',
-        '[data-testid*="photo" i] button[aria-label*="Delete" i]',
-    ]
-
-
-def _get_media_thumbnail_fallback_selectors() -> list[str]:
-    """Legacy thumbnail tiles — may include the empty upload slot."""
-    return [
-        "button.le-aspect-ratio--square",
-    ]
-
-
-PHOTO_UPLOAD_BATCH_SIZE = 5
-PHOTO_UPLOAD_WAIT_MS = 90000
+def _get_media_thumbnail_selector() -> str:
+    return (
+        "button.le-aspect-ratio--square, "
+        "[role='button'][aria-label*='thumbnail' i], "
+        "[role='button'][aria-label*='image' i]"
+    )
 
 
 async def _count_listing_image_thumbs(page) -> int:
-    """Đếm ảnh listing đã upload trên UI.
-
-    Prefer delete/remove buttons. Square aspect-ratio tiles can include Etsy's
-    empty upload slot, which falsely inflates exact-count checks (e.g. 11 vs 10).
-    """
-    primary_counts: list[int] = []
-    for sel in _get_media_thumbnail_selectors():
-        try:
-            primary_counts.append(await page.locator(sel).count())
-        except Exception:
-            continue
-    primary = max(primary_counts or [0])
-    if primary > 0:
-        return primary
-
-    fallback_counts: list[int] = []
-    for sel in _get_media_thumbnail_fallback_selectors():
-        try:
-            fallback_counts.append(await page.locator(sel).count())
-        except Exception:
-            continue
-    return max(fallback_counts or [0])
+    """Đếm thumbnail ảnh listing hiển thị trên UI."""
+    return await page.locator(_get_media_thumbnail_selector()).count()
 
 
 async def _wait_for_expected_image_count(page, expected_count: int, exact: bool = False,
-                                        timeout_ms: int = PHOTO_UPLOAD_WAIT_MS,
-                                        log_progress: bool = False) -> bool:
-    checks = max(1, timeout_ms // 500)
+                                        timeout_ms: int = 30000) -> bool:
+    checks = max(1, timeout_ms // 250)
     last_count = -1
     for _ in range(checks):
         try:
@@ -682,134 +367,10 @@ async def _wait_for_expected_image_count(page, expected_count: int, exact: bool 
             return True
 
         if current != last_count:
-            if log_progress and current >= 0:
-                print(f"  ⏳ Ảnh trên UI: {current}/{expected_count}")
             last_count = current
-        await page.wait_for_timeout(500)
+        await page.wait_for_timeout(250)
 
     return False
-
-
-async def _upload_listing_photos(page, paths: list[str]) -> None:
-    """Upload listing photos using Etsy listing-media input + file-chooser fallbacks."""
-    if not paths:
-        return
-
-    upload_selectors = [
-        '[data-testid="empty-photo-thumbnail"] input[name="listing-media-upload"]',
-        'input[name="listing-media-upload"]',
-        'input[type="file"][accept*="image"]',
-        'input[type="file"][accept*="jpeg"]',
-        'label[for="listing-photos"] ~ * input[type="file"]',
-        'input[type="file"]',
-    ]
-    for sel in upload_selectors:
-        fi = page.locator(sel).first
-        if await fi.count() == 0:
-            continue
-        try:
-            await fi.wait_for(state="attached", timeout=15000)
-            await fi.set_input_files(paths, timeout=60000)
-            return
-        except Exception as direct_err:
-            print(f"  ⚠️ Input upload ảnh thất bại ({sel}): {direct_err}")
-
-    add_photo_selectors = [
-        'button:has-text("Add photos")',
-        'button:has-text("Add photo")',
-        'button:has-text("Upload photos")',
-        'button:has-text("Upload photo")',
-        'button[aria-label*="Add photo" i]',
-        'button[aria-label*="Upload photo" i]',
-        '[role="button"]:has-text("Add photos")',
-        '[role="button"]:has-text("Add photo")',
-        'label:has-text("Add photos")',
-        'label:has-text("Add photo")',
-    ]
-    for sel in add_photo_selectors:
-        add_btn = page.locator(sel).first
-        if await add_btn.count() == 0:
-            continue
-        try:
-            if not await add_btn.is_visible():
-                continue
-            await add_btn.scroll_into_view_if_needed()
-            async with page.expect_file_chooser(timeout=15000) as fc_info:
-                await add_btn.click()
-            await fc_info.value.set_files(paths)
-            return
-        except Exception as chooser_err:
-            print(f"  ⚠️ File chooser ảnh thất bại ({sel}): {chooser_err}")
-
-    fi = page.locator('input[type="file"]').last
-    if await fi.count() > 0:
-        await fi.set_input_files(paths, timeout=60000)
-        return
-
-    raise RuntimeError("Không tìm thấy nút/input upload ảnh phù hợp trên form Etsy.")
-
-
-async def _upload_listing_photos_until_count(
-    page,
-    paths: list[str],
-    *,
-    expected_total: int,
-    exact: bool = True,
-    batch_size: int = PHOTO_UPLOAD_BATCH_SIZE,
-    timeout_ms: int = PHOTO_UPLOAD_WAIT_MS,
-) -> int:
-    """Upload in small batches and top-up missing images until UI count matches."""
-    paths = [p for p in (paths or []) if p][:10]
-    if not paths:
-        return await _count_listing_image_thumbs(page)
-
-    expected_total = max(1, min(int(expected_total), 10))
-    batch_size = max(1, min(int(batch_size), 10))
-
-    for start in range(0, len(paths), batch_size):
-        batch = paths[start:start + batch_size]
-        before = await _count_listing_image_thumbs(page)
-        if before >= expected_total:
-            break
-        batch_target = min(expected_total, before + len(batch))
-        print(f"  📤 Upload ảnh đợt {start // batch_size + 1}: {len(batch)} file (UI {before} → mục tiêu {batch_target})")
-        await _upload_listing_photos(page, batch)
-        await _wait_for_expected_image_count(
-            page,
-            expected_count=batch_target,
-            exact=False,
-            timeout_ms=timeout_ms,
-            log_progress=True,
-        )
-
-    current = await _count_listing_image_thumbs(page)
-    # Top-up once if Etsy silently dropped some large files from a multi-select.
-    if current < expected_total:
-        missing = expected_total - current
-        retry_paths = paths[-missing:]
-        print(f"  🔄 Thiếu {missing}/{expected_total} ảnh trên UI — upload bổ sung {len(retry_paths)} file...")
-        await _upload_listing_photos(page, retry_paths)
-        await _wait_for_expected_image_count(
-            page,
-            expected_count=expected_total,
-            exact=False,
-            timeout_ms=timeout_ms,
-            log_progress=True,
-        )
-        current = await _count_listing_image_thumbs(page)
-
-    if exact:
-        ok = current == expected_total
-    else:
-        ok = current >= expected_total
-    if not ok:
-        raise RuntimeError(
-            f"Số ảnh trên UI chưa đạt kỳ vọng. Expected_count={expected_total}"
-            f", actual={current}, exact={exact}."
-        )
-
-    print(f"  📷 {current} ảnh ✓")
-    return current
 
 
 def _pick_draft_card_id(cards: list[dict], product: dict) -> str | None:
@@ -907,13 +468,12 @@ async def _collect_draft_cards(page):
     """Lấy raw card data từ Drafts list sau khi đã ép filter."""
     await _force_draft_filter(page)
     await _wait_for_draft_grid_stable(page)
-    await _ensure_draft_filter_after_grid(page)
     cards = await page.evaluate(r'''() => {
         let items = [];
         let anchors = Array.from(document.querySelectorAll('a[href*="/listing-editor/edit/"]'));
         for (let a of anchors) {
             let href = a.getAttribute('href') || '';
-            let match = href.match(/\/listing-editor\/edit\/(\d+)/);
+            let match = href.match(/\\/listing-editor\\/edit\\/(\\d+)/);
             if (!match) continue;
             let id = match[1];
             let row = a.closest('tr') || a.closest('[class*="card"]') || a.closest('div');
@@ -929,7 +489,7 @@ async def _collect_draft_cards(page):
             let rowText = row ? (row.innerText || '').toLowerCase() : '';
             let sku = '';
             if (rowText) {
-                let skuMatch = rowText.match(/\bsku\b\s*[:#]?\s*([a-z0-9][a-z0-9_-]{2,})/i);
+                let skuMatch = rowText.match(/\\bsku\\b\\s*[:#]?\\s*([a-z0-9][a-z0-9_-]{2,})/i);
                 if (skuMatch) sku = skuMatch[1];
             }
             if (!id) continue;
@@ -1086,14 +646,10 @@ def translate_tag(tag: str, lang: str) -> str:
         translated = GoogleTranslator(source="en", target=lang).translate(tag) or tag
         translated = translated.strip()
         if len(translated) > 20:
-            short = translated[:20].rsplit(" ", 1)[0].rstrip(",- ")
-            if 1 <= len(short) <= 20:
-                translated = short
-            else:
-                translated = translated[:20].rstrip(",- ")
-        return translated if 1 <= len(translated) <= 20 else tag[:20].rstrip(",- ")
+            translated = translated[:20].rsplit(" ", 1)[0].rstrip(",- ")
+        return translated if 1 <= len(translated) <= 20 else tag
     except Exception:
-        return tag[:20].rstrip(",- ")
+        return tag
 
 def get_sku_prefix(shop_id: str) -> str:
     shop_id_lower = str(shop_id or "templystudios").lower()
@@ -1111,87 +667,8 @@ def generate_sku(shop_id: str, folder_name: str) -> str:
     clean_folder = re.sub(r'_+', '_', clean_folder).strip('_')
     return f"{prefix}_{clean_folder}"
 
-
-def _normalize_requested_products(raw_products: list[str] | None) -> list[str]:
-    """Chuẩn hoá --products: hỗ trợ repeat + comma-separated; giữ đúng thứ tự, bỏ trùng."""
-    if not raw_products:
-        return []
-
-    def _normalize_one_folder(raw: str) -> str:
-        folder = str(raw).strip()
-        if not folder:
-            raise ValueError("folder trống không hợp lệ")
-        if not re.fullmatch(r"product-\d+", folder):
-            raise ValueError(f"Định dạng folder không hợp lệ: {folder}")
-        return folder
-
-    normalized = []
-    seen = set()
-    for raw in raw_products:
-        if raw is None:
-            continue
-        items = str(raw).split(",")
-        for item in items:
-            folder = _normalize_one_folder(item)
-            if not folder:
-                continue
-            if folder in seen:
-                continue
-            normalized.append(folder)
-            seen.add(folder)
-    return normalized
-
-
-def _normalize_selected_products(raw_items: list[str] | None) -> list[tuple[int, str]]:
-    if not raw_items:
-        return []
-    normalized = []
-    seen_rows = set()
-    seen_folders = set()
-    for raw in raw_items:
-        match = re.fullmatch(r"(\d+):(product-\d+)", str(raw or "").strip())
-        if not match:
-            raise ValueError(f"Cặp row:folder không hợp lệ: {raw}")
-        row = int(match.group(1))
-        folder = match.group(2)
-        if row < 4:
-            raise ValueError(f"Row không hợp lệ: {row}")
-        if row in seen_rows or folder in seen_folders:
-            raise ValueError(f"Cặp row/folder bị lặp: {raw}")
-        normalized.append((row, folder))
-        seen_rows.add(row)
-        seen_folders.add(folder)
-    return normalized
-
-
-_LISTING_REFERENCE_RE = re.compile(r"/(?:listing/|listing-editor/edit/)(\d+)")
-
-
-def _listing_reference_has_id(value: object) -> bool:
-    text = str(value or "").strip()
-    return bool(_LISTING_REFERENCE_RE.search(text) or re.fullmatch(r"\d+", text))
-
-
 # ── Read Excel ─────────────────────────────────────────────────────────────────
-def read_products(
-    batch=DEFAULT_BATCH,
-    skip=0,
-    product_folder=None,
-    shop_id="templystudios",
-    product_folders: list[str] | None = None,
-    selected_products: list[tuple[int, str]] | None = None,
-    store: CloudAssetStore | None = None,
-):
-    selected_products = list(selected_products or [])
-    if product_folders is None:
-        product_folders = []
-    if product_folder:
-        product_folders = [str(product_folder)] + product_folders
-    requested_folders = _normalize_requested_products(product_folders)
-    selected_by_row = {row: folder for row, folder in selected_products}
-    selected_order = {row: index for index, (row, _) in enumerate(selected_products)}
-    requested_set = set(requested_folders)
-
+def read_products(batch=DEFAULT_BATCH, skip=0, product_folder=None, shop_id="templystudios"):
     wb = openpyxl.load_workbook(EXCEL_FILE, data_only=True)
     ws = wb["Listings"]
     all_products = []
@@ -1199,37 +676,32 @@ def read_products(
     for row_num, row in enumerate(ws.iter_rows(min_row=4, max_row=max_row, values_only=True), start=4):
         cols = (list(row) + [None]*19)[:19]
         _, folder, _, _, price, category, _, title, description, tags, qty, _, when_made, status, section = cols[:15]
-        etsy_reference = cols[15] if len(cols) > 15 else ""
         sku = cols[17] if len(cols) > 17 else ""
         if not folder or not title or str(title).startswith("←"):
             continue
-        if selected_products:
-            expected_folder = selected_by_row.get(row_num)
-            if expected_folder is None:
-                continue
-            if str(folder) != expected_folder:
-                raise RuntimeError(
-                    f"❌ Row {row_num} đã đổi folder từ {expected_folder} thành {folder}, dừng để tránh đăng nhầm"
-                )
         # If targeting a specific product, ignore status filter for that product
-        if selected_products or requested_folders:
-            if str(folder) not in requested_set:
-                if not selected_products:
-                    continue
-            if status and "Đã đăng" in str(status):
-                raise RuntimeError(
-                    f"❌ {folder} đã có trạng thái '{status}', dừng để tránh đăng trùng"
-                )
-            if _listing_reference_has_id(etsy_reference):
-                raise RuntimeError(
-                    f"❌ {folder} đã có Etsy listing ID/URL, dừng để tránh đăng trùng"
-                )
+        if product_folder:
+            if str(folder) != product_folder:
+                continue
         elif status and "Đã đăng" in str(status):
             continue
 
         # Auto-generate default SKU if empty
         if not sku or not str(sku).strip():
             sku = generate_sku(shop_id, str(folder))
+
+        img_dir  = SHOP_DIR / str(folder) / "images"
+        file_dir = SHOP_DIR / str(folder) / "files"
+        img_exts = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+
+        img_paths = sorted([str(f) for f in img_dir.iterdir()
+                            if f.suffix.lower() in img_exts])[:10] if img_dir.exists() else []
+        # Collect all digital files: PDF + ZIP
+        DIGITAL_EXTS = {".pdf", ".zip"}
+        pdf_paths = sorted([
+            str(f) for f in file_dir.iterdir()
+            if f.suffix.lower() in DIGITAL_EXTS
+        ]) if file_dir.exists() else []
 
         clean_title = trim_title(str(title))
         clean_keywords = str(cols[2] or "")  # column C = keywords
@@ -1245,32 +717,15 @@ def read_products(
             "when_made":   str(when_made) if when_made else "2020_2026",
             "section":     str(section).strip() if section else "",
             "sku":         str(sku).strip(),
-            "image_paths": [],
-            "pdf_paths":   [],
+            "image_paths": img_paths,
+            "pdf_paths":   pdf_paths,
             "row":         row_num,
             "keywords":    clean_keywords,
-            "alt_texts":   [],
+            "alt_texts":   generate_alt_texts(clean_title, clean_keywords, len(img_paths)),
         })
 
-    if selected_products:
-        all_products = sorted(all_products, key=lambda item: selected_order[item["row"]])
-    elif requested_folders:
-        folder_index = {folder: idx for idx, folder in enumerate(requested_folders)}
-        all_products = sorted(all_products, key=lambda item: folder_index[item["folder"]])
-    else:
-        all_products = all_products[skip: skip + batch]
-
-    # Resolve only products that will actually reach the browser. This keeps
-    # batch/skip selection from contacting cloud storage for unrelated rows,
-    # while still failing closed before any Etsy navigation.
-    for product in all_products:
-        resolution = resolve_product_asset_paths(product, shop_id, store=store)
-        product["_cloud_asset_resolution"] = resolution
-        product["alt_texts"] = generate_alt_texts(
-            product["title"], product["keywords"], len(product["image_paths"])
-        )
-
-    return all_products, wb, ws, len(all_products)
+    batch_products = all_products if product_folder else all_products[skip: skip + batch]
+    return batch_products, wb, ws, len(all_products)
 
 def save_status(wb, ws, row, text, url=None):
     ws.cell(row=row, column=14, value=text)
@@ -1557,28 +1012,49 @@ async def fill_image_alt_texts(page, product):
 async def fill_photo_tab(page, product, explicit_edit: bool = False):
     await click_tab(page, "Photo & Video", "Photos")
     await page.wait_for_timeout(800)
-    paths = list(product.get("image_paths") or [])[:10]
-    if not paths:
-        return
+    expected_total = None
+    exact_expected = False
+    if product["image_paths"]:
+        try:
+            expected_total = await _count_listing_image_thumbs(page)
+            if not explicit_edit:
+                expected_total = len(product["image_paths"])
+                exact_expected = True
+            else:
+                local_target = len(product["image_paths"])
+                if local_target > 10:
+                    local_target = 10
+                expected_total = max(expected_total, local_target)
+                exact_expected = False
+        except Exception:
+            expected_total = None
 
-    before = await _count_listing_image_thumbs(page)
-    if not explicit_edit:
-        expected_total = len(paths)
-        exact_expected = True
-    else:
-        local_target = len(paths)
-        expected_total = max(before, local_target)
-        exact_expected = False
+    if product["image_paths"]:
+        for sel in ['input[type="file"][accept*="image"]',
+                    'input[type="file"][accept*="jpeg"]',
+                    'input[type="file"]']:
+            fi = page.locator(sel).first
+            if await fi.count() > 0:
+                await fi.set_input_files(product["image_paths"], timeout=20000)
+                await page.wait_for_timeout(5000)
+                print(f"  📷 {len(product['image_paths'])} ảnh ✓")
+                if expected_total is not None:
+                    ok = await _wait_for_expected_image_count(
+                        page,
+                        expected_count=expected_total,
+                        exact=exact_expected,
+                    )
+                    if not ok:
+                        raise RuntimeError(
+                            f"Số ảnh trên UI chưa đạt kỳ vọng. Expected_count={expected_total}"
+                            f", exact={exact_expected}."
+                        )
+                break
+        else:
+            raise RuntimeError("Không tìm thấy input upload ảnh phù hợp trên form Etsy.")
 
-    await _upload_listing_photos_until_count(
-        page,
-        paths,
-        expected_total=expected_total,
-        exact=exact_expected,
-    )
-
-    # Điền alt text sau khi ảnh đã upload xong
-    await fill_image_alt_texts(page, product)
+        # Điền alt text sau khi ảnh đã upload xong
+        await fill_image_alt_texts(page, product)
 
 # ── Tab: Category ──────────────────────────────────────────────────────────────
 async def fill_category_tab(page, product):
@@ -2081,29 +1557,9 @@ async def fill_translations(page, product):
                 )
                 tag_input = page.locator(tag_input_sel).first
                 if await tag_input.count() > 0 and await tag_input.is_visible() and await tag_input.is_editable():
-                    seen_trans_tags = set()
-                    try:
-                        existing_pills = await page.evaluate('''() => {
-                            let activePanel = document.querySelector('[role="tabpanel"]:not([class*="hidden"]), [role="tabpanel"]:not([style*="display: none"])');
-                            if (!activePanel) return [];
-                            let pills = Array.from(activePanel.querySelectorAll('span.wt-tag, [data-testid="tag-pill"]'));
-                            return pills.map(p => (p.innerText || '').trim().toLowerCase()).filter(Boolean);
-                        }''')
-                        for ep in (existing_pills or []):
-                            seen_trans_tags.add(ep)
-                    except Exception:
-                        pass
-
                     tags_filled = 0
                     for tag in en_tags:
                         trans_tag = translate_tag(tag, lang_code)
-                        if not trans_tag:
-                            continue
-                        norm_tag = trans_tag.strip().lower()
-                        if norm_tag in seen_trans_tags:
-                            continue
-                        seen_trans_tags.add(norm_tag)
-
                         try:
                             await tag_input.fill(trans_tag, timeout=3000)
                             await page.wait_for_timeout(300)
@@ -2132,11 +1588,6 @@ async def check_duplicate_draft(page, product: dict) -> bool:
     try:
         print("  🔍 Đang kiểm tra trùng lặp trên Etsy Drafts...")
         drafts = await _collect_draft_cards(page)
-        product["_draft_ids_before_create"] = sorted({
-            str(card.get("id", "")).strip()
-            for card in drafts
-            if isinstance(card, dict) and str(card.get("id", "")).strip()
-        })
         title = str(product.get("title", ""))
         if not title:
             return False
@@ -2162,83 +1613,26 @@ async def get_newly_created_listing_url(page, product: dict):
     import re
     target_title = str(product.get("title", ""))
 
-    # Phương pháp 0: Dùng Listing ID đã capture từ URL redirect khi lưu draft.
-    # Đây là nguồn tin cậy nhất vì Etsy redirect sang edit/<id> ngay sau khi lưu.
-    captured_id = product.get("_captured_listing_id_from_redirect")
-    if captured_id and str(captured_id).strip():
-        lid = str(captured_id).strip()
-        # Đợi trang editor load xong rồi xác thực chữ ký sản phẩm
-        await page.wait_for_timeout(2000)
-        for _retry in range(3):
-            if await _editor_product_signature_matches(page, product):
-                print(f"  🎯 Lấy được Listing ID từ redirect URL (đã xác thực): {lid}")
-                return f"https://www.etsy.com/listing/{lid}"
-            await page.wait_for_timeout(1500)
-        # Nếu không xác thực được chữ ký nhưng ID đã capture từ redirect thì vẫn đáng tin
-        print(f"  🎯 Dùng Listing ID từ redirect URL (không xác thực được chữ ký, vẫn dùng): {lid}")
-        return f"https://www.etsy.com/listing/{lid}"
-
     # Phương pháp 1: Dùng trực tiếp URL hiện tại nếu đang ở trang listing editor/listing
     # và editor đang khớp đúng sản phẩm hiện tại.
     if target_title:
         current_url = page.url
         match = re.search(r'(?:edit|listing)/(\d+)', current_url)
-        if match:
+        if match and await _editor_product_signature_matches(page, product):
             lid = match.group(1)
-            # Đợi trang load rồi thử xác thực
-            await page.wait_for_timeout(2000)
-            for _retry in range(3):
-                if await _editor_product_signature_matches(page, product):
-                    print(f"  🎯 Lấy được Listing ID từ URL editor (đã xác thực sản phẩm): {lid}")
-                    return f"https://www.etsy.com/listing/{lid}"
-                await page.wait_for_timeout(1500)
-            # URL có chứa edit/<id> ngay sau khi lưu → rất có thể là đúng listing
-            print(f"  🎯 Dùng Listing ID từ URL editor (không xác thực chữ ký, vẫn dùng): {lid}")
+            print(f"  🎯 Lấy được Listing ID từ URL editor (đã xác thực sản phẩm): {lid}")
             return f"https://www.etsy.com/listing/{lid}"
 
     # Phương pháp 2: Quét Drafts để chọn đúng listing vừa tạo.
-    # Đợi một chút để Etsy index draft mới trước khi quét.
-    await page.wait_for_timeout(3000)
     try:
         links = await _collect_draft_cards(page)
         matched_id = _pick_draft_card_id(links, product)
         if matched_id:
             print(f"  🎯 Quét Drafts chọn được Listing ID duy nhất: {matched_id}")
             return f"https://www.etsy.com/listing/{matched_id}"
-
-        baseline_ids = {
-            str(listing_id).strip()
-            for listing_id in product.get("_draft_ids_before_create", [])
-            if str(listing_id).strip()
-        }
-        if "_draft_ids_before_create" in product:
-            current_ids = {
-                str(card.get("id", "")).strip()
-                for card in links
-                if isinstance(card, dict) and str(card.get("id", "")).strip()
-            }
-            new_ids = sorted(current_ids - baseline_ids)
-            if len(new_ids) == 1:
-                new_id = new_ids[0]
-                print(f"  🎯 Xác minh được Listing ID mới duy nhất so với baseline Drafts: {new_id}")
-                return f"https://www.etsy.com/listing/{new_id}"
-            if len(new_ids) > 1:
-                print(f"  ⚠ Có {len(new_ids)} Draft ID mới; không tự động chọn để tránh sai listing.")
     except Exception as e:
         print(f"  ⚠ Lỗi khi quét tìm Listing ID: {e}")
-
-    # Phương pháp 3: Retry quét Drafts thêm 1 lần sau khi đợi thêm
-    try:
-        print("  🔄 Thử quét Drafts lần 2 sau 5s...")
-        await page.wait_for_timeout(5000)
-        links = await _collect_draft_cards(page)
-        matched_id = _pick_draft_card_id(links, product)
-        if matched_id:
-            print(f"  🎯 Quét Drafts lần 2 chọn được Listing ID: {matched_id}")
-            return f"https://www.etsy.com/listing/{matched_id}"
-    except Exception as e:
-        print(f"  ⚠ Lỗi khi quét Drafts lần 2: {e}")
-
+        
     print("  ⚠ Không xác minh được listing URL sau lưu draft.")
     return UNVERIFIED_DRAFT_URL_SENTINEL
 
@@ -2345,13 +1739,24 @@ async def fill_listing(page, product, edit_url=None):
 
         if product["image_paths"]:
             before_count = await _count_listing_image_thumbs(page)
-            expected = before_count + len(product["image_paths"][:10])
-            await _upload_listing_photos_until_count(
-                page,
-                product["image_paths"],
-                expected_total=expected,
-                exact=False,
-            )
+            fi = page.locator('input[type="file"]').first
+            if await fi.count() > 0:
+                await fi.set_input_files(product["image_paths"], timeout=20000)
+                await page.wait_for_timeout(4000)
+                print(f"  📷 {len(product['image_paths'])} ảnh ✓")
+
+                expected = before_count + len(product["image_paths"])
+                ok = await _wait_for_expected_image_count(
+                    page,
+                    expected_count=expected,
+                    exact=False,
+                )
+                if not ok:
+                    raise RuntimeError(
+                        f"Ảnh trên UI chưa đủ sau upload. Expected >= {expected} thumbnails nhưng chưa đạt."
+                    )
+            else:
+                raise RuntimeError("Không tìm thấy input upload ảnh trên form legacy.")
 
         # Digital file upload is handled inside fill_item_details_tab
 
@@ -2373,7 +1778,6 @@ async def fill_listing(page, product, edit_url=None):
         # Check for validation errors and wait for redirect
         errors_found = []
         saved_successfully = False
-        _redirect_listing_id = None  # Capture listing ID from URL redirect
         
         for _wait in range(30):
             await page.wait_for_timeout(1000)
@@ -2419,10 +1823,6 @@ async def fill_listing(page, product, edit_url=None):
             # Check if URL changed (saved successfully)
             if "edit/" in page.url or "listings" in page.url:
                 saved_successfully = True
-                # Capture listing ID from redirect URL (e.g. listing-editor/edit/12345678)
-                _id_match = re.search(r'(?:edit|listing)/(\d+)', page.url)
-                if _id_match:
-                    _redirect_listing_id = _id_match.group(1)
                 break
 
         if not saved_successfully and not errors_found:
@@ -2451,8 +1851,6 @@ async def fill_listing(page, product, edit_url=None):
 
         print("  💾 Saved as draft ✅")
         # Trích xuất và trả về URL của listing vừa tạo để lưu vào Excel
-        if _redirect_listing_id:
-            product["_captured_listing_id_from_redirect"] = _redirect_listing_id
         new_url = await get_newly_created_listing_url(page, product)
         if new_url:
             return new_url
@@ -2469,43 +1867,6 @@ async def fill_listing(page, product, edit_url=None):
             pass
         return False, f"Exception: {str(e)[:100]}"
 
-def _is_etsy_signin_page(url: str, content: str) -> bool:
-    url_lower = (url or "").lower()
-    content_lower = (content or "").lower()
-    return ("signin" in url_lower or "join" in url_lower or "access is temporarily" in content_lower)
-
-
-def _expected_etsy_shop_slug(shop_id: str) -> str:
-    shop_config = SHOPS.get(shop_id, {})
-    shop_link = str(shop_config.get("etsy_link") or "").strip()
-    match = re.search(r"(?:etsy\.com)?/shop/([^/?#]+)", shop_link, flags=re.IGNORECASE)
-    return (match.group(1) if match else shop_id).strip().lower()
-
-
-async def _assert_shop_manager_identity(page, shop_id: str) -> None:
-    expected_slug = _expected_etsy_shop_slug(shop_id)
-    current_url = str(page.url or "").lower()
-    if f"/shop/{expected_slug}" in current_url or f"/shops/{expected_slug}/" in current_url:
-        return
-
-    public_shop_hrefs = await page.locator('a[href*="/shop/"]').evaluate_all(
-        "(links) => links.map((link) => link.href || link.getAttribute('href') || '')"
-    )
-    observed_slugs = set()
-    for href in public_shop_hrefs or []:
-        match = re.search(r"(?:etsy\.com)?/shop/([^/?#]+)", str(href), flags=re.IGNORECASE)
-        if match:
-            observed_slugs.add(match.group(1).strip().lower())
-    if expected_slug in observed_slugs:
-        return
-
-    observed = ", ".join(sorted(observed_slugs)) or "không xác định"
-    raise RuntimeError(
-        f"❌ Phiên Chrome không xác minh được đúng shop '{shop_id}' "
-        f"(cần {expected_slug}, thấy {observed}). Dừng để tránh đăng nhầm shop."
-    )
-
-
 # ── Main ───────────────────────────────────────────────────────────────────────
 async def main():
     global EXCEL_FILE, SHOP_DIR
@@ -2516,18 +1877,6 @@ async def main():
                         help="Bỏ qua N sản phẩm đầu (để chạy tiếp từ giữa chừng)")
     parser.add_argument("--product", type=str, default=None,
                         help="Chạy 1 sản phẩm cụ thể theo folder name (vd: product-41)")
-    parser.add_argument(
-        "--products",
-        action="append",
-        default=None,
-        help="Chạy nhiều sản phẩm theo folder name (vd: --products product-1 --products product-3 hoặc --products product-1,product-3)",
-    )
-    parser.add_argument(
-        "--selected-product",
-        action="append",
-        default=None,
-        help="Chạy đúng cặp row:folder đã chọn (vd: --selected-product 42:product-39)",
-    )
     parser.add_argument("--shop", type=str, default="templystudios",
                         help="Mã shop cần chạy")
     parser.add_argument("--edit-url", type=str, default=None,
@@ -2537,41 +1886,7 @@ async def main():
     SHOP_DIR = BASE_DIR / "shops" / args.shop
     EXCEL_FILE = SHOP_DIR / "Etsy_SEO_Generator.xlsx"
 
-    try:
-        requested_products = _normalize_requested_products(args.products)
-        selected_products = _normalize_selected_products(args.selected_product)
-    except ValueError as exc:
-        raise RuntimeError(f"❌ Danh sách sản phẩm không hợp lệ: {exc}")
-    if selected_products and (requested_products or args.product):
-        raise RuntimeError("❌ Không dùng --selected-product cùng --product/--products")
-
-    if args.product:
-        normalized_product = args.product.strip() if args.product is not None else ""
-        if not re.fullmatch(r"product-\d+", normalized_product):
-            raise RuntimeError(f"❌ --product không hợp lệ: {args.product}")
-        if normalized_product and normalized_product not in requested_products:
-            requested_products.insert(0, normalized_product)
-
-    products, wb, ws, total = read_products(
-        batch=args.batch,
-        skip=args.skip,
-        product_folder=args.product,
-        product_folders=requested_products,
-        selected_products=selected_products,
-        shop_id=args.shop,
-    )
-
-    if selected_products:
-        found_pairs = {(int(p["row"]), str(p["folder"]).strip()) for p in products}
-        missing_pairs = [f"{row}:{folder}" for row, folder in selected_products if (row, folder) not in found_pairs]
-        if missing_pairs:
-            raise RuntimeError(f"❌ Không tìm thấy đúng row:folder: {', '.join(missing_pairs)}")
-    elif requested_products:
-        requested_lookup = {str(p).strip() for p in requested_products if str(p).strip()}
-        found_folders = {str(p["folder"]).strip() for p in products}
-        missing = [folder for folder in requested_products if folder not in found_folders]
-        if missing:
-            raise RuntimeError(f"❌ Không tìm thấy folder: {', '.join(missing)}")
+    products, wb, ws, total = read_products(batch=args.batch, skip=args.skip, product_folder=args.product, shop_id=args.shop)
 
     if not products:
         print("\n⚠  Không có sản phẩm nào cần đăng.\n")
@@ -2588,31 +1903,50 @@ async def main():
         langs = ", ".join(n for _, n, _ in LANGUAGES)
         print(f"\n  🌐 Dịch sang: {langs}")
 
-    BROWSER_DIR = resolve_browser_session_dir(
-        args.shop,
-        config=SHOPS,
-        base_dir=BASE_DIR,
-        home_dir=Path.home(),
-    )
-
     print()
-    BROWSER_DIR.mkdir(exist_ok=True, parents=True)
+    BROWSER_DIR.mkdir(exist_ok=True)
+
+    # Clear Chrome singleton lock files to prevent "profile already in use" error
+    for lock_file in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
+        lock_path = BROWSER_DIR / lock_file
+        try:
+            lock_path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
     async with async_playwright() as pw:
-        ctx, page, owns_context = await _open_poster_context(
-            pw, args.shop, BROWSER_DIR
+        launch_kw = dict(
+            user_data_dir=str(BROWSER_DIR),
+            headless=False,
+            args=["--start-maximized", "--disable-blink-features=AutomationControlled"],
+            viewport=None,
         )
+        if CHROME_PATH.exists():
+            launch_kw["executable_path"] = str(CHROME_PATH)
+            print("  🌐 Dùng Google Chrome thật")
+        else:
+            print("  🌐 Dùng Chromium")
+
+        ctx  = await pw.chromium.launch_persistent_context(**launch_kw)
+        page = ctx.pages[0] if ctx.pages else await ctx.new_page()
 
         # Kiểm tra đăng nhập
         await page.goto("https://www.etsy.com/your/shops/me/tools/listings",
                         wait_until="domcontentloaded")
         await page.wait_for_timeout(4000)
-        if _is_etsy_signin_page(page.url, await page.content()):
-            raise RuntimeError(
-                "❌ Cần đăng nhập Etsy trước khi post. "
-                "Profile hiện tại đang ở trang đăng nhập, không thể tiếp tục đăng listing."
-            )
-        await _assert_shop_manager_identity(page, args.shop)
+
+        if "signin" in page.url or "join" in page.url or "Access is temporarily" in await page.content():
+            print("\n  ⚠  Cần đăng nhập Etsy! Đợi tự động tối đa 3 phút...")
+            # Tự động chờ đăng nhập thay vì block bằng input()
+            for _wait in range(180):
+                await page.wait_for_timeout(1000)
+                if "signin" not in page.url and "join" not in page.url:
+                    break
+                if _wait % 15 == 0:
+                    print(f"  ⏳ Đợi đăng nhập Etsy... ({_wait}s)")
+            await page.goto("https://www.etsy.com/your/shops/me/tools/listings",
+                            wait_until="domcontentloaded")
+            await page.wait_for_timeout(4000)
 
         print("  ✅ Đã vào Shop Manager!\n")
 
@@ -2628,15 +1962,12 @@ async def main():
                 elif ok == UNVERIFIED_DRAFT_URL_SENTINEL:
                     success += 1
                     save_status(wb, ws, product["row"], "✅ Đã đăng draft (URL chưa xác minh)")
-                    mark_product_asset_operation_success(product)
                 elif isinstance(ok, str) and ok.startswith("http"):
                     success += 1
                     save_status(wb, ws, product["row"], "✅ Đã đăng draft", url=ok)
-                    mark_product_asset_operation_success(product)
                 elif ok is True:
                     success += 1
                     save_status(wb, ws, product["row"], "✅ Đã đăng draft")
-                    mark_product_asset_operation_success(product)
                 elif isinstance(ok, tuple) and ok[0] is False:
                     failed += 1
                     err_reason = ok[1]
@@ -2665,10 +1996,7 @@ async def main():
             print(f"\n  📌 Còn {remaining} sản phẩm. Lần sau chạy:")
             print(f"     python3 etsy_auto_post.py --batch {args.batch} --skip {next_skip}")
         print(f"{'='*55}\n")
-        if owns_context:
-            await ctx.close()
-        else:
-            await page.close()
+        await ctx.close()
 
 if __name__ == "__main__":
     asyncio.run(main())

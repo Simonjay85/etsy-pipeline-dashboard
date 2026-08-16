@@ -6,7 +6,7 @@
 <title>Etsy Pipeline Dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/style.css?v=20260814-status-summary-click-01">
+<link rel="stylesheet" href="/static/style.css?v=20260719-image-lightbox-01">
 </head>
 <body>
 
@@ -29,15 +29,9 @@
     <div class="svc" id="svc-mlx"><span class="dot"></span>MLX AI</div>
     <div class="svc" id="svc-watcher"><span class="dot"></span>Watcher</div>
   </div>
-  <div class="runtime-health" id="runtime-health">
-    <span class="runtime-health-dot"></span>
-    <span class="runtime-health-text">Runtime: checking...</span>
-    <span class="runtime-health-meta" id="runtime-health-meta">cwd unknown</span>
-  </div>
   <div class="header-actions">
     <button class="btn btn-success" onclick="createNewFolder()" title="Tạo folder sản phẩm mới">📁 Tạo Folder Mới</button>
     <button class="btn btn-ghost" onclick="startWatcher()">▶ Start Watcher</button>
-    <button class="btn btn-etsy-login" id="btn-etsy-login" onclick="openEtsyPostingLogin()" title="Mở đúng Chrome profile Etsy mà nút Post sử dụng">🔐 Đăng nhập Etsy cho Post</button>
     <button class="btn btn-sync" id="btn-etsy-sync" onclick="syncEtsyShop()" title="Quét Etsy Shop Manager rồi cập nhật link/status vào dashboard">🔄 Đồng bộ Etsy Shop</button>
     <button class="btn btn-warning" onclick="openRepairModal()" title="Sửa lỗi Tab/Description/Tags trên Etsy">🛠 Sửa lỗi Etsy</button>
     <button class="btn btn-danger" onclick="cleanDuplicates()" title="Tìm và xoá các bản nháp bị trùng lặp tiêu đề trên Etsy Shop Manager">🧹 Dọn trùng Drafts</button>
@@ -46,75 +40,35 @@
     <button class="btn btn-factory" onclick="openFactoryImport()" title="Import ảnh từ Image Factory">🖼 Import từ Factory</button>
     <button class="btn btn-seo" onclick="batchGenerateSEO()">🤖 Generate Missing SEO</button>
     <button class="btn btn-primary" onclick="runAllPending()">⚡ Run All Pending</button>
-    <button class="btn btn-ghost job-center-toggle" id="job-center-toggle" onclick="toggleJobCenter()" aria-expanded="false" aria-controls="job-center-drawer" title="Mở Job Center durable">📬 Jobs <span id="job-center-count" class="job-center-count" aria-live="polite">0</span></button>
     <button class="btn btn-danger" onclick="stopAll()" title="Dừng tất cả poster đang chạy">🛑 Stop All</button>
   </div>
 </header>
 
-<!-- Global FIFO across every shop. This intentionally does not follow the active-shop filter. -->
-<section class="operation-queue-dashboard" id="operation-queue-dashboard" aria-labelledby="operation-queue-title">
-  <div class="operation-queue-heading">
-    <div class="operation-queue-title-wrap">
-      <h2 id="operation-queue-title">⚙ Task đang chạy &amp; Queue chung</h2>
-      <span class="operation-queue-counts" id="operation-queue-counts">Đang tải…</span>
-    </div>
-    <span class="operation-queue-refresh" id="operation-queue-refresh" aria-live="polite">Chưa cập nhật</span>
-  </div>
-  <div class="operation-queue-list" id="operation-queue-list" role="list" aria-live="polite" aria-busy="true">
-    <div class="operation-queue-state">Đang tải hàng chờ toàn cục…</div>
-  </div>
-</section>
-
 <!-- ── STATS BAR ── -->
 <div class="stats-bar" id="stats-bar">
-  <button type="button" id="stat-card-total" class="stat-filter-btn stat-card" data-status-filter="" aria-label="Hiển thị tất cả sản phẩm" aria-pressed="false" onclick="onStatusSummaryClick('')">
+  <button id="stat-card-total" type="button" class="stat-card stat-filter-btn" data-status-filter="" aria-label="Hiển thị tất cả trạng thái" aria-pressed="false" onclick="onStatusSummaryClick('')">
     <div class="stat-num" id="stat-total">–</div>
-    <div class="stat-label" id="stat-total-label">Folder local hiển thị</div>
+    <div class="stat-label">Tổng</div>
   </button>
-  <button type="button" id="stat-card-posted" class="stat-filter-btn stat-card success" title="Số mục trong view hiện tại có trạng thái Đã đăng/posted; không phải số Etsy Active" data-status-filter="posted" aria-label="Lọc sản phẩm trạng thái đã đăng" aria-pressed="false" onclick="onStatusSummaryClick('posted')">
+  <button id="stat-card-posted" type="button" class="stat-card success stat-filter-btn" data-status-filter="posted" aria-label="Lọc trạng thái đã đăng" aria-pressed="false" onclick="onStatusSummaryClick('posted')">
     <div class="stat-num" id="stat-posted">–</div>
-    <div class="stat-label" id="stat-posted-label">Trạng thái Đã đăng</div>
+    <div class="stat-label">Đã đăng</div>
   </button>
-  <button type="button" id="stat-card-pending" class="stat-filter-btn stat-card pending" title="Số mục trong view hiện tại có trạng thái Chờ đăng" data-status-filter="pending" aria-label="Lọc sản phẩm trạng thái chờ đăng" aria-pressed="false" onclick="onStatusSummaryClick('pending')">
+  <button id="stat-card-pending" type="button" class="stat-card pending stat-filter-btn" data-status-filter="pending" aria-label="Lọc trạng thái chờ đăng" aria-pressed="false" onclick="onStatusSummaryClick('pending')">
     <div class="stat-num" id="stat-pending">–</div>
-    <div class="stat-label" id="stat-pending-label">Trạng thái Chờ đăng</div>
+    <div class="stat-label">Chờ đăng</div>
   </button>
-  <button type="button" id="stat-card-error" class="stat-filter-btn stat-card error" title="Số mục trong view hiện tại có trạng thái lỗi; không phải số Etsy Active" data-status-filter="error" aria-label="Lọc sản phẩm trạng thái lỗi" aria-pressed="false" onclick="onStatusSummaryClick('error')">
+  <button id="stat-card-error" type="button" class="stat-card error stat-filter-btn" data-status-filter="error" aria-label="Lọc trạng thái lỗi" aria-pressed="false" onclick="onStatusSummaryClick('error')">
     <div class="stat-num" id="stat-error">–</div>
-    <div class="stat-label" id="stat-error-label">Trạng thái lỗi</div>
+    <div class="stat-label">Lỗi</div>
   </button>
-  <button type="button" id="stat-card-other" class="stat-filter-btn stat-card" title="Số mục trong view hiện tại có trạng thái chưa thuộc Đã đăng, Chờ đăng hoặc Lỗi" data-status-filter="other" aria-label="Lọc các trạng thái khác" aria-pressed="false" onclick="onStatusSummaryClick('other')">
+  <button id="stat-card-other" type="button" class="stat-card stat-filter-btn" data-status-filter="other" aria-label="Lọc trạng thái khác" aria-pressed="false" onclick="onStatusSummaryClick('other')">
     <div class="stat-num" id="stat-other">–</div>
-    <div class="stat-label" id="stat-other-label">Khác / cần xử lý</div>
+    <div class="stat-label">Khác</div>
   </button>
 </div>
 <div class="etsy-sync-strip hidden" id="etsy-sync-strip"></div>
 <div class="etsy-sync-strip hidden" id="catalog-strip"></div>
-<section
-  class="etsy-bulk-sync-panel hidden"
-  id="etsy-bulk-sync-panel"
-  role="status"
-  aria-live="polite"
-  aria-atomic="true"
-  aria-busy="false">
-  <div class="etsy-bulk-sync-heading" id="etsy-bulk-sync-heading">Etsy → Local Batch</div>
-  <div class="etsy-bulk-sync-meta" id="etsy-bulk-sync-meta">0/0 đã xử lý · 0 thành công · 0 lỗi · 0 bỏ qua</div>
-  <div class="etsy-bulk-sync-bar-wrap">
-    <div
-      id="etsy-bulk-sync-progress-bar"
-      class="etsy-bulk-sync-bar"
-      role="progressbar"
-      aria-labelledby="etsy-bulk-sync-heading"
-      aria-describedby="etsy-bulk-sync-progress-text"
-      aria-valuemin="0"
-      aria-valuemax="100"
-      aria-valuenow="0">
-    </div>
-  </div>
-  <div class="etsy-bulk-sync-progress-text" id="etsy-bulk-sync-progress-text">Chưa chạy</div>
-  <div class="etsy-bulk-sync-current" id="etsy-bulk-sync-current">—</div>
-  <div class="etsy-bulk-sync-summary" id="etsy-bulk-sync-summary"></div>
-</section>
 
 <!-- ── SEARCH ── -->
 <div class="toolbar">
@@ -136,18 +90,10 @@
       <option value="pending">⏳ Chờ đăng</option>
       <option value="error">❌ Lỗi</option>
       <option value="other">📦 Khác</option>
-      <option value="new_import">🆕 Mới import</option>
       <option value="missing_title">⚠️ Thiếu Title</option>
       <option value="missing_description">⚠️ Thiếu Description</option>
       <option value="missing_tags">⚠️ Thiếu/Lỗi Tags</option>
       <option value="missing_seo">⚠️ Thiếu bất kỳ SEO</option>
-    </select>
-    <select class="filter-select cloud-status-filter" id="filter-cloud-status" title="Lọc theo trạng thái cloud" onchange="filterProducts()">
-      <option value="all">☁️ Tất cả cloud</option>
-      <option value="local">📁 Local</option>
-      <option value="scheduled">⏱ Đã lên lịch offload</option>
-      <option value="cloud-only">☁️ Cloud-only</option>
-      <option value="error">❌ Lỗi cloud</option>
     </select>
     <button class="btn btn-warning btn-sm" onclick="scanAndMergeDuplicates()" title="Quét catalog hợp nhất và dồn folder trùng an toàn">🔎 Quét & dồn folder trùng</button>
   </div>
@@ -155,10 +101,6 @@
   <div id="batch-actions" class="batch-actions">
     <span id="batch-count-label" class="batch-count-label">0 selected</span>
     <button class="btn btn-warning btn-sm local-batch-action" onclick="batchRegenSEO()">🤖 Tạo SEO Hàng Loạt</button>
-    <button id="local-batch-pull-btn" class="btn btn-etsy btn-sm local-batch-action" data-action-scope="live-etsy" data-risk="read" onclick="batchSyncFromEtsy()" title="Kéo tuần tự dữ liệu của các listing đã ghép từ Etsy vào đúng folder local">⬇ Etsy → Local</button>
-    <button id="local-batch-update-btn" class="btn btn-update btn-sm local-batch-action live-etsy-write" data-action-scope="live-etsy" data-risk="write" onclick="openBulkEtsyUpdateModal()" title="Cập nhật tuần tự các listing Etsy đã ghép bằng dữ liệu local đã chọn">⬆ Local → Etsy</button>
-    <button id="local-batch-cloud-btn" class="btn btn-ghost btn-sm local-batch-action" onclick="batchCloudUploadAndOffload()" title="Upload + verify cloud rồi xoá images/ và files/ local sau khi cloud xác nhận">☁ Cloud hàng loạt</button>
-    <button id="local-batch-post-btn" class="btn btn-primary btn-sm local-batch-action" onclick="batchPostSelected()" title="Đăng nhiều sản phẩm local cùng lúc bằng một Chrome">🚀 Đăng hàng loạt</button>
     <button id="local-batch-delete-btn" class="btn btn-danger btn-sm local-batch-action" onclick="batchDelete()" title="Xoá sản phẩm local đã chọn khỏi dashboard">🗑 Xoá Local đã chọn</button>
     <button class="btn btn-ghost btn-sm local-batch-action" onclick="openSyncModal()">🔄 Sync sang Shop khác</button>
     <button class="btn btn-primary btn-sm shop-batch-action" id="shop-bulk-create-btn" onclick="bulkCreateLocalFromEtsy()">➕ Tạo product mới + Sync</button>
@@ -174,7 +116,6 @@
     <div class="product-grid" id="product-grid">
       <div class="loading-state">⏳ Đang tải...</div>
     </div>
-    <div id="catalog-pagination" class="catalog-pagination" hidden></div>
   </div>
 
   <!-- Log Panel -->
@@ -187,23 +128,6 @@
   </div>
 
 </div>
-
-<aside class="job-center-drawer" id="job-center-drawer" aria-hidden="true" aria-labelledby="job-center-title">
-  <div class="job-center-header">
-    <div>
-      <h2 id="job-center-title">📬 Job Center</h2>
-      <p class="hint">Queue durable của shop đang hoạt động</p>
-    </div>
-    <button class="btn-close" type="button" onclick="toggleJobCenter(false)" aria-label="Đóng Job Center">✕</button>
-  </div>
-  <div class="job-center-toolbar">
-    <span id="job-center-summary" class="hint">Đang tải...</span>
-    <button class="btn btn-ghost btn-sm" type="button" onclick="loadJobCenter()">↻ Refresh</button>
-  </div>
-  <div id="job-center-list" class="job-center-list" aria-live="polite">
-    <div class="loading-state">Đang tải queue...</div>
-  </div>
-</aside>
 
 <div class="scroll-nav" id="scroll-nav-controls">
   <button
@@ -225,7 +149,7 @@
 </div>
 
 <!-- ══════════════ EDIT MODAL ══════════════ -->
-<div class="modal-overlay" id="edit-modal" data-unsaved-check="true">
+<div class="modal-overlay" id="edit-modal">
 <div class="modal modal-wide">
   <div class="modal-header">
     <h2 id="modal-title">Chỉnh sửa sản phẩm</h2>
@@ -498,17 +422,6 @@
   <div class="modal-body">
     <input type="hidden" id="social-row">
     <input type="hidden" id="social-folder">
-
-    <div class="social-session-card">
-      <div>
-        <strong id="social-session-shop">Session social riêng của shop</strong>
-        <div id="social-session-details">Đang đọc cấu hình profile...</div>
-        <div id="social-session-auth-note">Trạng thái đăng nhập: chưa kiểm tra</div>
-      </div>
-      <button class="btn btn-seo" id="btn-open-social-login" onclick="openSocialLoginBrowser()">
-        🔐 Mở / đăng nhập nền tảng này
-      </button>
-    </div>
     
     <!-- Etsy URL quick edit row -->
     <div class="social-url-container">
@@ -527,7 +440,7 @@
         <button class="social-tab-btn" onclick="switchSocialTab('pinterest')" id="tab-pinterest">📌 Pinterest</button>
         <button class="social-tab-btn" onclick="switchSocialTab('facebook')" id="tab-facebook">👥 Facebook</button>
         <button class="social-tab-btn" onclick="switchSocialTab('twitter')" id="tab-twitter">𝕏 Twitter / X</button>
-        <button class="social-tab-btn" onclick="switchSocialTab('medium')" id="tab-medium">✍️ Medium Research Article</button>
+        <button class="social-tab-btn" onclick="switchSocialTab('medium')" id="tab-medium">✍️ Medium Blog</button>
       </div>
       
       <!-- Tab Content Area -->
@@ -537,14 +450,7 @@
           <div class="flex-gap8">
             <button class="btn btn-seo btn-social-action" onclick="copySocialCaption()">📋 Copy Caption</button>
             <button class="btn btn-primary btn-social-action btn-social-auto-post" id="btn-auto-post" onclick="autoPostSocial()">⚡ Auto Post</button>
-            <button class="btn btn-success btn-social-action btn-social-post-all" id="btn-post-all" onclick="autoPostSocialAll()" title="Đăng lên tất cả nền tảng (Instagram, Pinterest, Facebook, Twitter, Medium, Reddit) cùng lúc">🚀 Post 1 lần tất cả</button>
           </div>
-        </div>
-        <div id="social-post-status" class="social-post-status is-pending">
-          Chưa có lịch sử đăng trên kênh này
-        </div>
-        <div id="social-post-summary" class="social-post-summary is-pending">
-          Chưa có kênh nào có lịch sử đăng.
         </div>
         <textarea id="social-caption-text" readonly rows="12" placeholder="Caption..." title="Social Caption Text" class="social-caption-textarea"></textarea>
         
@@ -574,11 +480,9 @@
     <div>
       <label for="bulk-social-platform" class="label-bold-block-mb6">Chọn nền tảng đăng bài:</label>
       <select id="bulk-social-platform" title="Chọn nền tảng đăng bài" class="social-bulk-input-select">
-        <option value="instagram">📸 Instagram</option>
         <option value="pinterest">📌 Pinterest</option>
-        <option value="facebook">👥 Facebook</option>
         <option value="twitter">𝕏 Twitter / X</option>
-        <option value="medium">✍️ Medium Research Article</option>
+        <option value="medium">✍️ Medium Blog</option>
       </select>
     </div>
     
@@ -600,7 +504,7 @@
     </div>
     
     <div class="warning-box">
-      ⚠️ Lưu ý: Hãy đăng nhập tài khoản trong session social riêng của shop đang chọn trước khi nhấn Bắt đầu.
+      ⚠️ Lưu ý: Hãy chắc chắn anh đã đăng nhập các tài khoản tương ứng trên cửa sổ Chrome debug trước khi nhấn nút Bắt đầu.
     </div>
   </div>
   <div class="modal-footer">
@@ -784,7 +688,6 @@
         <button class="btn btn-ghost btn-sm" onclick="scanFactory()">🔄 Quét lại</button>
       </div>
     </div>
-    <div id="factory-scope-note" class="text-muted font-size-0-78rem margin-top-8 display-none"></div>
 
     <div class="factory-filter-bar" id="factory-filter-bar">
       <button type="button" class="factory-filter active" data-filter="all" onclick="setFactoryFilter('all')">Tất cả <span id="factory-count-all">0</span></button>
@@ -857,59 +760,6 @@
 </div>
 </div>
 
-<!-- ═════════════ BULK UPDATE LOCAL DATA TO ETSY ═════════════ -->
-<div class="modal-overlay" id="etsy-bulk-update-modal">
-<div class="modal modal-update">
-  <div class="modal-header">
-    <div>
-      <h2>⬆ Cập nhật hàng loạt Local lên Etsy</h2>
-      <div class="hint"><strong id="etsy-bulk-update-count">0 sản phẩm</strong> → <span id="etsy-bulk-update-shop"></span></div>
-    </div>
-    <button class="btn-close" id="etsy-bulk-update-close-x" onclick="closeModal('etsy-bulk-update-modal')">✕</button>
-  </div>
-  <div class="modal-body">
-    <div class="warning-box">
-      Đây là thao tác ghi LIVE lên các listing Etsy hiện tại. Dashboard sẽ kiểm tra đúng shop, row, folder và listing ID rồi chạy tuần tự bằng một Chrome. Ảnh và file số mặc định không chọn.
-    </div>
-    <section class="etsy-bulk-review" id="etsy-bulk-update-review" aria-labelledby="etsy-bulk-review-heading" aria-live="polite">
-      <div class="etsy-bulk-review-heading">
-        <h3 id="etsy-bulk-review-heading">Review trước khi ghi LIVE</h3>
-        <span class="review-badge">Chưa gửi request</span>
-      </div>
-      <div class="etsy-bulk-review-summary">
-        <div><span>Active shop</span><strong id="etsy-bulk-update-shop-review">—</strong></div>
-        <div><span>Direction</span><strong id="etsy-bulk-update-direction">Local → Etsy</strong></div>
-        <div><span>Selected fields</span><strong id="etsy-bulk-update-fields-summary">—</strong></div>
-      </div>
-      <div class="etsy-bulk-review-products">
-        <strong>Exact selected products</strong>
-        <ol id="etsy-bulk-update-products"></ol>
-        <div id="etsy-bulk-update-rejected" class="hint"></div>
-      </div>
-    </section>
-    <label class="etsy-live-confirmation" for="etsy-bulk-update-live-confirmation">
-      <input type="checkbox" id="etsy-bulk-update-live-confirmation">
-      <span>Tôi đã review đúng shop, sản phẩm và fields; tôi hiểu bước tiếp theo sẽ ghi dữ liệu Local lên Etsy LIVE.</span>
-    </label>
-    <div class="etsy-update-fields etsy-bulk-update-fields" role="group" aria-label="Nội dung cập nhật hàng loạt lên Etsy">
-      <label><input type="checkbox" class="etsy-bulk-update-field" value="title" checked> <span>Title</span></label>
-      <label><input type="checkbox" class="etsy-bulk-update-field" value="description" checked> <span>Mô tả</span></label>
-      <label><input type="checkbox" class="etsy-bulk-update-field" value="tags" checked> <span>Tags</span></label>
-      <label><input type="checkbox" class="etsy-bulk-update-field" value="price" checked> <span>Giá</span></label>
-      <label><input type="checkbox" class="etsy-bulk-update-field" value="qty" checked> <span>Số lượng</span></label>
-      <label><input type="checkbox" class="etsy-bulk-update-field" value="images"> <span>Ảnh listing</span></label>
-      <label><input type="checkbox" class="etsy-bulk-update-field" value="files"> <span>File tải xuống</span></label>
-    </div>
-    <div id="etsy-bulk-update-run-status" class="etsy-update-run-status"></div>
-    <div class="hint">Nếu một sản phẩm lỗi, batch sẽ ghi nhận lỗi rồi tiếp tục sản phẩm kế tiếp. Sản phẩm lỗi vẫn được giữ chọn để anh thử lại.</div>
-  </div>
-  <div class="modal-footer">
-    <button class="btn btn-ghost" id="etsy-bulk-update-cancel" onclick="closeModal('etsy-bulk-update-modal')">Huỷ</button>
-    <button class="btn btn-update live-etsy-write" id="etsy-bulk-update-submit" data-action-scope="live-etsy" data-risk="write" onclick="submitBulkEtsyUpdate()" disabled>⬆ Ghi LIVE lên Etsy</button>
-  </div>
-</div>
-</div>
-
 <!-- ═════════════ MAP ETSY LISTING TO LOCAL PRODUCT ═════════════ -->
 <div class="modal-overlay" id="map-local-modal">
 <div class="modal">
@@ -951,41 +801,6 @@
 </div>
 </div>
 
-<!-- ═════════════ LINK LOCAL PRODUCT TO ETSY LISTING ═════════════ -->
-<div class="modal-overlay" id="link-etsy-modal">
-<div class="modal">
-  <div class="modal-header">
-    <h2>Ghép link Etsy cho sản phẩm local</h2>
-    <button class="btn-close" onclick="closeModal('link-etsy-modal')">✕</button>
-  </div>
-  <div class="modal-body">
-    <input type="hidden" id="link-local-row">
-    <input type="hidden" id="link-local-folder">
-    <div class="form-group">
-      <label>Sản phẩm local</label>
-      <div id="link-local-label" class="map-etsy-listing-info"></div>
-    </div>
-    <div class="form-group">
-      <label>Gợi ý listing Etsy chưa ghép</label>
-      <div id="link-etsy-scan-status" class="hint">⏳ Đang gợi ý listing Etsy chưa ghép...</div>
-      <div id="link-etsy-suggestions" class="map-local-suggestions"></div>
-    </div>
-    <div class="form-group">
-      <label for="link-etsy-input">Listing ID hoặc URL Etsy</label>
-      <input id="link-etsy-input" type="text"
-             placeholder="4542555210 hoặc https://www.etsy.com/listing/4542555210"
-             autocomplete="off"
-             onkeydown="if(event.key==='Enter') submitLinkEtsyFromLocal()">
-      <div class="hint">Dùng khi draft đã lên Etsy nhưng dashboard chưa lưu được listing ID (URL chưa xác minh).</div>
-    </div>
-  </div>
-  <div class="modal-footer">
-    <button class="btn btn-ghost" onclick="closeModal('link-etsy-modal')">Đóng</button>
-    <button class="btn btn-warning" id="link-etsy-submit" onclick="submitLinkEtsyFromLocal()">🔗 Ghép link</button>
-  </div>
-</div>
-</div>
-
 <!-- Accessible shared product-image lightbox -->
 <div class="image-lightbox" id="image-lightbox" role="dialog" aria-modal="true" aria-labelledby="lightbox-caption" aria-hidden="true">
   <div class="image-lightbox-backdrop" data-lightbox-close></div>
@@ -1001,8 +816,8 @@
 </div>
 
 <script src="/static/catalog_sort.js?v=20260718-hide-missing-folders-01"></script>
-<script src="/static/edit_save.js?v=20260811-edit-save-02"></script>
+<script src="/static/edit_save.js?v=20260718-edit-save-01"></script>
 <script src="/static/batch_selection.js?v=20260718-batch-actions-01"></script>
-<script src="/static/app.js?v=20260814-status-summary-click-01"></script>
+<script src="/static/app.js?v=20260719-etsy-draft-delete-01"></script>
 </body>
 </html>

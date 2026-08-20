@@ -38,7 +38,10 @@ This repo is the **only** canonical Etsy project root:
 
 ## Testing & validation
 
-- Run tests: `.venv/bin/python -m pytest` (207 tests collected, all passing as of 2026-08-04)
+- Run the current automated Python suite: `.venv/bin/python -m pytest -v`
+- Run the safe dashboard JavaScript regression suite: `npm run test:safe`
+- Run the reviewed broad-exception baseline gate: `.venv/bin/python scripts/flake8_baseline.py --all-tracked`
+- GitHub Actions runs the Python and safe JavaScript checks on pushes and pull requests targeting `main`.
 - Config: `pytest.ini` at project root; `conftest.py` excludes non-test scripts.
 
 ### Test-to-module map (all tracked pytest modules)
@@ -71,9 +74,9 @@ This repo is the **only** canonical Etsy project root:
 
 `test_seo_fail.py`, `test_tag_pills.py`, `test_tags.py`, `test_translate.py` are manual/interactive scripts excluded via `conftest.py` (`collect_ignore`).
 
-### JavaScript test files (manual scripts — no automated runner)
+### JavaScript test files
 
-The `test_*.js` files at the repo root are **manual, standalone scripts** for the dashboard frontend layer (`dashboard_static/`), not automated test suites. Each is a plain Node script using `node:assert` (some drive a live browser via Playwright-style interaction) and must be run individually, e.g. `node test_image_lightbox.js`. There is **no automated JS test runner** configured — no `package.json`, no Jest/Mocha/Playwright-test setup — so these scripts are never collected or executed by any CI/test command in this repo.
+The `test_*.js` files at the repo root are standalone Node scripts for the dashboard frontend layer (`dashboard_static/`). The explicit local-only allowlist is run with `npm run test:safe` (or `node scripts/run_safe_js_tests.mjs`) and is documented in `docs/TESTING.md`. The runner never globs `test_*.js`: browser/live/manual scripts remain excluded and must not be pulled into CI without a separate safety review.
 
 | Script | Checks |
 |--------|--------|

@@ -6,7 +6,7 @@ const vm = require('node:vm');
 
 const appJs = fs.readFileSync('dashboard_static/app.js', 'utf8');
 const indexHtml = fs.readFileSync('dashboard_static/index.html', 'utf8');
-assert.match(indexHtml, /\/static\/app\.js\?v=20260811-factory-scan-timeout-01/,
+assert.match(indexHtml, /\/static\/app\.js\?v=20260819-cloud-offload-preflight-01/,
   'Image Factory fix must use a fresh app.js cache key');
 const start = appJs.indexOf('let _factoryFolders = []');
 const end = appJs.indexOf('function renderFactoryFolders', start);

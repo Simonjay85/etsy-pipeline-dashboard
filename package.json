@@ -1,0 +1,11 @@
+{
+  "name": "etsy-pipeline-dashboard-tests",
+  "private": true,
+  "description": "Dependency-free runner for the Etsy dashboard's safe local JavaScript checks.",
+  "scripts": {
+    "test:safe": "node scripts/run_safe_js_tests.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

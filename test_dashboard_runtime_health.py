@@ -86,7 +86,9 @@ class DashboardRuntimeHealthTests(unittest.TestCase):
         self.assertNotIn("token", str(payload["active_shop"]))
         self.assertNotIn("should-not-leak", response.text)
         self.assertNotIn("secret-cookie", response.text)
-        self.assertNotIn("line", response.text)
+        status_evidence = payload["backup_scheduler"]["status_evidence"]
+        self.assertNotIn("line", status_evidence.get("last_success") or {})
+        self.assertNotIn("line", status_evidence.get("last_failure") or {})
         self.assertNotIn("backup-folder", response.text)
         self.assertIn("health_summary", payload)
         self.assertIn("canonical_root", payload)

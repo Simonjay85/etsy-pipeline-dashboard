@@ -9,7 +9,7 @@ const functionStart = appJs.indexOf('async function syncListingFromEtsy(row, fol
 const functionEnd = appJs.indexOf('\n\n// ── Actions', functionStart);
 assert.ok(appJs.includes(stateLine), 'Single Sync in-flight state is missing');
 assert.ok(
-  indexHtml.includes('/static/app.js?v=20260809-bulk-sync-ui-safety-01'),
+  indexHtml.includes('/static/app.js?v=20260819-cloud-offload-preflight-01'),
   'Dashboard must load the Single Sync guard JavaScript cache version',
 );
 assert.ok(functionStart >= 0 && functionEnd > functionStart, 'Unable to isolate syncListingFromEtsy');

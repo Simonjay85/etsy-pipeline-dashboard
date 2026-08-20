@@ -119,3 +119,13 @@ resemble runtime hygiene files.
 The CI workflow is local/test-only: it does not load Etsy credentials, connect
 to Chrome or Playwright, run rclone, mutate cloud storage, or perform Daisy
 apply operations.
+
+## Optional external contract checks
+
+`test_etsy_listing_gallery_channel_guard.py` is marked
+`external_contract` because it exercises the optional local Codex
+`etsy-10-image-maker` skill rather than a repository-owned module. When that
+skill is installed under `~/.codex/skills/etsy-10-image-maker/scripts`, the
+test runs its full guard and CLI contract checks. On machines without the
+skill, including GitHub-hosted Ubuntu runners, pytest skips these tests before
+execution; the repository-owned Python tests and CI checks remain required.

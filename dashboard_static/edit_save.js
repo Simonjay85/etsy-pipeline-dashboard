@@ -36,7 +36,13 @@
     return VERIFIED_FIELDS.flatMap((field) => {
       const expectedValue = normalizedValue(field, expected[field]);
       const actualValue = normalizedValue(field, actual[field]);
-      return expectedValue === actualValue
+      // Products that still need SEO expose their seed title as the display
+      // title, while the workbook title remains intentionally empty.  Treat
+      // that API presentation value as an empty title during read-back.
+      const intentionallyMissingTitle = field === 'title'
+        && expectedValue === ''
+        && actual.needs_seo === true;
+      return intentionallyMissingTitle || expectedValue === actualValue
         ? []
         : [{ field, expected: expectedValue, actual: actualValue }];
     });

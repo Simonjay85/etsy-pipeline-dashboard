@@ -6,7 +6,7 @@
 <title>Etsy Pipeline Dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/style.css?v=20260809-bulk-sync-ui-safety-01">
+<link rel="stylesheet" href="/static/style.css?v=20260814-status-summary-click-01">
 </head>
 <body>
 
@@ -51,12 +51,42 @@
   </div>
 </header>
 
+<!-- Global FIFO across every shop. This intentionally does not follow the active-shop filter. -->
+<section class="operation-queue-dashboard" id="operation-queue-dashboard" aria-labelledby="operation-queue-title">
+  <div class="operation-queue-heading">
+    <div class="operation-queue-title-wrap">
+      <h2 id="operation-queue-title">⚙ Task đang chạy &amp; Queue chung</h2>
+      <span class="operation-queue-counts" id="operation-queue-counts">Đang tải…</span>
+    </div>
+    <span class="operation-queue-refresh" id="operation-queue-refresh" aria-live="polite">Chưa cập nhật</span>
+  </div>
+  <div class="operation-queue-list" id="operation-queue-list" role="list" aria-live="polite" aria-busy="true">
+    <div class="operation-queue-state">Đang tải hàng chờ toàn cục…</div>
+  </div>
+</section>
+
 <!-- ── STATS BAR ── -->
 <div class="stats-bar" id="stats-bar">
-  <div class="stat-card"><div class="stat-num" id="stat-total">–</div><div class="stat-label">Tổng</div></div>
-  <div class="stat-card success"><div class="stat-num" id="stat-posted">–</div><div class="stat-label">Đã đăng</div></div>
-  <div class="stat-card pending"><div class="stat-num" id="stat-pending">–</div><div class="stat-label">Chờ đăng</div></div>
-  <div class="stat-card error"><div class="stat-num" id="stat-error">–</div><div class="stat-label">Lỗi</div></div>
+  <button type="button" id="stat-card-total" class="stat-filter-btn stat-card" data-status-filter="" aria-label="Hiển thị tất cả sản phẩm" aria-pressed="false" onclick="onStatusSummaryClick('')">
+    <div class="stat-num" id="stat-total">–</div>
+    <div class="stat-label" id="stat-total-label">Folder local hiển thị</div>
+  </button>
+  <button type="button" id="stat-card-posted" class="stat-filter-btn stat-card success" title="Số mục trong view hiện tại có trạng thái Đã đăng/posted; không phải số Etsy Active" data-status-filter="posted" aria-label="Lọc sản phẩm trạng thái đã đăng" aria-pressed="false" onclick="onStatusSummaryClick('posted')">
+    <div class="stat-num" id="stat-posted">–</div>
+    <div class="stat-label" id="stat-posted-label">Trạng thái Đã đăng</div>
+  </button>
+  <button type="button" id="stat-card-pending" class="stat-filter-btn stat-card pending" title="Số mục trong view hiện tại có trạng thái Chờ đăng" data-status-filter="pending" aria-label="Lọc sản phẩm trạng thái chờ đăng" aria-pressed="false" onclick="onStatusSummaryClick('pending')">
+    <div class="stat-num" id="stat-pending">–</div>
+    <div class="stat-label" id="stat-pending-label">Trạng thái Chờ đăng</div>
+  </button>
+  <button type="button" id="stat-card-error" class="stat-filter-btn stat-card error" title="Số mục trong view hiện tại có trạng thái lỗi; không phải số Etsy Active" data-status-filter="error" aria-label="Lọc sản phẩm trạng thái lỗi" aria-pressed="false" onclick="onStatusSummaryClick('error')">
+    <div class="stat-num" id="stat-error">–</div>
+    <div class="stat-label" id="stat-error-label">Trạng thái lỗi</div>
+  </button>
+  <button type="button" id="stat-card-other" class="stat-filter-btn stat-card" title="Số mục trong view hiện tại có trạng thái chưa thuộc Đã đăng, Chờ đăng hoặc Lỗi" data-status-filter="other" aria-label="Lọc các trạng thái khác" aria-pressed="false" onclick="onStatusSummaryClick('other')">
+    <div class="stat-num" id="stat-other">–</div>
+    <div class="stat-label" id="stat-other-label">Khác / cần xử lý</div>
+  </button>
 </div>
 <div class="etsy-sync-strip hidden" id="etsy-sync-strip"></div>
 <div class="etsy-sync-strip hidden" id="catalog-strip"></div>
@@ -99,12 +129,14 @@
   <div class="toolbar-left">
     <input type="checkbox" id="cb-select-all" onclick="toggleSelectAll()" title="Chọn tất cả">
     <input class="search-input" id="search" placeholder="🔍  Tìm sản phẩm..." oninput="filterProducts()">
-    <select class="filter-select" id="filter-status" title="Lọc theo trạng thái" onchange="filterProducts()">
+    <select class="filter-select" id="filter-status" title="Lọc theo trạng thái" onchange="onStatusFilterChange()">
       <option value="">Tất cả trạng thái</option>
       <option value="posted">✅ Đã đăng</option>
       <option value="draft">✅ Đã đăng draft</option>
       <option value="pending">⏳ Chờ đăng</option>
       <option value="error">❌ Lỗi</option>
+      <option value="other">📦 Khác</option>
+      <option value="new_import">🆕 Mới import</option>
       <option value="missing_title">⚠️ Thiếu Title</option>
       <option value="missing_description">⚠️ Thiếu Description</option>
       <option value="missing_tags">⚠️ Thiếu/Lỗi Tags</option>
@@ -125,9 +157,10 @@
     <button class="btn btn-warning btn-sm local-batch-action" onclick="batchRegenSEO()">🤖 Tạo SEO Hàng Loạt</button>
     <button id="local-batch-pull-btn" class="btn btn-etsy btn-sm local-batch-action" data-action-scope="live-etsy" data-risk="read" onclick="batchSyncFromEtsy()" title="Kéo tuần tự dữ liệu của các listing đã ghép từ Etsy vào đúng folder local">⬇ Etsy → Local</button>
     <button id="local-batch-update-btn" class="btn btn-update btn-sm local-batch-action live-etsy-write" data-action-scope="live-etsy" data-risk="write" onclick="openBulkEtsyUpdateModal()" title="Cập nhật tuần tự các listing Etsy đã ghép bằng dữ liệu local đã chọn">⬆ Local → Etsy</button>
+    <button id="local-batch-cloud-btn" class="btn btn-ghost btn-sm local-batch-action" onclick="batchCloudUploadAndOffload()" title="Upload + verify cloud rồi xoá images/ và files/ local sau khi cloud xác nhận">☁ Cloud hàng loạt</button>
     <button id="local-batch-post-btn" class="btn btn-primary btn-sm local-batch-action" onclick="batchPostSelected()" title="Đăng nhiều sản phẩm local cùng lúc bằng một Chrome">🚀 Đăng hàng loạt</button>
     <button id="local-batch-delete-btn" class="btn btn-danger btn-sm local-batch-action" onclick="batchDelete()" title="Xoá sản phẩm local đã chọn khỏi dashboard">🗑 Xoá Local đã chọn</button>
-    <button class="btn btn-ghost btn-sm local-batch-action" onclick="openSyncModal()">🔄 Sync sang Shop khác</button>
+    <button class="btn btn-ghost btn-sm local-batch-action cross-shop-batch-action" onclick="openSyncModal()">🔄 Sync sang Shop khác</button>
     <button class="btn btn-primary btn-sm shop-batch-action" id="shop-bulk-create-btn" onclick="bulkCreateLocalFromEtsy()">➕ Tạo product mới + Sync</button>
     <button class="btn btn-danger btn-sm shop-batch-action" id="shop-bulk-delete-drafts-btn" onclick="bulkDeleteSelectedEtsyDrafts()">🗑 Xoá draft Etsy đã chọn</button>
   </div>
@@ -328,13 +361,13 @@
     </select>
 
     <div class="flex-align-center-gap10 mt-14">
-      <input type="checkbox" id="sync-copy-files" class="checkbox-compact">
+      <input type="checkbox" id="sync-copy-files" class="checkbox-compact" checked>
       <label for="sync-copy-files" class="checkbox-label">
-        Sao chép cả ảnh &amp; file (images/ và files/) sang shop đích
+        Sao chép ảnh &amp; file đã xác thực (images/ và files/) sang shop đích
       </label>
     </div>
     <div class="sync-tip">
-      Bỏ tick = chỉ copy thông tin SEO (title, tags, description). Anh tự upload ảnh riêng cho từng shop.
+      Bỏ tick = SEO-only: chỉ copy title, tags, description; không copy ảnh/file và anh tự upload asset riêng cho shop đích.
     </div>
 
     <div id="sync-result" class="result-box"></div>
@@ -968,8 +1001,8 @@
 </div>
 
 <script src="/static/catalog_sort.js?v=20260718-hide-missing-folders-01"></script>
-<script src="/static/edit_save.js?v=20260718-edit-save-01"></script>
-<script src="/static/batch_selection.js?v=20260718-batch-actions-01"></script>
-<script src="/static/app.js?v=20260809-bulk-sync-ui-safety-01"></script>
+<script src="/static/edit_save.js?v=20260811-edit-save-02"></script>
+<script src="/static/batch_selection.js?v=20260819-cross-shop-batch-action-01"></script>
+<script src="/static/app.js?v=20260819-cloud-offload-preflight-01"></script>
 </body>
 </html>

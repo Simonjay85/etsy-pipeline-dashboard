@@ -181,6 +181,123 @@ class ImageFactoryImportTests(unittest.TestCase):
             self.assertNotIn("product-01", json.dumps(result))
             self.assertNotIn("product-02", json.dumps(result))
 
+    def test_allocator_fills_lowest_gap_and_honors_batch_reservations(self):
+        with tempfile.TemporaryDirectory() as temp:
+            _, source, excel = self._source_root(temp)
+            _make_workbook(excel, [
+                (4, "product-01", "First"),
+                (5, "product-02", "Second"),
+            ])
+            (source / "product-01").mkdir()
+            (source / "product-02").mkdir()
+            (source / "product-04").mkdir()
+            ws = openpyxl.load_workbook(excel)["Listings"]
+
+            self.assertEqual(3, dashboard_app._next_product_number(ws, source))
+            first_slot = dashboard_app._allocate_product_slot(
+                ws, source, reusable_slots=[], used_folders=set()
+            )
+            self.assertEqual("product-03", first_slot["folder"])
+
+            reserved_folders = {"product-03"}
+            self.assertEqual(5, dashboard_app._next_product_number(ws, source, reserved_folders))
+            reserved_slot = dashboard_app._allocate_product_slot(
+                ws, source, reusable_slots=[], used_folders=reserved_folders
+            )
+            self.assertEqual("product-05", reserved_slot["folder"])
+
+    def test_reusable_slots_exclude_empty_folders_with_etsy_listing_mappings(self):
+        with tempfile.TemporaryDirectory() as temp:
+            _, source, excel = self._source_root(temp)
+            _make_workbook(excel, [
+                (4, "product-01", "Mapped by public URL"),
+                (5, "product-02", "Mapped by listing ID"),
+                (6, "product-03", "Invalid mapping"),
+                (7, "product-04", "Unmapped"),
+                (8, "product-05", "Mapped by manager URL"),
+            ])
+            for folder_name in (
+                "product-01", "product-02", "product-03", "product-04", "product-05"
+            ):
+                (source / folder_name / "images").mkdir(parents=True)
+                (source / folder_name / "files").mkdir()
+
+            wb = openpyxl.load_workbook(excel)
+            ws = wb["Listings"]
+            ws.cell(row=4, column=16, value="https://www.etsy.com/listing/4545350918/example")
+            ws.cell(row=5, column=16, value="4545350919")
+            ws.cell(row=6, column=16, value="https://example.com/listing/4545350920")
+            ws.cell(
+                row=8,
+                column=16,
+                value="https://www.etsy.com/your/shops/me/listing-editor/edit/4545350921",
+            )
+
+            slots = dashboard_app._find_reusable_empty_product_slots(ws, source)
+
+            self.assertEqual(["product-03", "product-04"], [slot["folder"] for slot in slots])
+            wb.close()
+
+    def test_reusable_slots_exclude_cloud_empty_product_slot_mapped_by_locale_public_url(self):
+        with tempfile.TemporaryDirectory() as temp:
+            _, source, excel = self._source_root(temp)
+            _make_workbook(excel, [
+                (4, "product-01", "Mapped by locale public URL"),
+                (5, "product-02", "Reusable"),
+                (6, "product-03", "Not reusable"),
+            ])
+            for folder_name in ("product-01", "product-02", "product-03"):
+                (source / folder_name / "images").mkdir(parents=True)
+                (source / folder_name / "files").mkdir()
+
+            wb = openpyxl.load_workbook(excel)
+            ws = wb["Listings"]
+            ws.cell(
+                row=4,
+                column=16,
+                value="https://www.etsy.com/ca/listing/4555695025/800-ai-commands-for-etsy-sellers-a?ref=listings_manager_grid",
+            )
+
+            # product-03 has actual usable assets, so it should not be reusable.
+            _write_image(source / "product-03" / "images" / "01_hero_image.png")
+
+            slots = dashboard_app._find_reusable_empty_product_slots(ws, source)
+
+            self.assertEqual(["product-02"], [slot["folder"] for slot in slots])
+            wb.close()
+
+    def test_allocator_rechecks_listing_mapping_before_reusing_stale_slot(self):
+        with tempfile.TemporaryDirectory() as temp:
+            _, source, excel = self._source_root(temp)
+            _make_workbook(excel, [
+                (4, "product-01", "Mapped after discovery"),
+                (5, "product-02", "Still reusable"),
+            ])
+            wb = openpyxl.load_workbook(excel)
+            ws = wb["Listings"]
+            slots = []
+            for row_num, folder_name in ((4, "product-01"), (5, "product-02")):
+                folder_path = source / folder_name
+                (folder_path / "images").mkdir(parents=True)
+                (folder_path / "files").mkdir()
+                slots.append({
+                    "folder": folder_name,
+                    "number": row_num - 3,
+                    "path": folder_path,
+                    "row": row_num,
+                })
+
+            ws.cell(row=4, column=16, value="https://www.etsy.com/listing/4545350918")
+            allocated = dashboard_app._allocate_product_slot(
+                ws, source, reusable_slots=slots, used_folders=set()
+            )
+
+            self.assertEqual("product-02", allocated["folder"])
+            self.assertTrue(allocated["reused"])
+            self.assertTrue((source / "product-01" / "images").is_dir())
+            self.assertTrue((source / "product-01" / "files").is_dir())
+            wb.close()
+
     def test_import_rechecks_duplicates_without_mutating_shop(self):
         with tempfile.TemporaryDirectory() as temp:
             root, source, excel = self._source_root(temp)
@@ -243,6 +360,75 @@ class ImageFactoryImportTests(unittest.TestCase):
             self.assertEqual("Source folder not found", temply_attempt["results"][0]["error"])
             self.assertTrue((source / "product-01" / "files" / "New Product.zip").is_file())
             self.assertFalse((temply_source / "product-01").exists())
+            wb = openpyxl.load_workbook(excel, data_only=True)
+            self.assertEqual("🆕 Mới import · ⏳ Chờ đăng", wb["Listings"].cell(row=4, column=14).value)
+            wb.close()
+            with (
+                patch.object(dashboard_app, "EXCEL_FILE", return_value=excel),
+                patch.object(dashboard_app, "SHOP_DIR", return_value=source),
+                patch.object(dashboard_app, "_active_shop_id", "daisyflowdigital"),
+                patch.object(dashboard_app, "load_social_post_records", return_value={"products": {}}),
+            ):
+                imported_product = dashboard_app.products_from_excel()[0]
+            self.assertEqual(
+                "🆕 Mới import · ⏳ Chờ đăng · ⚠ Cần generate SEO",
+                imported_product["status"],
+            )
+            self.assertTrue(imported_product["is_new_import"])
+
+    def test_products_from_excel_preserves_new_import_pending_status_when_title_missing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            _, source, excel = self._source_root(temp)
+            _make_workbook(excel, [(4, "product-01", "Blank title token test")])
+
+            wb = openpyxl.load_workbook(excel)
+            ws = wb["Listings"]
+            ws.cell(row=4, column=14, value="🆕 Mới import · ⏳ Chờ đăng")
+            wb.save(excel)
+            wb.close()
+
+            product_dir = source / "product-01" / "images"
+            _write_image(product_dir / "01_hero_image.png")
+
+            with (
+                patch.object(dashboard_app, "EXCEL_FILE", return_value=excel),
+                patch.object(dashboard_app, "SHOP_DIR", return_value=source),
+                patch.object(dashboard_app, "_active_shop_id", "templystudios"),
+                patch.object(dashboard_app, "load_social_post_records", return_value={"products": {}}),
+            ):
+                imported_product = dashboard_app.products_from_excel()[0]
+
+            self.assertEqual(
+                "🆕 Mới import · ⏳ Chờ đăng · ⚠ Cần generate SEO",
+                imported_product["status"],
+            )
+            self.assertTrue(imported_product["needs_seo"])
+
+    def test_new_import_status_is_additive_and_idempotent(self):
+        self.assertEqual(
+            "🆕 Mới import · ✅ Đã đăng",
+            dashboard_app._new_import_status("✅ Đã đăng"),
+        )
+        self.assertEqual(
+            "🆕 Mới import · ⏳ Chờ đăng",
+            dashboard_app._new_import_status("🆕 Mới import · ⏳ Chờ đăng"),
+        )
+
+    def test_preserve_new_import_status_only_when_currently_marked(self):
+        self.assertEqual(
+            "🆕 Mới import · ⚠ Sync lỗi",
+            dashboard_app._preserve_new_import_status(
+                "⚠ Sync lỗi",
+                current_status="🆕 Mới import · ⏳ Chờ đăng",
+            ),
+        )
+        self.assertEqual(
+            "⚠ Sync lỗi",
+            dashboard_app._preserve_new_import_status(
+                "⚠ Sync lỗi",
+                current_status="✅ Đã đăng",
+            ),
+        )
 
     def test_source_folder_rejects_path_traversal_and_non_source_folders(self):
         with tempfile.TemporaryDirectory() as temp:

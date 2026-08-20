@@ -30,10 +30,53 @@ class EtsyLinkLocalTests(unittest.TestCase):
     def test_mapped_etsy_listing_ids(self):
         mapped = dashboard_app._mapped_etsy_listing_ids([
             {"etsy_url": "https://www.etsy.com/listing/111"},
+            {"etsy_url": "https://www.etsy.com/ca/listing/333/800-ai-commands-for-etsy-sellers-a"},
             {"etsy_url": ""},
             {"etsy_url": "https://www.etsy.com/listing/222?ref=x"},
         ])
-        self.assertEqual(mapped, {"111", "222"})
+        self.assertEqual(mapped, {"111", "222", "333"})
+
+    def test_verified_etsy_public_listing_id_accepts_locale_path(self):
+        self.assertEqual(
+            dashboard_app._extract_verified_etsy_public_listing_id(
+                "https://www.etsy.com/ca/listing/4555695025/800-ai-commands-for-etsy-sellers-a?ref=listings_manager_grid"
+            ),
+            "4555695025",
+        )
+
+    def test_verified_etsy_public_listing_id_accepts_en_ca_locale_path(self):
+        self.assertEqual(
+            dashboard_app._extract_verified_etsy_public_listing_id(
+                "https://www.etsy.com/en-ca/listing/4555695025/800-ai-commands-for-etsy-sellers-a#review"
+            ),
+            "4555695025",
+        )
+
+    def test_rejects_public_listing_path_traversal_and_encoded_dot_segments(self):
+        self.assertEqual(
+            dashboard_app._extract_verified_etsy_public_listing_id(
+                "https://www.etsy.com/listing/4555695025/../../account",
+            ),
+            "",
+        )
+        self.assertEqual(
+            dashboard_app._extract_verified_etsy_public_listing_id(
+                "https://www.etsy.com/listing/4555695025/%2e%2e/%61ccount",
+            ),
+            "",
+        )
+        self.assertEqual(
+            dashboard_app._extract_verified_etsy_public_listing_id(
+                "https://www.etsy.com/listing/4555695025/.",
+            ),
+            "",
+        )
+        self.assertEqual(
+            dashboard_app._extract_verified_etsy_public_listing_id(
+                "https://www.etsy.com/listing/4555695025/..",
+            ),
+            "",
+        )
 
     def test_link_suggestions_for_folder_ranks_unmapped_drafts(self):
         products = [

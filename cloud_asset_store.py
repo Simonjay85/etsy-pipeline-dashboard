@@ -65,6 +65,7 @@ STATES = (
     "RESTORING",
     "READY_LOCAL",
     "DIRTY_LOCAL",
+    "CLEANUP_PENDING",
     "ERROR",
 )
 
@@ -106,6 +107,7 @@ _STATE_TRANSITIONS = {
         "DIRTY_LOCAL",
         "CLOUD_VERIFIED",
         "OFFLOAD_SCHEDULED",
+        "CLEANUP_PENDING",
         "ERROR",
     },
     "RESTORING": {"RESTORING", "RESTORE_VERIFIED", "READY_LOCAL", "ERROR"},
@@ -126,6 +128,12 @@ _STATE_TRANSITIONS = {
         "CLOUD_VERIFIED",
         "OFFLOAD_SCHEDULED",
         "CLOUD_ONLY",
+        "ERROR",
+    },
+    "CLEANUP_PENDING": {
+        "CLEANUP_PENDING",
+        "CLOUD_ONLY",
+        "RESTORING",
         "ERROR",
     },
     "ERROR": {
@@ -885,11 +893,17 @@ class RcloneRemote(RemoteStore):
         return result.stdout.encode("utf-8")
 
     def write_bytes(self, remote_path: str, data: bytes, overwrite: bool = True) -> None:
-        del overwrite  # rclone copyto intentionally replaces the current pointer.
         with tempfile.TemporaryDirectory(prefix="etsy-cloud-pointer-") as temporary:
             source = Path(temporary) / "current.json"
             source.write_bytes(data)
-            self._run(["copyto", str(source), self._remote_path(remote_path)])
+            args = ["copyto", str(source), self._remote_path(remote_path)]
+            if not overwrite:
+                # A migration publishes current.json only after its immutable
+                # revision is verified.  --immutable makes that publication
+                # create-only, so another host cannot be silently overwritten
+                # between our existence probe and this write.
+                args.append("--immutable")
+            self._run(args)
 
 
 def _copy_tree_files(source: Path, destination: Path, records: Sequence[AssetRecord]) -> None:
@@ -1803,6 +1817,23 @@ class CloudAssetStore:
             return None
         return metadata
 
+    def _clear_hydration_failure(self, key: str) -> None:
+        """Remove one stale failure marker after its remote pointer recovers."""
+
+        destination = self._hydration_metadata_path(key)
+        if destination.is_symlink():
+            raise AssetValidationError(f"symlinks are not allowed for hydration metadata: {destination}")
+        try:
+            if destination.is_file():
+                destination.unlink()
+        except FileNotFoundError:
+            # Another cleanup of this exact marker won the race.
+            return
+        except OSError:
+            # A recovered pointer is still usable even if stale audit metadata
+            # cannot be removed; the next call will retry this narrow cleanup.
+            return
+
     def _hydrate_product_impl(
         self,
         product_root: Union[str, Path],
@@ -1852,15 +1883,16 @@ class CloudAssetStore:
                     self._hydration_cache_key(identity, "current"),
                     timestamp,
                 )
-                if pointer_failure:
-                    error = str(pointer_failure.get("error") or "previous current pointer failure")
-                    raise RemoteStoreError(f"cloud asset hydration retry is retained: {error}")
-
                 try:
                     pointer, manifest, manifest_sha256 = self._read_current_and_manifest(identity)
                 except Exception:
                     failure_revision = "current"
+                    if pointer_failure:
+                        error = str(pointer_failure.get("error") or "previous current pointer failure")
+                        raise RemoteStoreError(f"cloud asset hydration retry is retained: {error}")
                     raise
+                if pointer_failure:
+                    self._clear_hydration_failure(self._hydration_cache_key(identity, "current"))
                 revision = _safe_component(str(pointer["revision"]), "revision")
 
                 # A complete local product is usable only when every local
@@ -1874,6 +1906,24 @@ class CloudAssetStore:
                     except (AssetValidationError, CloudAssetError, OSError, ValueError, TypeError, KeyError):
                         local_matches = False
                     if local_matches:
+                        if state.get("state") == "ERROR":
+                            self._transition(
+                                product_path,
+                                state,
+                                "CLOUD_VERIFIED",
+                                "current cloud manifest recovered and local assets match",
+                                timestamp,
+                                revision=revision,
+                            )
+                        state.update(
+                            {
+                                "current_revision": revision,
+                                "current_manifest_sha256": manifest_sha256,
+                                "current_manifest": manifest,
+                                "last_error": None,
+                            }
+                        )
+                        save_local_state(product_path, state)
                         paths = self._cache_asset_paths(product_path, manifest)
                         return self._resolution_payload(
                             product_path,
@@ -2383,6 +2433,82 @@ class CloudAssetStore:
         return False
 
     @staticmethod
+    def _has_current_verified_revision(state: Mapping[str, Any], identity: ProductIdentity) -> bool:
+        """Check the local proof needed for an empty-directory offload retry.
+
+        This deliberately validates only the locally persisted revision proof;
+        it does not contact the remote.  The worker's existing idempotent
+        ``offload_now`` path remains responsible for remote re-verification.
+        """
+
+        if state.get("state") not in {"CLOUD_ONLY", "CLEANUP_PENDING"}:
+            return False
+        revision = str(state.get("current_revision") or "").strip()
+        manifest_hash = str(state.get("current_manifest_sha256") or "").strip()
+        manifest = state.get("current_manifest")
+        if not revision or not re.fullmatch(r"[0-9a-f]{64}", manifest_hash) or not isinstance(manifest, dict):
+            return False
+        if manifest.get("revision") != revision:
+            return False
+        product = manifest.get("product")
+        if not isinstance(product, dict) or product.get("key") != identity.key:
+            return False
+        try:
+            records = _records_from_manifest(manifest)
+        except (AssetValidationError, TypeError, KeyError, ValueError):
+            return False
+        if not {record.role for record in records}.issuperset({"image", "file"}):
+            return False
+        counts = manifest.get("counts")
+        return (
+            isinstance(counts, dict)
+            and counts == _counts(records)
+            and sha256_bytes(canonical_json_bytes(manifest)) == manifest_hash
+        )
+
+    def preflight_upload_and_offload(
+        self,
+        product_root: Union[str, Path],
+    ) -> Dict[str, Any]:
+        """Validate a new destructive admission without contacting the remote.
+
+        New work must have both usable asset groups.  An already verified
+        cloud-only/cleanup-pending product with no local content is the one
+        intentional exception: it is an idempotent cleanup retry and is
+        checked again by ``upload_and_offload`` before any local deletion.
+        """
+
+        product_path, identity = self._resolve(product_root)
+        with ProductLock(product_path, self.lock_timeout_seconds):
+            state = load_local_state(product_path, identity)
+            local_empty_after_offload = self._local_content_dirs_empty(product_path)
+            if (
+                self._has_current_verified_revision(state, identity)
+                and not self._local_has_any_content(product_path)
+                and (
+                    not self._local_has_both_content_dirs(product_path)
+                    or local_empty_after_offload
+                )
+            ):
+                return {
+                    "ok": True,
+                    "product": identity.key,
+                    "state": state.get("state"),
+                    "revision": state.get("current_revision"),
+                    "retry": True,
+                    "counts": dict((state.get("current_manifest") or {}).get("counts") or {}),
+                }
+
+            records = _collect_records(product_path)
+            return {
+                "ok": True,
+                "product": identity.key,
+                "state": state.get("state", "LOCAL_ONLY"),
+                "retry": False,
+                "counts": _counts(records),
+            }
+
+    @staticmethod
     def _revision_for_upload(now: datetime_module.datetime, manifest_sha256: str) -> str:
         stamp = now.astimezone(datetime_module.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         return f"{stamp}-{manifest_sha256[:16]}"
@@ -2426,7 +2552,12 @@ class CloudAssetStore:
                                 timestamp,
                                 revision=pointer["revision"],
                             )
-                            state["cloud_verified_at"] = utc_text(timestamp)
+                            state.update(
+                                {
+                                    "cloud_verified_at": utc_text(timestamp),
+                                    "last_error": None,
+                                }
+                            )
                             save_local_state(product_path, state)
                             receipt = self._write_receipt(
                                 "upload",
@@ -2482,7 +2613,12 @@ class CloudAssetStore:
                             timestamp,
                             revision=current_revision,
                         )
-                        state["cloud_verified_at"] = utc_text(timestamp)
+                        state.update(
+                            {
+                                "cloud_verified_at": utc_text(timestamp),
+                                "last_error": None,
+                            }
+                        )
                         save_local_state(product_path, state)
                         receipt = self._write_receipt(
                             "upload",
@@ -2617,6 +2753,487 @@ class CloudAssetStore:
                 save_local_state(product_path, state)
                 raise
 
+    @staticmethod
+    def _offload_quarantine_path(product_path: Path) -> Path:
+        return product_path.parent / f".{product_path.name}.cloud-offload-{uuid.uuid4().hex}"
+
+    def _quarantine_local_assets(self, product_path: Path, quarantine: Optional[Path] = None) -> Path:
+        """Move both content directories aside before committing CLOUD_ONLY."""
+
+        quarantine = quarantine or self._offload_quarantine_path(product_path)
+        quarantine.mkdir()
+        moved: list[str] = []
+        try:
+            for dirname in CONTENT_DIRS:
+                source = product_path / dirname
+                if source.is_symlink() or not source.is_dir():
+                    raise AssetValidationError(f"local {dirname} directory is missing or unsafe")
+                os.replace(source, quarantine / dirname)
+                moved.append(dirname)
+                (product_path / dirname).mkdir()
+        except (AssetValidationError, OSError):
+            for dirname in reversed(moved):
+                destination = product_path / dirname
+                source = quarantine / dirname
+                if destination.exists() or destination.is_symlink():
+                    if destination.is_symlink() or not destination.is_dir() or any(destination.iterdir()):
+                        raise CloudAssetError(
+                            f"cannot rollback over changed local {dirname} directory"
+                        )
+                    destination.rmdir()
+                if source.exists() or source.is_symlink():
+                    os.replace(source, destination)
+            shutil.rmtree(quarantine, ignore_errors=True)
+            raise
+        return quarantine
+
+    def _verify_quarantined_asset_groups(
+        self,
+        quarantine: Path,
+        manifest: Mapping[str, Any],
+    ) -> None:
+        expected = [
+            record
+            for record in _records_from_manifest(manifest)
+            if record.role in {"image", "file"}
+        ]
+        if set(CONTENT_DIRS) != {
+            record.path.split("/", 1)[0]
+            for record in expected
+        }:
+            raise AssetValidationError("quarantine manifest is missing images or files")
+        actual = _collect_records(quarantine)
+        if [record.as_dict() for record in actual] != [record.as_dict() for record in expected]:
+            raise AssetValidationError("quarantine content no longer matches the pinned manifest")
+
+    def _restore_quarantined_assets(
+        self,
+        product_path: Path,
+        quarantine: Path,
+        manifest: Mapping[str, Any],
+    ) -> None:
+        """Restore a pre-commit offload quarantine, failing closed on ambiguity."""
+
+        if not all((quarantine / dirname).is_dir() and not (quarantine / dirname).is_symlink() for dirname in CONTENT_DIRS):
+            raise CloudAssetError("offload quarantine is missing an asset group; recovery is required")
+        self._verify_quarantined_asset_groups(quarantine, manifest)
+        for dirname in reversed(CONTENT_DIRS):
+            source = quarantine / dirname
+            destination = product_path / dirname
+            if destination.exists() or destination.is_symlink():
+                if destination.is_symlink() or not destination.is_dir() or any(destination.iterdir()):
+                    raise CloudAssetError(f"cannot rollback offload over changed local {dirname} directory")
+                destination.rmdir()
+            os.replace(source, destination)
+        if quarantine.exists() or quarantine.is_symlink():
+            shutil.rmtree(quarantine)
+
+    def _validate_cleanup_quarantine(self, product_path: Path, raw_path: Any) -> Path:
+        if not raw_path:
+            raise AssetValidationError("cleanup-pending state has no quarantine path")
+        candidate = Path(str(raw_path)).expanduser().absolute()
+        expected_parent = product_path.parent.absolute()
+        expected_prefix = f".{product_path.name}.cloud-offload-"
+        if candidate.parent != expected_parent or not candidate.name.startswith(expected_prefix):
+            raise AssetValidationError("cleanup quarantine path is outside the product parent")
+        return candidate
+
+    @staticmethod
+    def _local_content_dirs_empty(product_root: Path) -> bool:
+        if not all(
+            (product_root / name).is_dir() and not (product_root / name).is_symlink()
+            for name in CONTENT_DIRS
+        ):
+            return False
+        return all(not any((product_root / name).iterdir()) for name in CONTENT_DIRS)
+
+    def _restore_state_snapshot(self, state_path: Path, snapshot: Optional[bytes]) -> None:
+        if snapshot is None:
+            state_path.unlink(missing_ok=True)
+        else:
+            _write_bytes_atomic(state_path, snapshot)
+
+    def offload_now(
+        self,
+        product_root: Union[str, Path],
+        expected_revision: Optional[str] = None,
+        expected_manifest_sha256: Optional[str] = None,
+        expected_product_key: Optional[str] = None,
+        immediate_offload_authorized: bool = False,
+        now: Optional[datetime_module.datetime] = None,
+    ) -> Dict[str, Any]:
+        """Verify an immutable revision, then immediately remove local assets.
+
+        This is an explicit, user-confirmed workflow and is intentionally
+        separate from :meth:`maintain`, whose seven-day policy and allowlist
+        gates remain unchanged.  Local ``images`` and ``files`` are first
+        quarantined on the same filesystem.  The state commit must succeed
+        before the quarantine is removed, so a failed verification or state
+        write does not turn into silent local data loss.
+        """
+
+        product_path, identity = self._resolve(product_root)
+        if not immediate_offload_authorized:
+            raise CloudAssetError("immediate offload requires explicit authorization")
+        if expected_product_key != identity.key:
+            raise CloudAssetError("immediate offload product confirmation does not match the resolved product")
+        timestamp = now or utc_now()
+        with ProductLock(product_path, self.lock_timeout_seconds):
+            state = load_local_state(product_path, identity)
+            state_before = str(state.get("state", "LOCAL_ONLY"))
+            state_path = product_path / STATE_FILE_NAME
+            state_snapshot = state_path.read_bytes() if state_path.is_file() else None
+            quarantine: Optional[Path] = None
+            try:
+                pointer, manifest, manifest_sha256 = self._read_current_and_manifest(identity)
+                if expected_revision is not None and str(pointer.get("revision")) != str(expected_revision):
+                    raise RemoteConflictError("current cloud revision changed before local cleanup")
+                if (
+                    expected_manifest_sha256 is not None
+                    and manifest_sha256 != str(expected_manifest_sha256)
+                ):
+                    raise RemoteConflictError("current cloud manifest changed before local cleanup")
+
+                remote_verification = self._verify_remote_revision(identity, pointer, manifest)
+                local_present = self._local_has_both_content_dirs(product_path)
+                local_any = self._local_has_any_content(product_path)
+                local_empty_after_offload = self._local_content_dirs_empty(product_path)
+
+                if not local_present or (
+                    local_empty_after_offload
+                    and state_before in {"CLOUD_ONLY", "CLEANUP_PENDING"}
+                ):
+                    if local_any:
+                        raise AssetValidationError("local images/files are incomplete; cleanup is blocked")
+                    # A retry after a rare quarantine cleanup failure can finish
+                    # the already-verified cleanup without uploading anything.
+                    if state_before == "CLEANUP_PENDING" and state.get("cleanup_pending_path"):
+                        pending = self._validate_cleanup_quarantine(
+                            product_path,
+                            state.get("cleanup_pending_path"),
+                        )
+                        try:
+                            if pending.exists() or pending.is_symlink():
+                                shutil.rmtree(pending)
+                        except OSError as cleanup_error:
+                            cleanup_message = _redact_error(str(cleanup_error))
+                            state["last_error"] = cleanup_message
+                            state["cleanup_pending_path"] = str(pending)
+                            cleanup_receipt = self._write_receipt(
+                                "offload-now",
+                                identity,
+                                state_before,
+                                "CLEANUP_PENDING",
+                                {
+                                    "result": "cleanup_retry_pending",
+                                    "revision": pointer["revision"],
+                                    "manifest_sha256": manifest_sha256,
+                                    "remote_verification": remote_verification,
+                                    "quarantine": str(pending),
+                                    "error": cleanup_message,
+                                },
+                                timestamp,
+                            )
+                            state["last_receipt"] = str(cleanup_receipt)
+                            save_local_state(product_path, state)
+                            return {
+                                "ok": False,
+                                "product": identity.key,
+                                "revision": pointer["revision"],
+                                "manifest_sha256": manifest_sha256,
+                                "state": "CLEANUP_PENDING",
+                                "remote_verified": True,
+                                "offloaded": True,
+                                "cleanup_pending": True,
+                                "error": cleanup_message,
+                                "receipt": str(cleanup_receipt),
+                            }
+                    if state.get("state") != "CLOUD_ONLY":
+                        transition_state(
+                            state,
+                            "CLOUD_ONLY",
+                            "remote revision verified and local content is already absent",
+                            now=timestamp,
+                            revision=pointer["revision"],
+                        )
+                    state.update(
+                        {
+                            "product": identity.as_dict(),
+                            "current_revision": pointer["revision"],
+                            "current_manifest_sha256": manifest_sha256,
+                            "current_manifest": manifest,
+                            "offloaded_at": utc_text(timestamp),
+                            "last_local_matches": False,
+                            "cleanup_pending_path": None,
+                            "last_error": None,
+                        }
+                    )
+                    receipt = self._write_receipt(
+                        "offload-now",
+                        identity,
+                        state_before,
+                        str(state["state"]),
+                        {
+                            "result": "already_offloaded",
+                            "revision": pointer["revision"],
+                            "manifest_sha256": manifest_sha256,
+                            "remote_verification": remote_verification,
+                            "deleted": ["images/*", "files/*"],
+                        },
+                        timestamp,
+                    )
+                    state["last_receipt"] = str(receipt)
+                    save_local_state(product_path, state)
+                    return {
+                        "ok": True,
+                        "product": identity.key,
+                        "revision": pointer["revision"],
+                        "manifest_sha256": manifest_sha256,
+                        "state": state["state"],
+                        "remote_verified": True,
+                        "already_offloaded": True,
+                        "deleted": ["images/*", "files/*"],
+                        "receipt": str(receipt),
+                    }
+
+                if not self._local_matches(product_path, manifest):
+                    raise AssetValidationError("local content does not match the verified cloud manifest")
+
+                transition_state(
+                    state,
+                    "OFFLOAD_SCHEDULED",
+                    "explicit upload-and-offload passed remote verification gates",
+                    now=timestamp,
+                    revision=pointer["revision"],
+                )
+                transition_state(
+                    state,
+                    "RESTORE_VERIFIED",
+                    "temporary remote restore verified before immediate cleanup",
+                    now=timestamp,
+                    revision=pointer["revision"],
+                )
+                # This is the final local hash gate while ProductLock is held.
+                if not self._local_matches(product_path, manifest):
+                    raise AssetValidationError("local content changed before offload cleanup")
+
+                quarantine = self._offload_quarantine_path(product_path)
+                self._quarantine_local_assets(product_path, quarantine)
+                transition_state(
+                    state,
+                    "CLOUD_ONLY",
+                    "verified images and files moved to same-filesystem quarantine",
+                    now=timestamp,
+                    revision=pointer["revision"],
+                )
+                state.update(
+                    {
+                        "product": identity.as_dict(),
+                        "current_revision": pointer["revision"],
+                        "current_manifest_sha256": manifest_sha256,
+                        "current_manifest": manifest,
+                        "offloaded_at": utc_text(timestamp),
+                        "last_local_matches": False,
+                        "cleanup_pending_path": None,
+                        "last_error": None,
+                    }
+                )
+                receipt = self._write_receipt(
+                    "offload-now",
+                    identity,
+                    state_before,
+                    str(state["state"]),
+                    {
+                        "result": "offloaded",
+                        "revision": pointer["revision"],
+                        "manifest_sha256": manifest_sha256,
+                        "remote_verification": remote_verification,
+                        "deleted": ["images/*", "files/*"],
+                        "quarantine": str(quarantine),
+                    },
+                    timestamp,
+                )
+                state["last_receipt"] = str(receipt)
+                # The canonical state commit happens before deleting the
+                # quarantine.  If this write fails, the outer handler restores
+                # both the local directories and the original state bytes.
+                save_local_state(product_path, state)
+                try:
+                    shutil.rmtree(quarantine)
+                except OSError as cleanup_error:
+                    cleanup_message = _redact_error(str(cleanup_error))
+                    transition_state(
+                        state,
+                        "CLEANUP_PENDING",
+                        "cloud-only commit succeeded but quarantine cleanup needs retry",
+                        now=timestamp,
+                        quarantine=str(quarantine),
+                    )
+                    state.update(
+                        {
+                            "cleanup_pending_path": str(quarantine),
+                            "last_error": cleanup_message,
+                        }
+                    )
+                    cleanup_receipt = self._write_receipt(
+                        "offload-now",
+                        identity,
+                        "CLOUD_ONLY",
+                        str(state["state"]),
+                        {
+                            "result": "cleanup_pending",
+                            "revision": pointer["revision"],
+                            "manifest_sha256": manifest_sha256,
+                            "quarantine": str(quarantine),
+                            "error": cleanup_message,
+                        },
+                        timestamp,
+                    )
+                    state["last_receipt"] = str(cleanup_receipt)
+                    save_local_state(product_path, state)
+                    quarantine = None
+                    return {
+                        "ok": False,
+                        "product": identity.key,
+                        "revision": pointer["revision"],
+                        "manifest_sha256": manifest_sha256,
+                        "state": state["state"],
+                        "remote_verified": True,
+                        "offloaded": True,
+                        "cleanup_pending": True,
+                        "error": cleanup_message,
+                        "receipt": str(cleanup_receipt),
+                    }
+                quarantine = None
+                return {
+                    "ok": True,
+                    "product": identity.key,
+                    "revision": pointer["revision"],
+                    "manifest_sha256": manifest_sha256,
+                    "state": state["state"],
+                    "remote_verified": True,
+                    "offloaded": True,
+                    "deleted": ["images/*", "files/*"],
+                    "receipt": str(receipt),
+                }
+            except (AssetValidationError, CloudAssetError, OSError, ValueError, TypeError, KeyError) as exc:
+                rollback_error: Optional[Exception] = None
+                if quarantine is not None and (quarantine.exists() or quarantine.is_symlink()):
+                    try:
+                        self._restore_quarantined_assets(product_path, quarantine, manifest)
+                        quarantine = None
+                    except Exception as restore_exc:  # noqa: BLE001 - preserve a failed-closed audit state
+                        rollback_error = restore_exc
+                elif quarantine is not None:
+                    quarantine = None
+                if rollback_error is None:
+                    try:
+                        self._restore_state_snapshot(state_path, state_snapshot)
+                    except OSError as snapshot_error:
+                        rollback_error = snapshot_error
+
+                error_text = _redact_error(str(exc))
+                if rollback_error is not None:
+                    error_text = f"{error_text}; rollback failed: {_redact_error(str(rollback_error))}"
+                try:
+                    error_state = load_local_state(product_path, identity)
+                except (CloudAssetError, OSError, ValueError, TypeError, KeyError):
+                    error_state = state
+                error_state["last_error"] = error_text
+                if rollback_error is not None and quarantine is not None:
+                    error_state["cleanup_pending_path"] = str(quarantine)
+                    target_state = "CLEANUP_PENDING"
+                else:
+                    target_state = "ERROR"
+                try:
+                    transition_state(
+                        error_state,
+                        target_state,
+                        "immediate offload failed; local content was preserved",
+                        now=timestamp,
+                        error=error_text,
+                    )
+                except CloudAssetError:
+                    error_state["state"] = target_state
+                save_local_state(product_path, error_state)
+                try:
+                    receipt = self._write_receipt(
+                        "offload-now",
+                        identity,
+                        state_before,
+                        str(error_state.get("state", target_state)),
+                        {
+                            "result": "error",
+                            "error": error_text,
+                            "local_preserved": rollback_error is None,
+                            "cleanup_pending": rollback_error is not None,
+                        },
+                        timestamp,
+                    )
+                    error_state["last_receipt"] = str(receipt)
+                    save_local_state(product_path, error_state)
+                except (OSError, CloudAssetError, ValueError, TypeError, KeyError):
+                    pass
+                raise
+
+    def upload_and_offload(
+        self,
+        product_root: Union[str, Path],
+        revision: Optional[str] = None,
+        expected_product_key: Optional[str] = None,
+        immediate_offload_authorized: bool = False,
+        now: Optional[datetime_module.datetime] = None,
+    ) -> Dict[str, Any]:
+        """Upload, remotely verify, and immediately offload local content."""
+
+        product_path, identity = self._resolve(product_root)
+        if not immediate_offload_authorized:
+            raise CloudAssetError("upload and immediate offload requires explicit authorization")
+        if expected_product_key != identity.key:
+            raise CloudAssetError("immediate offload product confirmation does not match the resolved product")
+        timestamp = now or utc_now()
+        # Make an explicit retry idempotent after a successful cloud-only
+        # commit or a quarantine cleanup interruption; never manufacture a new
+        # revision from an absent local checkout.
+        state = load_local_state(product_path, identity)
+        local_empty_after_offload = self._local_content_dirs_empty(product_path)
+        if state.get("state") in {"CLOUD_ONLY", "CLEANUP_PENDING"} and state.get("current_revision"):
+            if (
+                not self._local_has_any_content(product_path)
+                and (not self._local_has_both_content_dirs(product_path) or local_empty_after_offload)
+            ):
+                return self.offload_now(
+                    product_path,
+                    expected_revision=str(state["current_revision"]),
+                    expected_manifest_sha256=state.get("current_manifest_sha256"),
+                    expected_product_key=identity.key,
+                    immediate_offload_authorized=True,
+                    now=timestamp,
+                )
+
+        upload_result = self.upload(product_path, revision=revision, now=timestamp)
+        offload_result = self.offload_now(
+            product_path,
+            expected_revision=str(upload_result["revision"]),
+            expected_manifest_sha256=str(upload_result["manifest_sha256"]),
+            expected_product_key=identity.key,
+            immediate_offload_authorized=True,
+            now=timestamp,
+        )
+        return {
+            "ok": bool(offload_result.get("ok", False)),
+            "product": identity.key,
+            "revision": offload_result.get("revision") or upload_result.get("revision"),
+            "manifest_sha256": offload_result.get("manifest_sha256") or upload_result.get("manifest_sha256"),
+            "state": offload_result.get("state"),
+            "upload_result": upload_result,
+            "offload_result": offload_result,
+            "remote_verified": bool(offload_result.get("remote_verified")),
+            "offloaded": bool(offload_result.get("offloaded") or offload_result.get("already_offloaded")),
+            "cleanup_pending": bool(offload_result.get("cleanup_pending")),
+            "receipt": offload_result.get("receipt"),
+        }
+
     def verify(
         self,
         product_root: Union[str, Path],
@@ -2737,6 +3354,7 @@ class CloudAssetStore:
             state = load_local_state(product_path, identity)
             local_present = self._local_has_both_content_dirs(product_path)
             local_any = self._local_has_any_content(product_path)
+            local_empty_after_offload = self._local_content_dirs_empty(product_path)
             local_matches: Optional[bool] = None
             local_error: Optional[str] = None
             comparison_manifest = state.get("current_manifest")
@@ -2746,7 +3364,10 @@ class CloudAssetStore:
                 comparison_manifest = state.get("candidate_manifest")
                 comparison_revision = state.get("candidate_revision")
                 comparison_hash = state.get("candidate_manifest_sha256")
-            if local_present and comparison_manifest:
+            if local_present and comparison_manifest and not (
+                local_empty_after_offload
+                and state.get("state") in {"CLOUD_ONLY", "CLEANUP_PENDING"}
+            ):
                 try:
                     local_matches = self._local_matches(product_path, comparison_manifest)
                 except (AssetValidationError, TypeError, KeyError) as exc:
@@ -2757,10 +3378,18 @@ class CloudAssetStore:
                     desired = "DIRTY_LOCAL"
                 else:
                     desired = "LOCAL_ONLY" if local_present else "ERROR"
+            elif (
+                local_empty_after_offload
+                and state.get("state") in {"CLOUD_ONLY", "CLEANUP_PENDING"}
+            ):
+                desired = state.get("state")
             elif local_matches is False or (local_any and not local_present):
                 desired = "DIRTY_LOCAL"
             elif not local_present:
-                desired = "CLOUD_ONLY"
+                # Keep a cleanup failure visible instead of silently reducing it
+                # to ordinary CLOUD_ONLY.  The immediate offload workflow may
+                # retry that quarantine cleanup on the next explicit request.
+                desired = "CLEANUP_PENDING" if state.get("state") == "CLEANUP_PENDING" else "CLOUD_ONLY"
             else:
                 desired = state.get("state", "CLOUD_VERIFIED")
                 if desired in {"LOCAL_ONLY", "ERROR", "DIRTY_LOCAL", "CLOUD_ONLY"}:
@@ -2795,6 +3424,9 @@ class CloudAssetStore:
                     local_counts = _counts(_collect_records(product_path))
                 except (AssetValidationError, CloudAssetError, OSError, ValueError, TypeError, KeyError) as exc:
                     local_error = local_error or _redact_error(str(exc))
+            local_assets_complete = bool(
+                local_counts.get("images", 0) and local_counts.get("files", 0)
+            )
             cloud_manifest = state.get("current_manifest") if state.get("current_revision") else None
             cloud_counts = dict(cloud_manifest.get("counts") or {}) if isinstance(cloud_manifest, dict) else {}
             candidate_manifest = state.get("candidate_manifest")
@@ -2829,7 +3461,7 @@ class CloudAssetStore:
                 except (AssetValidationError, CloudAssetError, OSError, ValueError, TypeError, KeyError) as exc:
                     cache_info["last_error"] = _redact_error(str(exc))
             return {
-                "ok": desired not in {"ERROR", "DIRTY_LOCAL"},
+                "ok": desired not in {"ERROR", "DIRTY_LOCAL", "CLEANUP_PENDING"},
                 "product": identity.key,
                 "path": str(product_path),
                 "scope": identity.scope,
@@ -2846,6 +3478,7 @@ class CloudAssetStore:
                 "local_present": local_present,
                 "local_matches": local_matches,
                 "local_available": bool(local_counts.get("total_bytes", 0)),
+                "local_assets_complete": local_assets_complete,
                 "cloud_available": bool(state.get("current_revision") or state.get("cloud_revision")),
                 "cache_available": cache_info["available"],
                 "local_error": local_error,

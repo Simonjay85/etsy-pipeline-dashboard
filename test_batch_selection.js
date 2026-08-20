@@ -2,6 +2,7 @@
 
 const assert = require('node:assert/strict');
 const {
+  isEnabledCheckbox,
   checkboxKind,
   selectedByKind,
   summarizeSelection,
@@ -13,11 +14,17 @@ const local = { checked: true, className: 'product-cb', value: '85' };
 const localWithExplicitClass = { checked: true, className: 'product-cb local-product-cb', value: '86' };
 const shop = { checked: true, className: 'product-cb shop-product-cb', value: '4528326700' };
 const uncheckedShop = { checked: false, className: 'product-cb shop-product-cb', value: '9' };
+const disabledShop = { checked: true, disabled: true, className: 'product-cb shop-product-cb', value: '10', dataset: { etsyStatus: 'active', listingId: '10' } };
 
+assert.equal(isEnabledCheckbox(local), true);
+assert.equal(isEnabledCheckbox(disabledShop), false);
 assert.equal(checkboxKind(local), 'local');
 assert.equal(checkboxKind(shop), 'shop');
 assert.deepEqual(summarizeSelection([local, localWithExplicitClass, uncheckedShop]), {
   total: 2, localCount: 2, shopCount: 0, mode: 'local',
+});
+assert.deepEqual(summarizeSelection([local, disabledShop]), {
+  total: 1, localCount: 1, shopCount: 0, mode: 'local',
 });
 assert.deepEqual(summarizeSelection([shop]), {
   total: 1, localCount: 0, shopCount: 1, mode: 'shop',
@@ -27,30 +34,39 @@ assert.deepEqual(summarizeSelection([local, shop]), {
 });
 assert.deepEqual(selectedByKind([local, shop], 'local'), [local]);
 assert.deepEqual(selectedByKind([local, shop], 'shop'), [shop]);
+assert.deepEqual(selectedByKind([disabledShop], 'shop'), []);
 
 assert.deepEqual(getBatchActionState('local', [local, shop]), {
   total: 2, localCount: 1, shopCount: 1, mode: 'mixed',
-  showLocalActions: true, showShopActions: false,
+  showLocalActions: true, showShopActions: false, showCrossShopAction: true,
 });
 assert.deepEqual(getBatchActionState('shop', [local, shop]), {
   total: 2, localCount: 1, shopCount: 1, mode: 'mixed',
-  showLocalActions: false, showShopActions: true,
+  showLocalActions: false, showShopActions: true, showCrossShopAction: true,
+});
+assert.deepEqual(getBatchActionState('shop', [shop]), {
+  total: 1, localCount: 0, shopCount: 1, mode: 'shop',
+  showLocalActions: false, showShopActions: true, showCrossShopAction: false,
 });
 assert.deepEqual(getBatchActionState('aggregate', [local]), {
   total: 1, localCount: 1, shopCount: 0, mode: 'local',
-  showLocalActions: true, showShopActions: false,
+  showLocalActions: true, showShopActions: false, showCrossShopAction: true,
 });
 assert.deepEqual(getBatchActionState('aggregate', [shop]), {
   total: 1, localCount: 0, shopCount: 1, mode: 'shop',
-  showLocalActions: false, showShopActions: true,
+  showLocalActions: false, showShopActions: true, showCrossShopAction: false,
 });
 assert.deepEqual(getBatchActionState('aggregate', [local, shop]), {
   total: 2, localCount: 1, shopCount: 1, mode: 'mixed',
-  showLocalActions: true, showShopActions: true,
+  showLocalActions: true, showShopActions: true, showCrossShopAction: true,
+});
+assert.deepEqual(getBatchActionState('aggregate', [shop, disabledShop]), {
+  total: 1, localCount: 0, shopCount: 1, mode: 'shop',
+  showLocalActions: false, showShopActions: true, showCrossShopAction: false,
 });
 assert.deepEqual(getBatchActionState('aggregate', []), {
   total: 0, localCount: 0, shopCount: 0, mode: 'none',
-  showLocalActions: false, showShopActions: false,
+  showLocalActions: false, showShopActions: false, showCrossShopAction: false,
 });
 
 const draft = { checked: true, className: 'product-cb shop-product-cb', value: '123', dataset: {listingId: '123', etsyStatus: 'draft'} };

@@ -61,6 +61,25 @@ class DashboardCatalogScalingTests(unittest.TestCase):
             dashboard_app.get_products(page_size=10, sort="secret")
         self.assertEqual(400, raised.exception.status_code)
 
+    def test_status_filter_matches_new_import_pending_warning_status(self) -> None:
+        products = [
+            {"row": 4, "folder": "product-04", "title": "Beta", "tags": "alpha", "status": "✅ Đã đăng", "price": 4.0},
+            {"row": 5, "folder": "product-05", "title": "Alpha", "tags": "beta", "status": "✅ Đã đăng", "price": 8.0},
+            {"row": 6, "folder": "product-06", "title": "Gamma", "tags": "gamma", "status": "❌ Lỗi", "price": 2.0},
+            {
+                "row": 7,
+                "folder": "product-07",
+                "title": "Delta",
+                "tags": "delta",
+                "status": "🆕 Mới import · ⏳ Chờ đăng · ⚠ Cần generate SEO",
+                "price": 6.0,
+            },
+        ]
+
+        with patch.object(dashboard_app, "products_from_excel", return_value=products):
+            payload = self._json(dashboard_app.get_products(page_size=10, status="chờ đăng"))
+        self.assertEqual(["Delta"], [item["title"] for item in payload["products"]])
+
 
 if __name__ == "__main__":
     unittest.main()

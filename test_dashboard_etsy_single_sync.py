@@ -1303,5 +1303,7 @@ class TestCreateLocalListingSyncStatus(IsolatedAsyncioTestCase):
         self.assertEqual([], allocate_calls[0])
         self.assertNotEqual("product-277", result["folder"])
         self.assertEqual("product-277", str(ws["B4"].value))
-        self.assertEqual("product-278", str(ws["B5"].value))
+        # New local allocations fill the lowest free number; the existing
+        # product-277 catalog row must not be reused for metadata-only sync.
+        self.assertEqual("product-01", str(ws["B5"].value))
         self.assertEqual(5, result["row"])

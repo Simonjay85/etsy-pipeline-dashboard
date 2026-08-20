@@ -3,6 +3,10 @@
   if (typeof module === 'object' && module.exports) module.exports = api;
   root.BatchSelection = api;
 }(typeof globalThis !== 'undefined' ? globalThis : this, function createBatchSelection() {
+  function isEnabledCheckbox(checkbox) {
+    return checkbox?.disabled !== true;
+  }
+
   function hasClass(checkbox, className) {
     if (checkbox?.classList?.contains) return checkbox.classList.contains(className);
     return String(checkbox?.className || '').split(/\s+/).includes(className);
@@ -14,12 +18,14 @@
 
   function selectedByKind(checkboxes, kind) {
     return Array.from(checkboxes || []).filter(checkbox =>
-      checkbox?.checked !== false && checkboxKind(checkbox) === kind
+      isEnabledCheckbox(checkbox) && checkbox?.checked !== false && checkboxKind(checkbox) === kind
     );
   }
 
   function summarizeSelection(checkboxes) {
-    const selected = Array.from(checkboxes || []).filter(checkbox => checkbox?.checked !== false);
+    const selected = Array.from(checkboxes || []).filter(checkbox =>
+      isEnabledCheckbox(checkbox) && checkbox?.checked !== false
+    );
     const localCount = selectedByKind(selected, 'local').length;
     const shopCount = selectedByKind(selected, 'shop').length;
     const mode = localCount && shopCount ? 'mixed' : localCount ? 'local' : shopCount ? 'shop' : 'none';
@@ -32,6 +38,7 @@
       ...summary,
       showLocalActions: (source === 'local' || source === 'aggregate') && summary.localCount > 0,
       showShopActions: (source === 'shop' || source === 'aggregate') && summary.shopCount > 0,
+      showCrossShopAction: summary.localCount > 0,
     };
   }
 
@@ -42,5 +49,5 @@
       .filter(listingId => /^\d+$/.test(listingId));
   }
 
-  return { checkboxKind, selectedByKind, summarizeSelection, getBatchActionState, selectedDraftListingIds };
+  return { isEnabledCheckbox, checkboxKind, selectedByKind, summarizeSelection, getBatchActionState, selectedDraftListingIds };
 }));

@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -66,13 +65,10 @@ class TestEtsyUpdateJobsPersistence(IsolatedAsyncioTestCase):
 
                 dashboard_app._running_tasks.clear()
                 second = await dashboard_app.push_local_updates_to_etsy(4, _JsonRequest(self.request_payload))
-                self.assertEqual(getattr(second, "status_code", 200), 409)
-                detail = json.loads(second.body.decode())
-                self.assertEqual(detail["code"], "etsy_update_busy")
-                self.assertIn(
-                    "đang có một lượt đồng bộ/cập nhật Etsy khác",
-                    detail["error"],
-                )
+                self.assertTrue(second["ok"])
+                self.assertFalse(second["created"])
+                self.assertEqual(job_id, second["job_id"])
+                self.assertIn("đã có trong hàng chờ", second["message"])
 
     async def test_etsy_update_status_reads_store_payload(self) -> None:
         dashboard_app._running_processes.clear()

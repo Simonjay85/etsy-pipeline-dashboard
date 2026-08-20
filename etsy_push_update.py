@@ -49,6 +49,11 @@ import openpyxl
 from playwright.async_api import async_playwright
 from cloud_asset_store import CloudAssetError, CloudAssetStore
 from cloud_asset_store_config import load_config as load_cloud_asset_config
+from etsy_browser_session import (
+    PROFILE_LOCK_NAMES,
+    is_session_ready as is_etsy_session_ready,
+    resolve_etsy_session,
+)
 
 CLOUD_ASSET_STORE: CloudAssetStore | None = None
 
@@ -146,6 +151,13 @@ def load_shop_config(shop_id: str) -> dict:
     return shops.get(shop_id, {})
 
 
+def load_shops_config() -> dict:
+    if not CONFIG_FILE.exists():
+        return {}
+    shops = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+    return shops if isinstance(shops, dict) else {}
+
+
 def browser_dir_for_shop(shop_id: str) -> Path:
     cfg = load_shop_config(shop_id)
     raw = cfg.get("browser_session")
@@ -154,6 +166,74 @@ def browser_dir_for_shop(shop_id: str) -> Path:
     if shop_id == "templystudios":
         return DEFAULT_BROWSER_DIR
     return Path.home() / f".etsy_browser_session_{shop_id}"
+
+
+def _profile_lock_path(profile_dir: Path) -> Path | None:
+    return next(
+        (
+            profile_dir / lock_name
+            for lock_name in PROFILE_LOCK_NAMES
+            if (profile_dir / lock_name).exists()
+        ),
+        None,
+    )
+
+
+async def _open_updater_context(pw, shop_id: str, browser_dir: Path):
+    """Attach to the exact shop CDP session or safely own a new context."""
+    shops = load_shops_config()
+    session = resolve_etsy_session(BASE_DIR, shops, shop_id)
+    expected_profile = session.profile_dir.resolve()
+    requested_profile = browser_dir.resolve()
+    if requested_profile != expected_profile:
+        raise RuntimeError(
+            "Profile Etsy không khớp cấu hình updater: "
+            f"{requested_profile} != {expected_profile}"
+        )
+
+    if is_etsy_session_ready(session):
+        browser = await pw.chromium.connect_over_cdp(session.cdp_url, timeout=5000)
+        if not browser.contexts:
+            raise RuntimeError("Chrome Etsy đúng profile nhưng không có browser context")
+        ctx = browser.contexts[0]
+        page = await ctx.new_page()
+        log(f"  🌐 Dùng lại Chrome Etsy đã đăng nhập (port {session.debug_port})")
+        return ctx, page, False
+
+    lock_path = _profile_lock_path(requested_profile)
+    if lock_path is not None:
+        raise RuntimeError(
+            f"Chrome profile đang bị khóa ({lock_path.name}) nhưng không khớp "
+            f"session Etsy đã xác minh cho shop {shop_id}. Đóng Chrome đó rồi mở "
+            "lại bằng nút Đăng nhập Etsy cho Post."
+        )
+
+    requested_profile.mkdir(parents=True, exist_ok=True)
+    launch_kw = dict(
+        user_data_dir=str(requested_profile),
+        headless=False,
+        args=["--start-maximized", "--disable-blink-features=AutomationControlled"],
+        viewport=None,
+    )
+    if CHROME_PATH.exists():
+        launch_kw["executable_path"] = str(CHROME_PATH)
+        log("  🌐 Dùng Google Chrome thật")
+
+    ctx = await pw.chromium.launch_persistent_context(**launch_kw)
+    try:
+        page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+    except BaseException:
+        await ctx.close()
+        raise
+    return ctx, page, True
+
+
+async def _close_updater_context(ctx, page, owns_context: bool) -> None:
+    """Close only resources created by this updater invocation."""
+    if owns_context:
+        await ctx.close()
+    else:
+        await page.close()
 
 
 async def assert_expected_shop(page, shop_id: str):
@@ -657,6 +737,104 @@ async def push_images(page, product: dict):
 
 
 # ── Push: Digital Files ────────────────────────────────────────────────────────
+class DigitalFilesPreflightError(RuntimeError):
+    """The editor cannot prove that this listing accepts digital files."""
+
+
+DIGITAL_FILES_CONTAINER_SELECTOR = "#field-digitalFiles"
+DIGITAL_FILE_ADD_BUTTON_SELECTOR = (
+    'button:has-text("Add file"), '
+    'button:has-text("Thêm file"), '
+    'button:has-text("Tải file"), '
+    'button:has-text("Upload file"), '
+    'button:has-text("Upload"), '
+    'button:has-text("Add a file")'
+)
+DIGITAL_FILE_INPUT_SELECTOR = 'input[type="file"]'
+
+
+def _digital_file_controls(page):
+    """Return controls scoped strictly to Etsy's Digital files container."""
+    container = page.locator(DIGITAL_FILES_CONTAINER_SELECTOR).first
+    add_button = container.locator(DIGITAL_FILE_ADD_BUTTON_SELECTOR).first
+    file_input = container.locator(DIGITAL_FILE_INPUT_SELECTOR).first
+    return container, add_button, file_input
+
+
+async def _current_listing_type(page) -> str:
+    """Read a visible listing-type control without changing its selection."""
+    dropdowns = page.locator(
+        '#category-mixed-listing-type[aria-haspopup="listbox"], '
+        'button[aria-haspopup="listbox"][aria-label*="physical or digital" i]'
+    )
+    for index in range(await dropdowns.count()):
+        dropdown = dropdowns.nth(index)
+        if not await dropdown.is_visible():
+            continue
+        label = re.sub(r"\s+", " ", (await dropdown.inner_text()) or "").strip().casefold()
+        if "physical" in label:
+            return "physical"
+        if "digital" in label:
+            return "digital"
+
+    radios = page.locator('input[name="listing_type_options_group"]')
+    for index in range(await radios.count()):
+        radio = radios.nth(index)
+        if not await radio.is_checked():
+            continue
+        semantics = await radio.evaluate("""el => ({
+            value: el.value || '',
+            ariaLabel: el.getAttribute('aria-label') || '',
+            labels: el.labels ? Array.from(el.labels).map(
+                label => label.innerText || label.textContent || ''
+            ) : [],
+        })""")
+        text = " ".join(
+            [str(semantics.get("value") or ""), str(semantics.get("ariaLabel") or "")]
+            + [str(label) for label in semantics.get("labels") or []]
+        ).casefold()
+        if "physical" in text:
+            return "physical"
+        if "digital" in text:
+            return "digital"
+    return "unknown"
+
+
+async def preflight_digital_files(page) -> None:
+    """Prove exact Digital files UI exists before any requested mutation."""
+    form_type = await detect_form_type(page)
+    if form_type == "tabs":
+        await click_tab(page, "Item Details", "Details")
+        await page.wait_for_timeout(1500)
+
+    container, add_button, file_input = _digital_file_controls(page)
+    container_visible = (
+        await container.count() == 1
+        and await container.is_visible()
+    )
+    if not container_visible:
+        listing_type = await _current_listing_type(page)
+        if listing_type == "physical":
+            raise DigitalFilesPreflightError(
+                "Listing đang ở loại Physical; không có vùng Digital files an toàn để cập nhật"
+            )
+        raise DigitalFilesPreflightError(
+            "Không thấy vùng #field-digitalFiles đang hiển thị; listing có thể đang "
+            "ở loại Physical hoặc Etsy editor chưa tải đúng vùng digital file"
+        )
+
+    has_exact_input = await file_input.count() > 0
+    has_visible_add_button = (
+        await add_button.count() > 0
+        and await add_button.is_visible()
+    )
+    if not has_exact_input and not has_visible_add_button:
+        raise DigitalFilesPreflightError(
+            "Vùng Digital files không có input hoặc nút Add file thuộc "
+            "#field-digitalFiles; từ chối dùng file input global"
+        )
+
+
 async def push_files(page, product: dict):
     from pathlib import Path
     import re
@@ -678,6 +856,11 @@ async def push_files(page, product: dict):
     if form_type == "tabs":
         await click_tab(page, "Item Details", "Details")
         await page.wait_for_timeout(1500)
+    container, add_btn, file_input = _digital_file_controls(page)
+    if await container.count() != 1 or not await container.is_visible():
+        raise DigitalFilesPreflightError(
+            "Vùng #field-digitalFiles không còn hiển thị trước khi cập nhật file"
+        )
 
     # Helper function to normalize/clean filename stem for fuzzy matching
     def clean_filename_stem(filename: str) -> tuple[str, str]:
@@ -826,18 +1009,8 @@ async def push_files(page, product: dict):
     # 3. Upload only missing files
     log(f"[PUSH] 📤 Đang upload {len(files_to_upload)} files mới...")
     try:
-        # Step 1: Tìm nút Add File (hỗ trợ cả tiếng Anh và tiếng Việt)
-        add_btn = page.locator(
-            '#field-digitalFiles button:has-text("Add file"), '
-            '#field-digitalFiles button:has-text("Thêm file"), '
-            '#field-digitalFiles button:has-text("Tải file"), '
-            'button:has-text("Add file"), '
-            'button:has-text("Thêm file"), '
-            'button:has-text("Upload file"), '
-            'button:has-text("Upload"), '
-            'button:has-text("Add a file")'
-        ).first
-
+        # Add File is intentionally scoped to #field-digitalFiles. A global
+        # Add file button can belong to personalization or another editor area.
         btn_disabled = False
         if await add_btn.count() > 0:
             btn_disabled = await add_btn.is_disabled()
@@ -855,24 +1028,12 @@ async def push_files(page, product: dict):
                 log(f"[PUSH] ⚠️ File chooser failed: {fc_err} — trying direct input fallback...")
 
         if not uploaded_via_chooser:
-            # Fallback: Thử set_input_files trực tiếp trên file input
-            uploaded_fallback = False
-            for sel in [
-                '#field-digitalFiles input[type="file"]',
-                'input[type="file"][accept*="pdf"]',
-                'input[type="file"][accept*="zip"]',
-            ]:
-                fi = page.locator(sel).first
-                if await fi.count() > 0:
-                    await fi.set_input_files(files_to_upload, timeout=60000)
-                    uploaded_fallback = True
-                    break
-            else:
-                # Fallback: thử input file chung
-                fi = page.locator('input[type="file"]').last
-                if await fi.count() > 0:
-                    await fi.set_input_files(files_to_upload, timeout=60000)
-                    uploaded_fallback = True
+            if await file_input.count() == 0:
+                raise DigitalFilesPreflightError(
+                    "Không tìm thấy input file bên trong #field-digitalFiles; "
+                    "không dùng input media/personalization global"
+                )
+            await file_input.set_input_files(files_to_upload, timeout=60000)
 
         # Đợi cho từng file hoàn tất upload và xuất hiện trong danh sách hiển thị
         for lf in files_to_upload:
@@ -1163,6 +1324,13 @@ async def push_all(page, listing_id: str, product: dict, fields: set) -> bool:
 
     await dismiss_alerts(page)
 
+    # A files request must prove the exact Digital files region before any
+    # field mutation, especially before push_images starts deleting/replacing
+    # gallery media. This prevents a Physical listing or a partially loaded
+    # editor from being left with image changes but no digital-file update.
+    if "files" in fields:
+        await preflight_digital_files(page)
+
     # --- 1. Text fields (title, desc, tags) ---
     text_fields = fields & {"title", "description", "tags"}
     if text_fields:
@@ -1235,77 +1403,60 @@ async def main():
     browser_dir = browser_dir_for_shop(args.shop)
     log(f"  🔑 Browser session: {browser_dir}")
 
-    # Clear Chrome lock files
-    browser_dir.mkdir(parents=True, exist_ok=True)
-    for lock in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
-        try:
-            (browser_dir / lock).unlink(missing_ok=True)
-        except Exception:
-            pass
-
     async with async_playwright() as pw:
-        launch_kw = dict(
-            user_data_dir=str(browser_dir),
-            headless=False,
-            args=["--start-maximized", "--disable-blink-features=AutomationControlled"],
-            viewport=None,
+        ctx, page, owns_context = await _open_updater_context(
+            pw, args.shop, browser_dir
         )
-        if CHROME_PATH.exists():
-            launch_kw["executable_path"] = str(CHROME_PATH)
-            log("  🌐 Dùng Google Chrome thật")
-
-        ctx  = await pw.chromium.launch_persistent_context(**launch_kw)
-        page = ctx.pages[0] if ctx.pages else await ctx.new_page()
-
-        # Kiểm tra đăng nhập — tăng timeout lên 60s, fallback nếu bị lỗi
         try:
-            await page.goto("https://www.etsy.com/your/shops/me/tools/listings",
-                            wait_until="domcontentloaded", timeout=60000)
-        except Exception:
-            log("[PUSH] ⚠️ domcontentloaded timeout — thử lại với networkidle...")
-            try:
-                await page.goto("https://www.etsy.com/your/shops/me/tools/listings",
-                                wait_until="networkidle", timeout=60000)
-            except Exception as e:
-                log(f"[PUSH] ❌ Không thể mở trang Etsy: {e}")
-                sys.exit(1)
-        await page.wait_for_timeout(4000)
-
-        if "signin" in page.url or "join" in page.url:
-            log("\n  ⚠  Cần đăng nhập Etsy! Đợi tối đa 3 phút...")
-            for _wait in range(180):
-                await page.wait_for_timeout(1000)
-                if "signin" not in page.url and "join" not in page.url:
-                    break
-                if _wait % 15 == 0:
-                    log(f"  ⏳ Đợi đăng nhập... ({_wait}s)")
+            # Kiểm tra đăng nhập — tăng timeout lên 60s, fallback nếu bị lỗi
             try:
                 await page.goto("https://www.etsy.com/your/shops/me/tools/listings",
                                 wait_until="domcontentloaded", timeout=60000)
             except Exception:
-                await page.goto("https://www.etsy.com/your/shops/me/tools/listings",
-                                wait_until="networkidle", timeout=60000)
-            await page.wait_for_timeout(3000)
+                log("[PUSH] ⚠️ domcontentloaded timeout — thử lại với networkidle...")
+                try:
+                    await page.goto("https://www.etsy.com/your/shops/me/tools/listings",
+                                    wait_until="networkidle", timeout=60000)
+                except Exception as e:
+                    log(f"[PUSH] ❌ Không thể mở trang Etsy: {e}")
+                    sys.exit(1)
+            await page.wait_for_timeout(4000)
 
-        log("  ✅ Đã vào Shop Manager!\n")
-        await assert_expected_shop(page, args.shop)
+            if "signin" in page.url or "join" in page.url:
+                log("\n  ⚠  Cần đăng nhập Etsy! Đợi tối đa 3 phút...")
+                for _wait in range(180):
+                    await page.wait_for_timeout(1000)
+                    if "signin" not in page.url and "join" not in page.url:
+                        break
+                    if _wait % 15 == 0:
+                        log(f"  ⏳ Đợi đăng nhập... ({_wait}s)")
+                try:
+                    await page.goto("https://www.etsy.com/your/shops/me/tools/listings",
+                                    wait_until="domcontentloaded", timeout=60000)
+                except Exception:
+                    await page.goto("https://www.etsy.com/your/shops/me/tools/listings",
+                                    wait_until="networkidle", timeout=60000)
+                await page.wait_for_timeout(3000)
 
-        if args.check_only:
-            log(f"[PUSH-CHECK] ✅ Profile và shop hợp lệ cho {args.shop}; không thay đổi listing.")
-            await ctx.close()
-            return
+            log("  ✅ Đã vào Shop Manager!\n")
+            await assert_expected_shop(page, args.shop)
 
-        ok = await push_all(page, args.listing_id, product, fields)
+            if args.check_only:
+                log(f"[PUSH-CHECK] ✅ Profile và shop hợp lệ cho {args.shop}; không thay đổi listing.")
+                return
 
-        if ok:
-            mark_product_asset_operation_success(product)
-            log(f"\n[PUSH] ✅ Hoàn tất! Đã push {', '.join(sorted(fields))} → listing {args.listing_id}")
-        else:
-            log(f"\n[PUSH] ❌ Thất bại.")
-            sys.exit(1)
+            ok = await push_all(page, args.listing_id, product, fields)
 
-        await page.wait_for_timeout(2000)
-        await ctx.close()
+            if ok:
+                mark_product_asset_operation_success(product)
+                log(f"\n[PUSH] ✅ Hoàn tất! Đã push {', '.join(sorted(fields))} → listing {args.listing_id}")
+            else:
+                log(f"\n[PUSH] ❌ Thất bại.")
+                sys.exit(1)
+
+            await page.wait_for_timeout(2000)
+        finally:
+            await _close_updater_context(ctx, page, owns_context)
 
 
 if __name__ == "__main__":

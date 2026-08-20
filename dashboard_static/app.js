@@ -13,6 +13,8 @@ let cloudAssetStatusError = '';
 let cloudAssetStatusRequestId = 0;
 let cloudAssetStatusPromise = null;
 let cloudAssetStatusPromiseShop = '';
+let cloudAssetStatusPollInFlight = new Map();
+let cloudAssetTerminalRefreshInFlight = null;
 let cloudAssetMutationInFlight = new Map();
 let scrollNav = null;
 let preferredScrollTarget = null;
@@ -20,7 +22,12 @@ let imageModalImages = [];
 let lightboxState = { images: [], index: 0, caption: '', opener: null };
 let jobCenterOpen = false;
 let jobCenterTimer = null;
-const catalogViewState = { items: [], visibleCount: 0, pageSize: 40 };
+let operationQueueTimer = null;
+let operationQueuePollInFlight = null;
+let operationQueueLastCommands = null;
+let operationQueueLastRefresh = null;
+let modalSeoGeneration = null;
+const REGEN_SEO_REQUEST_TIMEOUT_MS = 195000;
 const selectedCatalogIds = new Set();
 const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
 const SYNCABLE_ETSY_STATUSES = new Set(['active', 'draft']);
@@ -36,10 +43,11 @@ const CLOUD_ASSET_STATUS_META = Object.freeze({
   UPLOADING: { category: 'local', label: '⏫ Uploading…' },
   RESTORING: { category: 'cloud-only', label: '⏬ Restoring…' },
   RESTORE_VERIFIED: { category: 'local', label: '✅ Restore verified' },
+  CLEANUP_PENDING: { category: 'error', label: '⚠️ Cloud-only · cleanup pending' },
 });
 
 const DASHBOARD_MUTATION_TOKEN_HEADER = 'X-Dashboard-Mutation-Token';
-const DASHBOARD_MUTATION_TOKEN = (() => {
+let dashboardMutationToken = (() => {
   const tokenMeta = typeof document !== 'undefined' && typeof document.querySelector === 'function'
     ? document.querySelector('meta[name="etsy-dashboard-mutation-token"]')
     : null;
@@ -48,6 +56,8 @@ const DASHBOARD_MUTATION_TOKEN = (() => {
 const _nativeFetch = typeof window !== 'undefined' && typeof window.fetch === 'function'
   ? window.fetch.bind(window)
   : () => Promise.reject(new Error('fetch is unavailable in this DOM sandbox'));
+const INVALID_MUTATION_TOKEN_DETAIL = 'missing or invalid mutation token';
+let mutationTokenRefreshPromise = null;
 
 function _isMutationMethod(method = 'GET') {
   return new Set(['POST', 'PATCH', 'DELETE']).has(String(method || '').toUpperCase());
@@ -63,23 +73,83 @@ function _isSameOriginRequest(targetUrl) {
   }
 }
 
-window.fetch = async function dashboardFetch(input, init = {}) {
-  const options = { ...init };
-  const method = String(options.method || 'GET').toUpperCase();
-  const requestUrl = typeof input === 'string' || input instanceof URL ? String(input) : input?.url;
+function _fetchMethod(input, init = {}) {
+  return String(init.method || input?.method || 'GET').toUpperCase();
+}
 
-  if (_isMutationMethod(method) && _isSameOriginRequest(requestUrl)) {
-    const token = DASHBOARD_MUTATION_TOKEN;
-    if (token) {
-      const headers = new Headers(options.headers || {});
-      if (!headers.has(DASHBOARD_MUTATION_TOKEN_HEADER)) {
-        headers.set(DASHBOARD_MUTATION_TOKEN_HEADER, token);
-      }
-      options.headers = headers;
-    }
+function _fetchOptionsWithMutationToken(input, init, token, { replace = false } = {}) {
+  const options = { ...init };
+  if (!token) return options;
+  const inputHeaders = typeof Request !== 'undefined' && input instanceof Request
+    ? input.headers
+    : undefined;
+  const headers = new Headers(options.headers || inputHeaders || {});
+  if (replace || !headers.has(DASHBOARD_MUTATION_TOKEN_HEADER)) {
+    headers.set(DASHBOARD_MUTATION_TOKEN_HEADER, token);
+  }
+  options.headers = headers;
+  return options;
+}
+
+async function _hasInvalidMutationTokenDetail(response) {
+  if (response?.status !== 403 || typeof response.clone !== 'function') return false;
+  try {
+    const data = await response.clone().json();
+    return data?.detail === INVALID_MUTATION_TOKEN_DETAIL;
+  } catch {
+    return false;
+  }
+}
+
+async function _refreshDashboardMutationToken() {
+  if (mutationTokenRefreshPromise) return mutationTokenRefreshPromise;
+  mutationTokenRefreshPromise = (async () => {
+    const response = await _nativeFetch('/', { method: 'GET', cache: 'no-store' });
+    if (!response.ok) throw new Error(`mutation token refresh failed (HTTP ${response.status})`);
+    const html = await response.text();
+    const parsed = new DOMParser().parseFromString(html, 'text/html');
+    const freshToken = String(
+      parsed.querySelector('meta[name="etsy-dashboard-mutation-token"]')?.content || '',
+    ).trim();
+    if (!freshToken) throw new Error('mutation token refresh returned no token');
+    dashboardMutationToken = freshToken;
+    return freshToken;
+  })().finally(() => {
+    mutationTokenRefreshPromise = null;
+  });
+  return mutationTokenRefreshPromise;
+}
+
+window.fetch = async function dashboardFetch(input, init = {}) {
+  const method = _fetchMethod(input, init);
+  const requestUrl = typeof input === 'string' || input instanceof URL ? String(input) : input?.url;
+  const isSameOriginMutation = _isMutationMethod(method) && _isSameOriginRequest(requestUrl);
+  let firstInput = input;
+  let retryInput = input;
+
+  // Clone Request inputs before the first fetch so a body-bearing Request can
+  // be replayed once without consuming the caller's original request.
+  if (typeof Request !== 'undefined' && input instanceof Request) {
+    firstInput = input.clone();
+    retryInput = input.clone();
   }
 
-  return _nativeFetch(input, options);
+  const options = isSameOriginMutation
+    ? _fetchOptionsWithMutationToken(input, init, dashboardMutationToken)
+    : { ...init };
+  const response = await _nativeFetch(firstInput, options);
+  if (!isSameOriginMutation || !(await _hasInvalidMutationTokenDetail(response))) {
+    return response;
+  }
+
+  let freshToken;
+  try {
+    freshToken = await _refreshDashboardMutationToken();
+  } catch {
+    return response;
+  }
+  const retryOptions = _fetchOptionsWithMutationToken(input, init, freshToken, { replace: true });
+  return _nativeFetch(retryInput, retryOptions);
 };
 
 function normalizeEtsyStatus(status) {
@@ -105,20 +175,58 @@ function resolveEtsyListingLink(listing) {
 
   const status = normalizeEtsyStatus(listing?.etsy_manager_status || listing?.managerStatus || listing?.status);
   const publicUrl = String(listing?.etsy_public_url || listing?.publicUrl || listing?.url || listing?.etsy_url || '').trim();
+  const linkType = String(listing?.etsy_link_type || '').trim();
+  const remoteStatus = normalizeEtsyStatus(listing?.managerStatus || listing?.status);
+  const hasRemoteStatus = Boolean(String(listing?.managerStatus || listing?.status || '').trim());
   const managerUrl = String(listing?.etsy_edit_url || listing?.etsy_manage_url || listing?.managerUrl || listing?.manageUrl || listing?.editUrl || '').trim();
-  const publicMatch = new RegExp(`^https://(?:www\\.)?etsy\\.com/listing/${rawId}(?:[/?#].*)?$`, 'i');
+  const fallbackUrl = String(listing?.etsy_edit_url || listing?.etsy_manage_url || listing?.managerUrl || listing?.manageUrl || listing?.editUrl || '').trim();
+  const localUnverifiedUrl = String(listing?.etsy_public_url || listing?.etsy_url || '').trim();
+  const publicMatch = new RegExp(
+    `^https://(?:www\\.)?etsy\\.com/`
+    + `(?:[a-z]{2}(?:-[a-z]{2})?/)?`
+    + `listing/${rawId}`
+    + `(?:/[A-Za-z0-9][A-Za-z0-9._~-]*)?`
+    + `(?:[?#].*)?$`,
+    'i',
+  );
   const managerMatch = new RegExp(`^https://(?:www\\.)?etsy\\.com/(?:your/shops/me/)?listing-editor/edit/${rawId}(?:[/?#].*)?$`, 'i');
+  const fallbackMatch = managerMatch;
+  const warningReason = String(listing?.etsy_link_warning_reason || '').trim();
 
-  if (status === 'active') {
+  if ((linkType === 'public' || (!linkType && hasRemoteStatus && remoteStatus === 'active')) && status === 'active') {
     const verifiedPublicUrl = publicMatch.test(publicUrl)
       ? publicUrl
       : `https://www.etsy.com/listing/${rawId}`;
     return { url: verifiedPublicUrl, kind: 'public', listingId: rawId, stale: Boolean(listing?.etsy_snapshot_stale || listing?.snapshot_stale) };
   }
+  if (linkType === 'local_unverified' && localUnverifiedUrl) {
+    return {
+      url: publicMatch.test(localUnverifiedUrl) ? localUnverifiedUrl : '',
+      kind: 'local_unverified',
+      listingId: rawId,
+      stale: Boolean(listing?.etsy_snapshot_stale || listing?.snapshot_stale),
+      warningReason,
+    };
+  }
+  if (linkType === 'manager_fallback' && fallbackUrl && fallbackMatch.test(fallbackUrl)) {
+    return {
+      url: fallbackUrl,
+      kind: 'fallback',
+      listingId: rawId,
+      stale: Boolean(listing?.etsy_snapshot_stale || listing?.snapshot_stale || warningReason),
+      warningReason,
+    };
+  }
   if (new Set(['draft', 'inactive', 'expired']).has(status) && managerMatch.test(managerUrl)) {
     return { url: managerUrl, kind: 'manager', listingId: rawId, stale: Boolean(listing?.etsy_snapshot_stale || listing?.snapshot_stale) };
   }
-  return { url: '', kind: 'unavailable', listingId: rawId, stale: Boolean(listing?.etsy_snapshot_stale || listing?.snapshot_stale) };
+  return {
+    url: '',
+    kind: 'unavailable',
+    listingId: rawId,
+    stale: Boolean(listing?.etsy_snapshot_stale || listing?.snapshot_stale),
+    warningReason,
+  };
 }
 
 function productEtsyLink(product) {
@@ -129,8 +237,8 @@ function productEtsyLink(product) {
     etsy_edit_url: product?.etsy_edit_url,
     etsy_manage_url: product?.etsy_manage_url,
     etsy_url: product?.etsy_url,
-    status: product?.status,
     etsy_link_type: product?.etsy_link_type,
+    etsy_link_warning_reason: product?.etsy_link_warning_reason,
     etsy_snapshot_stale: product?.etsy_snapshot_stale,
   });
 }
@@ -139,21 +247,15 @@ function productEtsyLink(product) {
 window.addEventListener('DOMContentLoaded', () => {
   initShopSwitcher();
   loadProducts();
+  void hydrateActiveCloudUploadProgress();
   connectLogs();
   pollServices();
   pollRuntimeHealth();
+  pollOperationQueue();
   setInterval(pollServices, 8000);
   setInterval(pollRuntimeHealth, 15000);
-  setInterval(() => {
-    const hasPendingCloudUpload = [...cloudAssetStatusByFolder.values()].some((status) => {
-      const state = String(status?.state || '').toUpperCase();
-      return state === 'UPLOAD_SCHEDULED' || state === 'UPLOADING';
-    });
-    if (!hasPendingCloudUpload) return;
-    void loadCloudAssetStatus({ force: true })
-      .then(() => filterProducts())
-      .catch(() => {});
-  }, 1500);
+  operationQueueTimer = setInterval(pollOperationQueue, 3000);
+  setInterval(() => { void pollActiveCloudAssetStatuses(); }, 1500);
   createToastContainer();
   initModalOverlays();
   initScrollNavigation();
@@ -161,6 +263,142 @@ window.addEventListener('DOMContentLoaded', () => {
   loadJobCenter();
   jobCenterTimer = setInterval(loadJobCenter, 12000);
 });
+
+// ── Global operation queue ────────────────────────────────────────────────────
+const OPERATION_QUEUE_LABELS = Object.freeze({
+  'etsy-listing-sync': 'Etsy → Local',
+  'etsy-shop-sync': 'Đồng bộ Etsy Shop',
+  'etsy-post': 'Đăng lên Etsy',
+  'etsy-update': 'Local → Etsy',
+  'cloud-upload-verify': 'Upload + verify cloud',
+  'cloud-upload-verify-offload': 'Upload, verify + offload',
+});
+
+function operationQueueTimestamp(command = {}) {
+  return Number(command.enqueued_at || command.created_at || 0) || 0;
+}
+
+function normalizeOperationQueueCommands(commands = []) {
+  const active = (Array.isArray(commands) ? commands : [])
+    .filter(command => ['running', 'queued'].includes(String(command?.status || '').toLowerCase()))
+    .sort((left, right) => {
+      const statusDelta = (String(left?.status).toLowerCase() === 'running' ? 0 : 1)
+        - (String(right?.status).toLowerCase() === 'running' ? 0 : 1);
+      return statusDelta || operationQueueTimestamp(left) - operationQueueTimestamp(right)
+        || String(left?.command_id || '').localeCompare(String(right?.command_id || ''));
+    });
+  let waitingPosition = 0;
+  return active.map((command, index) => {
+    const status = String(command.status || '').toLowerCase();
+    if (status === 'queued') waitingPosition += 1;
+    return { ...command, status, overallPosition: index + 1, waitingPosition: status === 'queued' ? waitingPosition : 0 };
+  });
+}
+
+function operationQueueDuration(seconds) {
+  const value = Math.max(0, Math.floor(Number(seconds) || 0));
+  if (value < 60) return `${value}s`;
+  const minutes = Math.floor(value / 60);
+  const remainder = value % 60;
+  if (minutes < 60) return `${minutes}m ${remainder}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m`;
+}
+
+function operationQueueDisplay(command = {}, nowSeconds = Date.now() / 1000) {
+  const operation = String(command.operation || 'operation').trim();
+  const target = String(command.target || 'không rõ target').trim();
+  const shop = String(command.shop_id || 'không rõ shop').trim();
+  const status = String(command.status || '').toLowerCase();
+  const start = status === 'running'
+    ? Number(command.started_at || command.enqueued_at || 0)
+    : Number(command.enqueued_at || 0);
+  return {
+    operation: OPERATION_QUEUE_LABELS[operation] || operation.replaceAll('-', ' '),
+    target: target.replace(/^shops\//, ''),
+    shop,
+    timingLabel: status === 'running' ? 'Đã chạy' : 'Đã chờ',
+    duration: operationQueueDuration(start ? nowSeconds - start : 0),
+  };
+}
+
+function renderOperationQueue(commands = [], {
+  refreshedAt = new Date(),
+  error = '',
+  lastSuccessfulAt = null,
+  hasSuccessfulSnapshot = !error,
+} = {}) {
+  const dashboard = document.getElementById('operation-queue-dashboard');
+  const list = document.getElementById('operation-queue-list');
+  const counts = document.getElementById('operation-queue-counts');
+  const refresh = document.getElementById('operation-queue-refresh');
+  if (!dashboard || !list || !counts || !refresh) return;
+
+  const normalized = normalizeOperationQueueCommands(commands);
+  const running = normalized.filter(command => command.status === 'running').length;
+  const queued = normalized.filter(command => command.status === 'queued').length;
+  dashboard.classList.toggle('has-running', running > 0);
+  dashboard.classList.toggle('has-error', Boolean(error));
+  list.setAttribute('aria-busy', 'false');
+  counts.textContent = `${running} đang chạy · ${queued} đang chờ`;
+  const refreshTime = (lastSuccessfulAt || refreshedAt).toLocaleTimeString(
+    'vi-VN',
+    { hour: '2-digit', minute: '2-digit', second: '2-digit' },
+  );
+  refresh.textContent = error
+    ? `${normalized.length ? `Dữ liệu cũ lúc ${refreshTime}` : 'Chưa có dữ liệu'} · lỗi cập nhật: ${error}`
+    : `Cập nhật ${refreshTime}`;
+
+  if (error && !hasSuccessfulSnapshot) {
+    list.innerHTML = `<div class="operation-queue-state is-error">⚠ Không đọc được hàng chờ toàn cục. Sẽ tự thử lại.</div>`;
+    return;
+  }
+  if (!normalized.length) {
+    list.innerHTML = '<div class="operation-queue-state">✓ Không có operation đang chạy hoặc chờ.</div>';
+    return;
+  }
+
+  const nowSeconds = refreshedAt.getTime() / 1000;
+  list.innerHTML = normalized.map(command => {
+    const display = operationQueueDisplay(command, nowSeconds);
+    const isRunning = command.status === 'running';
+    const order = isRunning ? 'RUNNING' : `CHỜ #${command.waitingPosition}`;
+    const overall = `Thứ tự ${command.overallPosition}/${normalized.length}`;
+    return `<article class="operation-queue-item is-${command.status}" role="listitem">
+      <span class="operation-queue-status">${isRunning ? '▶' : '◷'} ${order}</span>
+      <span class="operation-queue-shop" title="Shop">${escHtml(display.shop)}</span>
+      <span class="operation-queue-command"><strong>${escHtml(display.operation)}</strong><span title="Target">${escHtml(display.target)}</span></span>
+      <span class="operation-queue-order">${overall}</span>
+      <span class="operation-queue-time">${display.timingLabel} ${display.duration}</span>
+    </article>`;
+  }).join('');
+}
+
+async function pollOperationQueue() {
+  if (operationQueuePollInFlight) return operationQueuePollInFlight;
+  operationQueuePollInFlight = (async () => {
+    try {
+      const response = await fetch('/api/operation-queue', { cache: 'no-store' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload?.ok === false || !Array.isArray(payload?.commands)) {
+        throw new Error(payload?.detail || `HTTP ${response.status}`);
+      }
+      operationQueueLastRefresh = new Date();
+      operationQueueLastCommands = normalizeOperationQueueCommands(payload.commands);
+      renderOperationQueue(operationQueueLastCommands, { refreshedAt: operationQueueLastRefresh });
+    } catch (error) {
+      renderOperationQueue(operationQueueLastCommands || [], {
+        refreshedAt: new Date(),
+        lastSuccessfulAt: operationQueueLastRefresh,
+        hasSuccessfulSnapshot: operationQueueLastCommands !== null,
+        error: error?.message || 'network error',
+      });
+    } finally {
+      operationQueuePollInFlight = null;
+    }
+  })();
+  return operationQueuePollInFlight;
+}
 
 // ── Scroll Navigation (product list / page fallback) ───────────────────────────
 function initScrollNavigation() {
@@ -656,7 +894,9 @@ function openSyncModal() {
     folders.map(f => `• ${f}`).join('<br>');
   
   document.getElementById('sync-result').style.display = 'none';
-  document.getElementById('sync-copy-files').checked = false;
+  // Asset sync is the useful default; unticking remains an explicit SEO-only
+  // request and the backend keeps copy_files opt-in at the API boundary.
+  document.getElementById('sync-copy-files').checked = true;
   _syncConflictPayload = null;
   
   // Populate target shop options (exclude current)
@@ -673,6 +913,26 @@ function openSyncModal() {
   
   if (!sel.options.length) return toast('error', 'Không có shop đích nào khác');
   openModal('sync-modal');
+}
+
+function syncModeLabel(data, copyFilesFallback = false) {
+  const mode = String(data?.mode || data?.sync_mode || '').trim().toLowerCase();
+  if (mode === 'seo-only') return 'SEO-only';
+  if (mode === 'seo+assets') return 'SEO + ảnh/file';
+  return copyFilesFallback ? 'SEO + ảnh/file' : 'SEO-only';
+}
+
+function syncAssetCountsLabel(data) {
+  const counts = data?.asset_counts || {};
+  const images = Number(counts.images || 0);
+  const files = Number(counts.files || 0);
+  return `${Number.isFinite(images) ? images : 0} ảnh, ${Number.isFinite(files) ? files : 0} file`;
+}
+
+function syncSkippedCount(data, requestedCount) {
+  const serverSkipped = Number(data?.skipped);
+  if (Number.isFinite(serverSkipped)) return Math.max(0, serverSkipped);
+  return Math.max(0, requestedCount - Number(data?.synced || 0));
 }
 
 async function doSync() {
@@ -740,13 +1000,24 @@ async function doSync() {
         `;
         toast('warning', `⚠️ Phát hiện ${data.conflicts.length} sản phẩm trùng!`);
       } else {
+        const syncedCount = Number(data.synced || 0);
+        const skippedCount = syncSkippedCount(data, _syncRows.length);
         result.style.display = 'block';
-        result.style.background = 'rgba(52,211,153,0.1)';
-        result.style.border = '1px solid var(--green)';
-        result.style.color = 'var(--green)';
+        result.style.background = syncedCount > 0 ? 'rgba(52,211,153,0.1)' : 'rgba(251,146,60,0.1)';
+        result.style.border = syncedCount > 0 ? '1px solid var(--green)' : '1px solid var(--orange)';
+        result.style.color = syncedCount > 0 ? 'var(--green)' : 'var(--orange)';
         const shopName = currentShopsData[data.target]?.name || data.target;
-        result.innerHTML = `✅ Đã sync <strong>${data.synced}</strong> sản phẩm sang <strong>${shopName}</strong>!`;
-        toast('success', `✅ Sync ${data.synced} sản phẩm sang ${shopName} thành công!`);
+        const modeText = syncModeLabel(data, copyFiles);
+        const assetCountsText = syncAssetCountsLabel(data);
+        result.innerHTML = syncedCount > 0
+          ? `✅ Đã sync <strong>${syncedCount}</strong> sản phẩm (${modeText}; ${assetCountsText}) sang <strong>${shopName}</strong>${skippedCount ? `; bỏ qua <strong>${skippedCount}</strong>` : ''}!`
+          : `⚠️ Không có sản phẩm nào được sync sang <strong>${shopName}</strong> (${modeText}; ${assetCountsText}); tất cả đã bị bỏ qua.`;
+        toast(
+          syncedCount > 0 ? 'success' : 'warning',
+          syncedCount > 0
+            ? `✅ Sync ${syncedCount} sản phẩm sang ${shopName} thành công!`
+            : `⚠️ Không có sản phẩm nào được sync sang ${shopName}`
+        );
         selectedBatchCheckboxes('local').forEach(cb => cb.checked = false);
         updateBatchUI();
       }
@@ -794,14 +1065,23 @@ async function submitSyncConflict(resolution) {
     });
     const data = await res.json();
     if (data.ok) {
+      const syncedCount = Number(data.synced || 0);
+      const skippedCount = syncSkippedCount(data, _syncConflictPayload.rows.length);
       result.style.display = 'block';
-      result.style.background = 'rgba(52,211,153,0.1)';
-      result.style.border = '1px solid var(--green)';
-      result.style.color = 'var(--green)';
+      result.style.background = syncedCount > 0 ? 'rgba(52,211,153,0.1)' : 'rgba(251,146,60,0.1)';
+      result.style.border = syncedCount > 0 ? '1px solid var(--green)' : '1px solid var(--orange)';
+      result.style.color = syncedCount > 0 ? 'var(--green)' : 'var(--orange)';
       const shopName = currentShopsData[data.target]?.name || data.target;
       const actionText = resolution === 'merge' ? 'ghi đè' : 'bỏ qua trùng';
-      result.innerHTML = `✅ Đã sync xong! (Chế độ: <strong>${actionText}</strong>) - Đã cập nhật/tạo <strong>${data.synced}</strong> sản phẩm sang <strong>${shopName}</strong>!`;
-      toast('success', `✅ Sync sang ${shopName} thành công!`);
+      const modeText = syncModeLabel(data, _syncConflictPayload.copy_files);
+      const assetCountsText = syncAssetCountsLabel(data);
+      result.innerHTML = syncedCount > 0
+        ? `✅ Đã sync xong! (Chế độ: <strong>${actionText}</strong>; ${modeText}; ${assetCountsText}) - Đã cập nhật/tạo <strong>${syncedCount}</strong> sản phẩm sang <strong>${shopName}</strong>${skippedCount ? `; bỏ qua <strong>${skippedCount}</strong>` : ''}!`
+        : `⚠️ Không có sản phẩm nào được sync sang <strong>${shopName}</strong> (Chế độ: <strong>${actionText}</strong>; ${modeText}; ${assetCountsText}); tất cả đã bị bỏ qua.`;
+      toast(
+        syncedCount > 0 ? 'success' : 'warning',
+        syncedCount > 0 ? `✅ Sync sang ${shopName} thành công!` : `⚠️ Không có sản phẩm nào được sync sang ${shopName}`
+      );
       selectedBatchCheckboxes('local').forEach(cb => cb.checked = false);
       updateBatchUI();
       _syncConflictPayload = null;
@@ -870,9 +1150,122 @@ function cloudAssetStatusCategory(status) {
   return 'local';
 }
 
+function normalizeCloudAssetState(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function isCloudUploadActiveState(state) {
+  return new Set(['UPLOAD_SCHEDULED', 'UPLOADING']).has(normalizeCloudAssetState(state));
+}
+
+function cloudAssetUiRenderKey(status) {
+  const state = normalizeCloudAssetState(status?.state);
+  const schedule = status?.upload_schedule || {};
+  const reclaimableBytes = status?.reclaimable_bytes;
+  const fallbackBytes = status?.bytes;
+  const countedBytes = status?.counts?.total_bytes;
+  const detailError = status?.last_error || status?.error || status?.local_error || status?.remote_error;
+  const eligibleAfter = status?.eligible_after || status?.offload_after || status?.offload_date;
+  return JSON.stringify({
+    state,
+    localAvailable: status?.local_available,
+    cloudAvailable: status?.cloud_available,
+    category: cloudAssetStatusCategory(status),
+    eligibleAfter: String(eligibleAfter || ''),
+    scheduleStatus: String(schedule?.status || '').toLowerCase(),
+    scheduleWaitReason: String(schedule?.wait_reason || ''),
+    scheduleDeleteLocal: Boolean(schedule?.delete_local),
+    reclaimableBytes: reclaimableBytes ?? fallbackBytes ?? countedBytes ?? '',
+    ok: status?.ok,
+    error: detailError ? String(detailError) : '',
+  });
+}
+
+function cloudAssetUiBodyHtml(folder, status) {
+  const safeFolder = String(folder || '').trim();
+  return `<div class="cloud-asset-status-line"><span class="cloud-asset-badge cloud-status-${cloudAssetStatusCategory(status)}" title="Trạng thái asset cloud của ${escHtml(safeFolder)}">${escHtml(cloudAssetStatusLabel(status))}</span>${cloudAssetDetailsHtml(status)}</div>
+    ${cloudUploadProgressHtml(status)}
+    ${cloudAssetActionsHtml(safeFolder, status)}
+  `;
+}
+
+function cloudAssetUiWrapperHtml(folder, status) {
+  const safeFolder = String(folder || '').trim();
+  if (!safeFolder) return '';
+  return `<div class="cloud-asset-ui" data-cloud-folder="${escHtml(safeFolder)}" data-cloud-ui-key="${escHtml(cloudAssetUiRenderKey(status))}">
+    ${cloudAssetUiBodyHtml(safeFolder, status)}
+  </div>`;
+}
+
+function updateCloudAssetUi(folder) {
+  const safeFolder = String(folder || '').trim();
+  if (!safeFolder) return false;
+  if (typeof document === 'undefined' || typeof document.querySelectorAll !== 'function') return false;
+  const currentStatus = cloudAssetStatusForFolder(safeFolder);
+  const nextKey = cloudAssetUiRenderKey(currentStatus);
+  const escapedFolder = typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+    ? CSS.escape(safeFolder)
+    : safeFolder.replace(/"/g, '\\"');
+  const selector = `.cloud-asset-ui[data-cloud-folder="${escapedFolder}"]`;
+  const nodes = [...document.querySelectorAll(selector)];
+  if (!nodes.length) return false;
+  nodes.forEach((node) => {
+    const existingKey = node.getAttribute('data-cloud-ui-key');
+    if (existingKey === nextKey) return;
+    node.setAttribute('data-cloud-ui-key', nextKey);
+    node.innerHTML = cloudAssetUiBodyHtml(safeFolder, currentStatus);
+  });
+  return true;
+}
+
+function shouldRefreshCloudCatalogForTerminalTransition(previousStatus, nextStatus) {
+  const previousState = normalizeCloudAssetState(previousStatus?.state);
+  const nextState = normalizeCloudAssetState(nextStatus?.state);
+  if (!isCloudUploadActiveState(previousState)) return false;
+  if (isCloudUploadActiveState(nextState)) return false;
+  if (new Set(['CLOUD_ONLY', 'READY_LOCAL', 'RESTORE_VERIFIED', 'RESTORING']).has(nextState)) {
+    return true;
+  }
+  const previousAvailability = `${typeof previousStatus?.local_available === 'undefined' ? 'u' : previousStatus.local_available ? '1' : '0'}|${typeof previousStatus?.cloud_available === 'undefined' ? 'u' : previousStatus.cloud_available ? '1' : '0'}`;
+  const nextAvailability = `${typeof nextStatus?.local_available === 'undefined' ? 'u' : nextStatus.local_available ? '1' : '0'}|${typeof nextStatus?.cloud_available === 'undefined' ? 'u' : nextStatus.cloud_available ? '1' : '0'}`;
+  return previousAvailability !== nextAvailability;
+}
+
+function triggerCloudAssetTerminalCatalogRefresh() {
+  if (cloudAssetTerminalRefreshInFlight) {
+    return cloudAssetTerminalRefreshInFlight;
+  }
+  const refresh = (async () => {
+    rememberCatalogSelections();
+    try {
+      await loadProducts({ includeCloudStatus: false, includeAggregateCatalog: true });
+    } finally {
+      restoreCatalogSelections();
+      if (
+        typeof updateBatchUI === 'function'
+        && typeof document !== 'undefined'
+        && document.getElementById?.('batch-actions')
+      ) {
+        updateBatchUI();
+      }
+      cloudAssetTerminalRefreshInFlight = null;
+    }
+  })().catch((error) => {
+    console.warn('[Cloud catalog refresh]', error);
+  });
+  cloudAssetTerminalRefreshInFlight = refresh;
+  return refresh;
+}
+
 function cloudAssetStatusLabel(status) {
   if (!status) return cloudAssetStatusError ? '☁️ Cloud unavailable' : '☁️ Chưa kiểm tra cloud';
   const state = String(status.state || '').trim().toUpperCase();
+  if (state === 'UPLOAD_SCHEDULED' && status.upload_schedule?.delete_local) {
+    return '🗓️ Upload + xoá local scheduled';
+  }
+  if (state === 'UPLOADING' && status.upload_schedule?.delete_local) {
+    return '⏫ Upload + verify + xoá local…';
+  }
   return CLOUD_ASSET_STATUS_META[state]?.label || `☁️ ${state || 'Cloud status'}`;
 }
 
@@ -907,9 +1300,10 @@ function cloudAssetDetailsHtml(status) {
   if (eligibleAfter) details.push(`offload ${escHtml(formatCloudAssetDate(eligibleAfter))}`);
   const uploadSchedule = status.upload_schedule;
   if (uploadSchedule?.status === 'queued') {
-    details.push(escHtml(uploadSchedule.wait_reason ? `chờ ${uploadSchedule.wait_reason}` : 'chờ Etsy rảnh'));
+    const waitText = uploadSchedule.wait_reason ? `chờ ${uploadSchedule.wait_reason}` : 'chờ Etsy rảnh';
+    details.push(escHtml(uploadSchedule.delete_local ? `${waitText} · sẽ xoá local sau verify` : waitText));
   } else if (uploadSchedule?.status === 'running') {
-    details.push('đang upload & verify');
+    details.push(uploadSchedule.delete_local ? 'đang upload + verify rồi xoá local' : 'đang upload & verify');
   }
   const suppliedBytes = status.reclaimable_bytes ?? status.bytes ?? status.counts?.total_bytes;
   const bytes = formatCloudAssetBytes(suppliedBytes);
@@ -919,11 +1313,36 @@ function cloudAssetDetailsHtml(status) {
   return details.length ? `<span class="cloud-asset-details">${details.join(' · ')}</span>` : '';
 }
 
+function cloudUploadProgressHtml(status) {
+  const schedule = status?.upload_schedule;
+  if (!schedule || !schedule.delete_local) return '';
+  const scheduleStatus = String(schedule.status || '').toLowerCase();
+  if (scheduleStatus === 'queued') {
+    const wait = schedule.wait_reason ? ` — ${escHtml(String(schedule.wait_reason))}` : '';
+    return `<div class="cloud-upload-progress" role="status" aria-live="polite">
+      <div class="cloud-upload-progress-title">🗓️ Đã vào hàng chờ${wait}</div>
+      <div class="cloud-upload-progress-steps"><span class="is-active">1. Chờ lượt</span><span>2. Upload &amp; verify</span><span>3. Xoá local</span></div>
+      <div class="cloud-upload-progress-note">Local vẫn còn nguyên cho đến khi verify cloud xong.</div>
+    </div>`;
+  }
+  if (scheduleStatus === 'running') {
+    return `<div class="cloud-upload-progress" role="status" aria-live="polite">
+      <div class="cloud-upload-progress-title">⏫ Đang upload &amp; verify manifest/hash</div>
+      <div class="cloud-upload-progress-steps"><span class="is-complete">✓ 1. Đã bắt đầu</span><span class="is-active">2. Upload &amp; verify</span><span>3. Xoá local sau verify</span></div>
+      <div class="cloud-upload-progress-note">Hoàn tất chỉ khi badge chuyển thành <strong>☁️ Cloud-only</strong>. Nếu lỗi, local sẽ không bị coi là đã xoá xong.</div>
+    </div>`;
+  }
+  if (scheduleStatus === 'error') {
+    return `<div class="cloud-upload-progress cloud-upload-progress-error" role="status">❌ Upload chưa hoàn tất — xem chi tiết lỗi trên card.</div>`;
+  }
+  return '';
+}
+
 function cloudAssetActionButton(folder, operation, label, title) {
   const safeFolder = escJs(folder);
   const handlers = {
     status: `cloudAssetRefreshStatus('${safeFolder}', this)`,
-    upload: `cloudAssetUploadAndVerify('${safeFolder}', this)`,
+    upload: `cloudAssetUploadAndOffload('${safeFolder}', this)`,
     restore: `cloudAssetRestore('${safeFolder}', this)`,
     cancel: `cloudAssetCancelOffload('${safeFolder}', this)`,
   };
@@ -941,7 +1360,7 @@ function cloudAssetActionsHtml(folder, status) {
     // Upload has already been explicitly queued.  Keep the card read-only
     // until the server-side, Etsy-idle worker completes it.
   } else {
-    actions.push(cloudAssetActionButton(folder, 'upload', '☁↑', 'Xếp lịch Upload & verify khi Etsy rảnh'));
+    actions.push(cloudAssetActionButton(folder, 'upload', '☁↑', 'Upload + verify rồi xoá local sau khi cloud xác nhận'));
   }
   return `<div class="cloud-asset-actions" aria-label="Cloud asset actions">${actions.join('')}</div>`;
 }
@@ -949,49 +1368,129 @@ function cloudAssetActionsHtml(folder, status) {
 function renderCloudAssetUi(folder) {
   const safeFolder = String(folder || '').trim();
   if (!safeFolder) return '';
-  const status = cloudAssetStatusForFolder(safeFolder);
-  const category = cloudAssetStatusCategory(status);
-  const badgeLabel = cloudAssetStatusLabel(status);
-  return `<div class="cloud-asset-ui" data-cloud-folder="${escHtml(safeFolder)}">
-    <div class="cloud-asset-status-line"><span class="cloud-asset-badge cloud-status-${category}" title="Trạng thái asset cloud của ${escHtml(safeFolder)}">${escHtml(badgeLabel)}</span>${cloudAssetDetailsHtml(status)}</div>
-    ${cloudAssetActionsHtml(safeFolder, status)}
-  </div>`;
+  return cloudAssetUiWrapperHtml(safeFolder, cloudAssetStatusForFolder(safeFolder));
 }
 
-async function loadCloudAssetStatus({ force = false } = {}) {
+function handleScopedCloudAssetStatusUpdate(folder, previousStatus) {
+  const safeFolder = String(folder || '').trim();
+  if (!safeFolder) return;
+  const nextStatus = cloudAssetStatusForFolder(safeFolder);
+  const previousKey = cloudAssetUiRenderKey(previousStatus);
+  const nextKey = cloudAssetUiRenderKey(nextStatus);
+  if (nextKey !== previousKey) {
+    updateCloudAssetUi(safeFolder);
+  }
+  if (shouldRefreshCloudCatalogForTerminalTransition(previousStatus, nextStatus) && currentProductSource !== 'shop') {
+    triggerCloudAssetTerminalCatalogRefresh();
+  }
+}
+
+function hasActiveCloudAssetSchedule() {
+  return [...cloudAssetStatusByFolder.values()].some((status) => {
+    const state = String(status?.state || '').toUpperCase();
+    return isCloudUploadActiveState(state);
+  });
+}
+
+async function pollActiveCloudAssetStatuses() {
+  if (!hasActiveCloudAssetSchedule()) return null;
+  // Poll just the active products. A whole-shop status scan can be slow while
+  // rclone owns a product lock, whereas an active schedule has a lightweight,
+  // lock-free status snapshot for its exact folder.
+  const activeFolders = [...cloudAssetStatusByFolder.entries()]
+    .filter(([, status]) => isCloudUploadActiveState(status?.state))
+    .map(([folder]) => folder);
+  const responses = await Promise.all(activeFolders.map((folder) => (
+    loadCloudAssetStatus({ force: true, folder })
+  )));
+  return responses;
+}
+
+async function hydrateActiveCloudUploadProgress() {
+  // On a fresh page load the whole-shop cloud scan can take a while. The
+  // operation queue gives us the exact active folder(s), so hydrate those
+  // lightweight schedule snapshots first and let the card explain progress
+  // immediately.
+  try {
+    const res = await fetch('/api/operation-queue');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !Array.isArray(data.commands)) return;
+    const activeFolders = [...new Set(data.commands
+      .filter((command) => (
+        ['cloud-upload-verify', 'cloud-upload-verify-offload'].includes(command?.operation)
+        && ['queued', 'running'].includes(command?.status)
+        && String(command?.shop_id || '') === getActiveShopId()
+      ))
+      .map((command) => String(command?.target || '').split('/').filter(Boolean).pop())
+      .filter(Boolean))];
+    await Promise.all(activeFolders.map((folder) => loadCloudAssetStatus({ force: true, folder })));
+  } catch (error) {
+    // The normal whole-shop status refresh remains the fallback. Queue
+    // hydration is intentionally best-effort and must not block the dashboard.
+  }
+}
+
+async function loadCloudAssetStatus({ force = false, folder = '' } = {}) {
   const shopId = getActiveShopId();
   if (!shopId) return null;
-  if (!force && cloudAssetStatusPromise && cloudAssetStatusPromiseShop === shopId) {
+  const safeFolder = String(folder || '').trim();
+  const scopedToFolder = Boolean(safeFolder);
+  // A forced refresh may bypass a completed request, but it must never start
+  // a second whole-shop scan while the current one is still running.  Each
+  // scan inspects every product and overlapping polls can exhaust the
+  // backend worker pool, which also makes product saves appear to hang.
+  if (!scopedToFolder && cloudAssetStatusPromise && cloudAssetStatusPromiseShop === shopId) {
     return cloudAssetStatusPromise;
   }
+  if (scopedToFolder && cloudAssetStatusPollInFlight.has(safeFolder)) {
+    return cloudAssetStatusPollInFlight.get(safeFolder);
+  }
 
-  const requestId = ++cloudAssetStatusRequestId;
-  cloudAssetStatusPromiseShop = shopId;
+  const requestId = scopedToFolder ? cloudAssetStatusRequestId : ++cloudAssetStatusRequestId;
+  if (!scopedToFolder) cloudAssetStatusPromiseShop = shopId;
   const request = (async () => {
+    const previousStatus = scopedToFolder ? cloudAssetStatusForFolder(safeFolder) : null;
     try {
-      const res = await fetch(cloudAssetStatusUrl(shopId));
+      const res = await fetch(cloudAssetStatusUrl(shopId, safeFolder));
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || data.error || `Cloud status HTTP ${res.status}`);
-      if (requestId !== cloudAssetStatusRequestId) return data;
-      applyCloudAssetStatusItems(data, true);
-      cloudAssetStatusAvailable = true;
-      cloudAssetStatusError = '';
-      if (currentProductSource !== 'shop') filterProducts();
+      if (!scopedToFolder && requestId !== cloudAssetStatusRequestId) return data;
+      applyCloudAssetStatusItems(data, !scopedToFolder);
+      if (!scopedToFolder) {
+        cloudAssetStatusAvailable = true;
+        cloudAssetStatusError = '';
+        [...cloudAssetStatusByFolder.keys()].forEach((folder) => {
+          updateCloudAssetUi(folder);
+        });
+        const activeCloudFilter = document.getElementById('filter-cloud-status')?.value || 'all';
+        if (currentProductSource !== 'shop' && activeCloudFilter !== 'all') {
+          filterProducts();
+        }
+      } else {
+        handleScopedCloudAssetStatusUpdate(safeFolder, previousStatus);
+      }
       return data;
     } catch (error) {
-      if (requestId === cloudAssetStatusRequestId) {
+      if (!scopedToFolder && requestId === cloudAssetStatusRequestId) {
         cloudAssetStatusAvailable = false;
         cloudAssetStatusError = error.message || 'cloud status unavailable';
         console.warn('[Cloud asset status]', error);
       }
+      if (scopedToFolder) {
+        handleScopedCloudAssetStatusUpdate(safeFolder, previousStatus);
+      }
       return null;
     }
   })();
-  cloudAssetStatusPromise = request;
+  if (scopedToFolder) cloudAssetStatusPollInFlight.set(safeFolder, request);
+  if (!scopedToFolder) cloudAssetStatusPromise = request;
   try {
     return await request;
   } finally {
-    if (cloudAssetStatusPromise === request) cloudAssetStatusPromise = null;
+    if (!scopedToFolder && cloudAssetStatusPromise === request) cloudAssetStatusPromise = null;
+    if (scopedToFolder && cloudAssetStatusPollInFlight.get(safeFolder) === request) {
+      cloudAssetStatusPollInFlight.delete(safeFolder);
+    }
   }
 }
 
@@ -1093,13 +1592,14 @@ async function cloudAssetRefreshStatus(folder, button) {
   const original = cloudAssetButtonBusy(button, '...');
   try {
     const payload = cloudAssetRequestPayload(folder);
+    const previousStatus = cloudAssetStatusForFolder(payload.folder);
     const res = await fetch(cloudAssetStatusUrl(payload.shop_id, payload.folder));
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || data.error || `Cloud status HTTP ${res.status}`);
     applyCloudAssetStatusItems(data, false);
+    handleScopedCloudAssetStatusUpdate(payload.folder, previousStatus);
     cloudAssetStatusAvailable = true;
     cloudAssetStatusError = '';
-    filterProducts();
     toast('success', `☁️ Đã làm mới trạng thái ${payload.folder}`);
   } catch (error) {
     toast('error', `❌ Cloud status ${folder}: ${error.message}`);
@@ -1108,22 +1608,51 @@ async function cloudAssetRefreshStatus(folder, button) {
   }
 }
 
-async function cloudAssetUploadAndVerify(folder, button) {
+async function cloudAssetUploadAndOffload(folder, button) {
   try {
     const payload = cloudAssetRequestPayload(folder);
+    const productKey = payload.scope === 'master'
+      ? `master_products/${payload.folder}`
+      : `shops/${payload.shop_id}/${payload.folder}`;
+    const confirmationText = [
+      `Product: ${productKey}`,
+      '',
+      'Nút này sẽ:',
+      '1) upload cả images và files lên cloud,',
+      '2) verify cloud bằng manifest/hash,',
+      '3) XOÁ TRỰC TIẾP images/* và files/* ở local sau khi verify thành công.',
+      '',
+      'Local files không vào Trash. Chỉ tiếp tục nếu anh đã chắc chắn muốn giải phóng local.',
+    ].join('\n');
     await withCloudAssetMutation(
-      'upload-and-verify',
+      'upload-verify-offload',
       button,
       payload,
       async () => {
-        const data = await postCloudAssetMutation('/api/cloud-assets/schedule-upload-verify', payload);
-        await loadCloudAssetStatus({ force: true });
+        const confirmFn = typeof window?.confirm === 'function' ? window.confirm.bind(window) : null;
+        if (!confirmFn) {
+          throw new Error('Không thể xác nhận thao tác xoá local trong cửa sổ hiện tại');
+        }
+        if (!confirmFn(confirmationText)) {
+          toast('info', `Đã huỷ thao tác cloud: ${payload.folder}`);
+          return;
+        }
+        const requestPayload = {
+          ...payload,
+          delete_local: true,
+          confirmed_product_key: productKey,
+        };
+        const data = await postCloudAssetMutation(
+          '/api/cloud-assets/schedule-upload-verify-offload',
+          requestPayload,
+        );
+        await loadCloudAssetStatus({ force: true, folder: payload.folder });
         if (data?.created === false) {
-          toast('info', `🗓️ ${payload.folder} đã có lịch Upload & verify`);
+          toast('info', `🗓️ ${payload.folder} đã có lịch Upload + xoá local`);
         } else if (data?.schedule?.wait_reason) {
-          toast('info', `🗓️ Đã xếp lịch ${payload.folder}; ${data.schedule.wait_reason}`);
+          toast('info', `🗓️ Đã xếp lịch Upload + xoá local ${payload.folder}; ${data.schedule.wait_reason}`);
         } else {
-          toast('success', `🗓️ Đã xếp lịch Upload & verify: ${payload.folder}`);
+          toast('info', `🗓️ Đã xếp lịch Upload + xoá local: ${payload.folder}. Chưa xoá local cho tới khi card hiện Cloud-only.`);
         }
       },
     );
@@ -1133,6 +1662,12 @@ async function cloudAssetUploadAndVerify(folder, button) {
     // `withCloudAssetMutation` handles button restore on both primary
     // owner and deduplicated waits.
   }
+}
+
+// Backward-compatible entry point for any already-rendered card from an older
+// dashboard bundle. New cards use cloudAssetUploadAndOffload directly.
+async function cloudAssetUploadAndVerify(folder, button) {
+  return cloudAssetUploadAndOffload(folder, button);
 }
 
 async function cloudAssetRestore(folder, button) {
@@ -1145,7 +1680,7 @@ async function cloudAssetRestore(folder, button) {
       async () => {
         toast('info', `☁️ Đang restore ${payload.folder}...`);
         await postCloudAssetMutation('/api/cloud-assets/restore', payload);
-        await loadCloudAssetStatus({ force: true });
+        await loadCloudAssetStatus({ force: true, folder: payload.folder });
         toast('success', `✅ Đã restore ${payload.folder} về local`);
       },
     );
@@ -1167,7 +1702,7 @@ async function cloudAssetCancelOffload(folder, button) {
       async () => {
         toast('info', `☁️ Đang huỷ lịch offload ${payload.folder}...`);
         await postCloudAssetMutation('/api/cloud-assets/cancel-offload', payload);
-        await loadCloudAssetStatus({ force: true });
+        await loadCloudAssetStatus({ force: true, folder: payload.folder });
         toast('success', `✅ Đã huỷ lịch offload ${payload.folder}`);
       },
     );
@@ -1180,10 +1715,19 @@ async function cloudAssetCancelOffload(folder, button) {
 }
 
 async function loadProducts(options = {}) {
-  const { throwOnError = false } = options;
+  const {
+    throwOnError = false,
+    includeAggregateCatalog = true,
+    includeCloudStatus = true,
+    requestTimeoutMs = 0,
+    requestPhase = 'products',
+  } = options;
   try {
-    const res  = await fetch('/api/products');
-    const data = await res.json();
+    const { response: res, data } = await fetchJsonWithTimeout(
+      '/api/products',
+      {},
+      { timeoutMs: requestTimeoutMs, phase: requestPhase },
+    );
     if (!res.ok) throw new Error(data.detail || data.error || `Không tải được sản phẩm (HTTP ${res.status})`);
     allProducts = data.products || [];
     etsyManagerSnapshot = data.etsy_manager || null;
@@ -1191,8 +1735,8 @@ async function loadProducts(options = {}) {
     setProductSource(currentProductSource, true);
     updateStats(allProducts);
     updateEtsyManagerStats(etsyManagerSnapshot);
-    void loadCloudAssetStatus();
-    await loadAggregateCatalog({ throwOnError });
+    if (includeCloudStatus) void loadCloudAssetStatus();
+    if (includeAggregateCatalog) await loadAggregateCatalog({ throwOnError });
     refreshScrollNavState();
     return allProducts;
   } catch (e) {
@@ -1331,16 +1875,13 @@ async function loadAggregateCatalog(options = {}) {
 }
 
 function updateStats(products) {
-  const posted  = products.filter(p => String(p.status || '').includes('Đã đăng')).length;
-  const pending = products.filter(p => String(p.status || '').includes('Chờ đăng')).length;
-  const errors  = products.filter(p => {
-    const status = String(p.status || '');
-    return status.includes('Lỗi') || status.includes('❌');
-  }).length;
-  document.getElementById('stat-total').textContent   = products.length;
-  document.getElementById('stat-posted').textContent  = posted;
-  document.getElementById('stat-pending').textContent = pending;
-  document.getElementById('stat-error').textContent   = errors;
+  const summary = summarizeProductStatuses(products);
+  document.getElementById('stat-total').textContent = summary.total;
+  document.getElementById('stat-posted').textContent = summary.posted;
+  document.getElementById('stat-pending').textContent = summary.pending;
+  document.getElementById('stat-error').textContent = summary.error;
+  document.getElementById('stat-other').textContent = summary.other;
+  document.getElementById('stat-total-label').textContent = statsTotalLabel(currentProductSource);
 }
 
 function updateEtsyManagerStats(snapshot) {
@@ -1434,18 +1975,101 @@ function setProductSource(source, skipRender = false) {
   const selectAll = document.getElementById('cb-select-all');
   const statusFilter = document.getElementById('filter-status');
   const cloudStatusFilter = document.getElementById('filter-cloud-status');
-  if (selectAll) { selectAll.checked = false; selectAll.disabled = !['local', 'shop'].includes(source); }
-  if (statusFilter) statusFilter.disabled = isStatusFilterDisabledForSource(source);
+  if (selectAll) { selectAll.checked = false; selectAll.disabled = !['local', 'shop', 'aggregate'].includes(source); }
+  if (statusFilter) {
+    statusFilter.disabled = isStatusFilterDisabledForSource(source);
+    if (statusFilter.disabled && statusFilter.value) statusFilter.value = '';
+  }
   if (cloudStatusFilter) cloudStatusFilter.disabled = source === 'shop';
   applyBatchActionVisibility(BatchSelection.getBatchActionState(source, []));
   const batchActions = document.getElementById('batch-actions');
   batchActions?.classList.remove('is-visible');
   batchActions?.style.setProperty('display', 'none', 'important');
+  syncStatusSummaryButtons();
   if (!skipRender || allProducts.length || shopListings.length) filterProducts();
 }
 
 function isStatusFilterDisabledForSource(source) {
   return source === 'shop';
+}
+
+function onStatusFilterChange() {
+  syncStatusSummaryButtons();
+  filterProducts();
+}
+
+function onStatusSummaryClick(statusFilterValue = '') {
+  if (typeof document === 'undefined' || typeof document.getElementById !== 'function') return;
+  const statusFilter = document.getElementById('filter-status');
+  const requestedFilter = String(statusFilterValue || '').trim();
+  if (!statusFilter) return;
+  if (isStatusFilterDisabledForSource(currentProductSource) && requestedFilter !== '') {
+    return;
+  }
+  statusFilter.value = requestedFilter;
+  syncStatusSummaryButtons();
+  filterProducts();
+  scrollProductSectionIntoView();
+}
+
+function syncStatusSummaryButtons() {
+  if (
+    typeof document === 'undefined'
+    || typeof document.getElementById !== 'function'
+    || typeof document.querySelectorAll !== 'function'
+  ) return;
+  const statusFilter = document.getElementById('filter-status');
+  const activeFilter = statusFilter?.value || '';
+  const buttons = Array.from(document.querySelectorAll('.stat-filter-btn'));
+  const filterLocked = isStatusFilterDisabledForSource(currentProductSource);
+  buttons.forEach(button => {
+    if (!button?.dataset) return;
+    const cardFilter = String(button.dataset.statusFilter || '').trim();
+    const isTotal = cardFilter === '';
+    const disabled = filterLocked && !isTotal;
+    button.disabled = disabled;
+    button.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+    const isActive = !filterLocked && cardFilter === activeFilter;
+    button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    button.classList.toggle('is-active', isActive);
+  });
+}
+
+function scrollProductSectionIntoView() {
+  if (typeof document === 'undefined' || typeof document.getElementById !== 'function') return;
+  const section = document.getElementById('product-section');
+  if (!section || typeof section.scrollIntoView !== 'function') return;
+  let isInView = false;
+  if (typeof section.getBoundingClientRect === 'function') {
+    try {
+      const rect = section.getBoundingClientRect();
+      if (!rect || !Number.isFinite(rect.top) || !Number.isFinite(rect.bottom)) {
+        isInView = false;
+      } else {
+        const viewportHeight = Number(
+          (typeof window !== 'undefined' && window.innerHeight)
+          || (typeof document !== 'undefined' && document.documentElement?.clientHeight)
+          || 0,
+        );
+        isInView = rect.top >= 0 && rect.bottom <= viewportHeight;
+      }
+    } catch {
+      isInView = false;
+    }
+  }
+  if (isInView) return;
+  const behavior = reducedMotionQuery?.matches ? 'auto' : 'smooth';
+  try {
+    section.scrollIntoView({ behavior, block: 'start' });
+  } catch {
+    // A minimal/test DOM may expose a non-browser scroll shim. Keep the
+    // filter interaction safe when that shim cannot accept scroll options.
+    try {
+      section.scrollIntoView();
+    } catch {
+      // Scrolling is a convenience; never let it break filtering.
+    }
+  }
 }
 
 function findAggregateLocalProduct(record) {
@@ -1461,14 +2085,102 @@ function findAggregateLocalProduct(record) {
   return allProducts.find(product => String(product.folder || '').trim() === folder) || null;
 }
 
+function isCanonicalSuccessfulLocalDraftStatus(status) {
+  const normalized = String(status || '').trim().toLowerCase();
+  return normalized === '✅ đã đăng draft'
+    || normalized === '✅ đã đăng draft (url chưa xác minh)';
+}
+
+function isCanonicalSuccessfulLocalPostedStatus(status) {
+  return String(status || '').trim() === '✅ Đã đăng'
+    || String(status || '').trim() === '🆕 Mới import · ✅ Đã đăng';
+}
+
+function withNewImportPrefix(status, isNewImport) {
+  const normalized = String(status || '').trim();
+  if (!isNewImport) return normalized;
+  const newImportPrefix = '🆕 Mới import · ';
+  return normalized.startsWith(newImportPrefix) ? normalized : `${newImportPrefix}${normalized}`;
+}
+
 function aggregateDisplayProduct(record, localProduct = findAggregateLocalProduct(record)) {
   if (!localProduct) return record;
   if (String(record?.reconciliation_status || '') === 'unmatched_local_listing') {
+    const neutralStaleStatus = '⏳ Chờ đăng · Chưa khớp snapshot Etsy';
+    const managerFallbackSource = [localProduct, record].find(
+      item => String(item?.etsy_link_type || '').trim() === 'manager_fallback',
+    );
+    const localUnverifiedSource = [localProduct, record].find(
+      item => String(item?.etsy_link_type || '').trim() === 'local_unverified'
+        && item?.etsy_link_verified === false,
+    );
+    const preserveLocalDraftStatus = Boolean(
+      managerFallbackSource && isCanonicalSuccessfulLocalDraftStatus(localProduct?.status),
+    );
+    const preserveLocalPostedStatus = Boolean(
+      localUnverifiedSource && isCanonicalSuccessfulLocalPostedStatus(
+        localUnverifiedSource?.status || localProduct?.status,
+      ),
+    );
+    const isNewImport =
+      localProduct?.is_new_import === true ||
+      record?.is_new_import === true ||
+      String(localProduct?.status || '').includes('Mới import') ||
+      String(record?.status || '').includes('Mới import');
+    const fallbackField = key => (
+      localUnverifiedSource?.[key]
+      ?? managerFallbackSource?.[key]
+      ?? localProduct?.[key]
+      ?? record?.[key]
+    );
+    const fallbackLinkMetadata = preserveLocalDraftStatus
+      ? {
+          etsy_listing_id: fallbackField('etsy_listing_id') ?? managerFallbackSource?.listing_id ?? record?.listing_id,
+          etsy_edit_url: fallbackField('etsy_edit_url'),
+          etsy_manage_url: fallbackField('etsy_manage_url'),
+          etsy_link_type: 'manager_fallback',
+          etsy_link_verified: false,
+          etsy_link_warning_reason: fallbackField('etsy_link_warning_reason'),
+          etsy_snapshot_stale: fallbackField('etsy_snapshot_stale'),
+        }
+      : managerFallbackSource
+        ? {
+            // Keep the raw workbook URL/listing ID for reconciliation and
+            // other controls, but revoke every fallback-only navigation field
+            // when the local status is not a canonical successful draft.
+            etsy_public_url: null,
+            etsy_edit_url: null,
+            etsy_manage_url: null,
+            etsy_manager_status: null,
+            etsy_link_type: 'unavailable',
+            etsy_link_verified: false,
+            etsy_link_warning_reason: null,
+          }
+        : preserveLocalPostedStatus
+          ? {
+              etsy_listing_id: fallbackField('etsy_listing_id') ?? localUnverifiedSource?.listing_id ?? record?.listing_id,
+              etsy_public_url: fallbackField('etsy_public_url') || fallbackField('etsy_url'),
+              etsy_edit_url: fallbackField('etsy_edit_url'),
+              etsy_manage_url: fallbackField('etsy_manage_url'),
+              etsy_url: fallbackField('etsy_public_url') || fallbackField('etsy_url'),
+              etsy_link_type: 'local_unverified',
+              etsy_link_verified: false,
+              etsy_link_warning_reason: fallbackField('etsy_link_warning_reason'),
+              etsy_snapshot_stale: fallbackField('etsy_snapshot_stale'),
+            }
+          : {};
+    const displayStatus = preserveLocalDraftStatus
+      ? withNewImportPrefix(localProduct.status, isNewImport)
+      : preserveLocalPostedStatus
+        ? withNewImportPrefix(localProduct.status, isNewImport)
+        : withNewImportPrefix(neutralStaleStatus, isNewImport);
     return {
       ...localProduct,
-      status: '⏳ Chờ đăng · Chưa khớp snapshot Etsy',
+      ...fallbackLinkMetadata,
+      status: displayStatus,
       reconciliation_status: record.reconciliation_status,
       reconciliation_note: record.reconciliation_note,
+      is_new_import: isNewImport,
     };
   }
   return localProduct;
@@ -1482,34 +2194,128 @@ function getAggregateLocalRecords(catalog = aggregateCatalog) {
   });
 }
 
+function _safeAggregateSearchTokens(values = []) {
+  const seen = new Set();
+  for (const value of values) {
+    const text = String(value || '').trim();
+    if (!text) continue;
+    seen.add(text);
+  }
+  return [...seen];
+}
+
+function buildAggregateSearchHaystack(record, localProduct = findAggregateLocalProduct(record)) {
+  const displayProduct = localProduct ? aggregateDisplayProduct(record, localProduct) : record;
+  const tokens = [
+    record?.title,
+    record?.etsy_title,
+    record?.folder,
+    record?.sku,
+    record?.listing_id,
+    record?.source_label,
+    record?.etsy_url,
+    localProduct?.title,
+    localProduct?.seed_title,
+    localProduct?.keywords,
+    localProduct?.tags,
+    localProduct?.folder,
+    localProduct?.sku,
+    localProduct?.etsy_url,
+    localProduct?.etsy_listing_id,
+    displayProduct?.etsy_link_type === 'manager_fallback' ? localProduct?.listing_id : null,
+    displayProduct?.etsy_listing_id,
+  ];
+  return _safeAggregateSearchTokens(tokens).join(' ').toLowerCase();
+}
+
+function classifyProductStatus(status) {
+  const normalized = String(status || '').trim().toLowerCase();
+  if (normalized.includes('lỗi') || normalized.includes('❌') || normalized.includes('error')) {
+    return 'error';
+  }
+  if (normalized.includes('đã đăng') || normalized.includes('posted')) {
+    return 'posted';
+  }
+  if (normalized.includes('chờ đăng') || normalized.includes('cho đăng')) {
+    return 'pending';
+  }
+  return 'other';
+}
+
+function summarizeProductStatuses(products = []) {
+  const summary = { total: products.length, posted: 0, pending: 0, error: 0, other: 0 };
+  products.forEach(product => {
+    if (String(product?.source || '').trim().toLowerCase() === 'etsy') {
+      if (statusFilterMatches(product, 'error')) summary.error += 1;
+      else if (statusFilterMatches(product, 'posted')) summary.posted += 1;
+      else if (statusFilterMatches(product, 'pending')) summary.pending += 1;
+      else if (statusFilterMatches(product, 'other')) summary.other += 1;
+      // Etsy-only drafts have their own dropdown filter and no summary card.
+      return;
+    }
+    summary[classifyProductStatus(product?.status)] += 1;
+  });
+  return summary;
+}
+
+function statsTotalLabel(source = currentProductSource) {
+  if (source === 'aggregate') return 'Catalog hiển thị';
+  if (source === 'shop') return 'Listing Etsy hiển thị';
+  return 'Folder local hiển thị';
+}
+
 function statusFilterMatches(record, statusFilter) {
   if (!statusFilter) return true;
 
-  const status = String(record?.status || '');
-  const etsyStatus = String(record?.etsy_status || record?.status || '').trim();
+  const status = String(record?.status || '').trim();
   const statusLower = status.toLowerCase();
+  const etsyStatus = String(record?.etsy_status || record?.status || '').trim();
   const etsyStatusLower = etsyStatus.toLowerCase();
   const source = String(record?.source || '').toLowerCase();
   const isEtsyOnly = source === 'etsy';
+  const hasError = statusLower.includes('lỗi')
+    || statusLower.includes('error')
+    || status.includes('❌')
+    || (isEtsyOnly && etsyStatusLower === 'error');
 
   if (statusFilter === 'posted') {
-    return (status.includes('Đã đăng') && !status.includes('draft'))
+    return !hasError
+      && ((status.includes('Đã đăng') && !status.includes('draft'))
       || statusLower.includes('posted')
-      || (isEtsyOnly && etsyStatusLower === 'active');
+      || (isEtsyOnly && etsyStatusLower === 'active'));
   }
 
   if (statusFilter === 'draft') {
-    return statusLower.includes('draft') || (isEtsyOnly && etsyStatusLower === 'draft');
+    return !hasError && (statusLower.includes('draft') || (isEtsyOnly && etsyStatusLower === 'draft'));
   }
 
   if (statusFilter === 'pending') {
-    return status.includes('Chờ đăng') || (isEtsyOnly && etsyStatusLower === 'pending');
+    return !hasError
+      && (status.includes('Chờ đăng') || statusLower.includes('chờ đăng') || (isEtsyOnly && etsyStatusLower === 'pending'));
   }
 
   if (statusFilter === 'error') {
-    return status.includes('Lỗi') || status.includes('❌')
-      || statusLower.includes('error')
-      || (isEtsyOnly && etsyStatusLower === 'error');
+    return hasError;
+  }
+
+  if (statusFilter === 'other') {
+    if (isEtsyOnly) {
+      return !hasError && !['active', 'draft', 'pending', 'error'].includes(etsyStatusLower);
+    }
+    return !(
+      (status.includes('✅') && status.includes('Đã đăng') && !status.includes('draft'))
+      || statusLower.includes('posted')
+      || statusLower.includes('chờ đăng')
+      || statusLower.includes('draft')
+      || hasError
+    );
+  }
+
+  if (statusFilter === 'new_import') {
+    if (record?.is_new_import === true) {
+      return !isEtsyOnly;
+    }
+    return !isEtsyOnly && status.includes('Mới import');
   }
 
   const missingFields = Array.isArray(record?.missing_fields) ? record.missing_fields : [];
@@ -1532,6 +2338,7 @@ function statusFilterMatches(record, statusFilter) {
 }
 
 function filterProducts() {
+  syncStatusSummaryButtons();
   const q   = document.getElementById('search').value.toLowerCase();
   const cloudFilter = document.getElementById('filter-cloud-status')?.value || 'all';
   if (currentProductSource === 'shop') {
@@ -1541,6 +2348,16 @@ function filterProducts() {
       return !q || title.includes(q) || id.includes(q);
     });
     renderShopProducts(listings);
+    updateStats(listings.map(listing => {
+      const etsyStatus = String(
+        listing?.managerStatus || listing?.etsy_status || listing?.status || '',
+      ).trim();
+      return {
+        source: 'etsy',
+        status: etsyStatus,
+        etsy_status: etsyStatus,
+      };
+    }));
     return;
   }
   if (['aggregate', 'local'].includes(currentProductSource) && aggregateCatalog) {
@@ -1549,7 +2366,7 @@ function filterProducts() {
       : CatalogOrdering.filterRenderableCatalogRecords(aggregateCatalog?.records || []);
     const filteredRecords = renderableRecords.filter(p => {
       const localProduct = findAggregateLocalProduct(p);
-      const haystack = [p.title, p.etsy_title, p.folder, p.sku, p.listing_id, p.source_label].join(' ').toLowerCase();
+      const haystack = buildAggregateSearchHaystack(p, localProduct);
       const st = document.getElementById('filter-status').value;
       const filterTarget = aggregateDisplayProduct(p, localProduct);
       const cloudTarget = { ...filterTarget, folder: p.folder || filterTarget.folder };
@@ -1566,7 +2383,11 @@ function filterProducts() {
         ? (displayProduct.status || displayProduct.etsy_status || '')
         : (p.etsy_status || p.status || '')
       );
-      return { status };
+      return {
+        status,
+        source: p.source || displayProduct.source || '',
+        etsy_status: p.etsy_status || displayProduct.etsy_status || '',
+      };
     }));
     return;
   }
@@ -1575,7 +2396,6 @@ function filterProducts() {
     const matchQ  = !q || p.title.toLowerCase().includes(q) || p.folder.toLowerCase().includes(q) || p.tags.toLowerCase().includes(q);
     return matchQ && statusFilterMatches(p, st) && cloudStatusFilterMatches(p, cloudFilter);
   });
-  if (typeof catalogViewState !== 'undefined') catalogViewState.visibleCount = 0;
   renderProducts(filtered);
 }
 
@@ -1583,6 +2403,8 @@ function renderAggregateProducts(records) {
   const grid = document.getElementById('product-grid');
   if (!records.length) {
     grid.innerHTML = '<div class="loading-state">Không có record nào trong catalog tổng</div>';
+    refreshBatchSelectionAfterRender();
+    renderCatalogSummary(0);
     refreshScrollNavState();
     return;
   }
@@ -1645,6 +2467,8 @@ function renderAggregateProducts(records) {
       </div>
     </div>`;
   }).join('');
+  refreshBatchSelectionAfterRender();
+  renderCatalogSummary(records.length);
   refreshScrollNavState();
 }
 
@@ -1687,6 +2511,8 @@ function renderShopProducts(listings) {
   const grid = document.getElementById('product-grid');
   if (!listings.length) {
     grid.innerHTML = '<div class="loading-state">Không có sản phẩm khớp trên Etsy Shop</div>';
+    refreshBatchSelectionAfterRender();
+    renderCatalogSummary(0);
     refreshScrollNavState();
     return;
   }
@@ -1701,8 +2527,10 @@ function renderShopProducts(listings) {
         status: `🛍 Etsy ${status}`,
       });
     }
-    return remoteEtsyProductCard(listing);
+      return remoteEtsyProductCard(listing);
   }).join('');
+  refreshBatchSelectionAfterRender();
+  renderCatalogSummary(listings.length);
   refreshScrollNavState();
 }
 
@@ -2165,24 +2993,43 @@ async function createNewLocalFromEtsy() {
   }
 }
 
+function refreshBatchSelectionAfterRender() {
+  restoreCatalogSelections();
+  if (
+    typeof updateBatchUI === 'function'
+    && typeof document !== 'undefined'
+    && document.getElementById?.('batch-actions')
+  ) {
+    updateBatchUI();
+  }
+}
+
 function renderProducts(products) {
   const grid = document.getElementById('product-grid');
   if (!products.length) {
     grid.innerHTML = '<div class="loading-state">Không có sản phẩm nào</div>';
-    renderCatalogPagination(0);
+    refreshBatchSelectionAfterRender();
+    renderCatalogSummary(0);
     refreshScrollNavState();
     return;
   }
-  catalogViewState.items = products;
-  catalogViewState.visibleCount = Math.min(
-    catalogViewState.visibleCount > 0 ? catalogViewState.visibleCount : catalogViewState.pageSize,
-    products.length,
-  );
-  grid.innerHTML = products.slice(0, catalogViewState.visibleCount).map(p => productCard(p)).join('');
-  restoreCatalogSelections();
-  renderCatalogPagination(products.length);
-  updateBatchUI();
+  grid.innerHTML = products.map(p => productCard(p)).join('');
+  refreshBatchSelectionAfterRender();
+  renderCatalogSummary(products.length);
   refreshScrollNavState();
+}
+
+function isSelectableBatchCheckbox(checkbox) {
+  if (!checkbox || checkbox.disabled) return false;
+  const card = checkbox.closest ? checkbox.closest('.product-card') : null;
+  return !card || (
+    card.hidden !== true
+    && (!card.style || card.style.display !== 'none')
+  );
+}
+
+function getSelectableBatchCheckboxes() {
+  return Array.from(document.querySelectorAll('.product-cb')).filter(isSelectableBatchCheckbox);
 }
 
 function catalogSelectionKey(element) {
@@ -2193,6 +3040,10 @@ function catalogSelectionKey(element) {
 
 function restoreCatalogSelections() {
   document.querySelectorAll('.product-cb').forEach(checkbox => {
+    if (checkbox.disabled) {
+      if (checkbox.checked) checkbox.checked = false;
+      return;
+    }
     checkbox.checked = selectedCatalogIds.has(catalogSelectionKey(checkbox));
   });
 }
@@ -2200,33 +3051,25 @@ function restoreCatalogSelections() {
 function rememberCatalogSelections() {
   document.querySelectorAll('.product-cb').forEach(checkbox => {
     const key = catalogSelectionKey(checkbox);
-    if (!key) return;
+    if (!key || checkbox.disabled) {
+      if (key) selectedCatalogIds.delete(key);
+      return;
+    }
     if (checkbox.checked) selectedCatalogIds.add(key);
     else selectedCatalogIds.delete(key);
   });
 }
 
-function renderCatalogPagination(total) {
-  const pagination = document.getElementById('catalog-pagination');
-  if (!pagination) return;
-  const visible = Math.min(catalogViewState.visibleCount || 0, total);
-  if (!total || visible >= total) {
-    pagination.hidden = true;
-    pagination.innerHTML = '';
+function renderCatalogSummary(total) {
+  const summary = document.getElementById('catalog-pagination');
+  if (!summary) return;
+  if (!total) {
+    summary.hidden = true;
+    summary.innerHTML = '';
     return;
   }
-  pagination.hidden = false;
-  pagination.innerHTML = `<span>Hiển thị ${visible}/${total} kết quả phù hợp · chỉ card đang hiển thị mới tạo DOM</span>
-    <button class="btn btn-ghost btn-sm" type="button" onclick="loadMoreCatalog()">Tải thêm ${Math.min(catalogViewState.pageSize, total - visible)}</button>`;
-}
-
-function loadMoreCatalog() {
-  if (!catalogViewState.items.length) return;
-  catalogViewState.visibleCount = Math.min(
-    catalogViewState.items.length,
-    (catalogViewState.visibleCount || catalogViewState.pageSize) + catalogViewState.pageSize,
-  );
-  renderProducts(catalogViewState.items);
+  summary.hidden = false;
+  summary.innerHTML = `<span>Hiển thị ${total}/${total} kết quả phù hợp</span>`;
 }
 
 function productNeedsEtsyLink(p) {
@@ -2320,16 +3163,19 @@ function productCard(p) {
   const etsyUrl = etsyLink.url;
   const etsyId = etsyLink.listingId;
   const needsEtsyLink = productNeedsEtsyLink(p);
+  const hasUnverifiedEtsyLink = p?.etsy_link_verified === false
+    && Boolean(String(p?.etsy_listing_id || p?.etsy_url || '').trim());
   const urlUnverified = needsEtsyLink || (Boolean(p.etsy_listing_id || p.etsy_url) && !etsyUrl);
 
   let statusClass = isRunning ? 'running'
-    : (p.needs_seo || p.status.includes('⚠') || urlUnverified) ? 'warning'
+    : (p.needs_seo || p.status.includes('⚠')) ? 'warning'
     : p.status.includes('Đã đăng') ? 'posted'
     : (p.status.includes('Lỗi') || p.status.includes('❌')) ? 'error'
     : 'pending';
 
   let badgeLabel = p.status;
   let errorReason = '';
+  let linkWarning = '';
   if (p.status.includes('❌') || p.status.includes('Lỗi')) {
     badgeLabel = '❌ Lỗi';
     if (p.status.includes('❌ Lỗi:')) {
@@ -2343,33 +3189,65 @@ function productCard(p) {
     } else {
       errorReason = p.status.replace(/^❌\s*/, '').replace(/^Lỗi[:\s]*/, '').trim();
     }
-  } else if (urlUnverified) {
-    badgeLabel = String(p.status || '').toLowerCase().includes('draft')
-      ? '⚠ Draft · chưa có link'
-      : '⚠ Etsy link chưa xác minh';
-    statusClass = isRunning ? 'running' : 'warning';
+  } else if (p.status.includes('Chờ đăng')) {
+    badgeLabel = '⏳ Chờ đăng';
   } else if (p.status.includes('Đã đăng')) {
     if (p.status.includes('draft')) {
       badgeLabel = '✅ Đã đăng draft';
     } else {
       badgeLabel = '✅ Đã đăng';
     }
-  } else if (p.status.includes('Chờ đăng')) {
-    badgeLabel = '⏳ Chờ đăng';
+  }
+  if ((urlUnverified || hasUnverifiedEtsyLink) && !p.status.includes('❌') && !p.status.includes('Lỗi')) {
+    if (hasUnverifiedEtsyLink) {
+      linkWarning = '⚠ Etsy link chưa xác minh';
+    } else {
+      linkWarning = String(p.status || '').toLowerCase().includes('draft')
+        ? '⚠ Draft · chưa có link'
+        : '⚠ Etsy link chưa xác minh';
+    }
   }
   const statusLabel = isRunning ? '⚡ Đang chạy...' : badgeLabel;
-  const cardClass   = isRunning ? 'product-card running' : 'product-card';
+  const cardClass   = isRunning ? 'product-card catalog-product-card running' : 'product-card catalog-product-card';
   const primaryAction = p.needs_seo ? 'seo'
     : (!etsyId || String(p.status || '').includes('Chờ đăng')) ? 'post'
     : 'update';
 
   const galleryHtml = productImageGallery(p.image_previews || p.all_images, p.folder);
 
-  const etsyLinkHtml = etsyUrl
-    ? `<a class="product-etsy-link" href="${escHtml(etsyUrl)}" target="_blank" rel="noopener" title="${etsyLink.kind === 'manager' ? `Mở Shop Manager cho Etsy ${etsyId} · trạng thái ${p.etsy_manager_status}` : etsyLink.kind === 'fallback' ? `Mở link Etsy từ Excel ${etsyId} · chưa có snapshot Manager khớp` : `Mở listing Etsy ${etsyId}`}">${etsyLink.kind === 'manager' ? '🛠 Shop Manager' : '🔗 Etsy'} ${etsyId}${etsyLink.stale ? ' · snapshot stale' : ''}</a>`
+  const etsyLinkTitle = etsyLink.kind === 'manager'
+    ? `Mở Shop Manager cho Etsy ${etsyId} · trạng thái ${p.etsy_manager_status}`
+    : etsyLink.kind === 'fallback'
+      ? `Mở editor fallback của Etsy cho ${etsyId} (snapshot chưa xác minh)`
+      : etsyLink.kind === 'local_unverified'
+        ? `Mở link Etsy local của sản phẩm ${etsyId} (snapshot chưa xác minh)`
+        : `Mở listing Etsy ${etsyId}`;
+  const etsyLinkLabel = etsyLink.kind === 'manager'
+    ? '🛠 Shop Manager'
+    : etsyLink.kind === 'fallback'
+      ? '🧭 Manager (snapshot chưa xác minh)'
+      : etsyLink.kind === 'local_unverified'
+        ? '🔗 Etsy (snapshot chưa xác minh)'
+        : '🔗 Etsy';
+    const etsyLinkHtml = etsyUrl
+    ? `<a class="product-etsy-link" href="${escHtml(etsyUrl)}" target="_blank" rel="noopener" title="${escHtml(etsyLinkTitle)}">${etsyLinkLabel} ${etsyId}${etsyLink.stale ? ' · snapshot stale' : ''}</a>`
     : `<span class="product-etsy-link missing" title="Không có link Etsy đã xác minh từ snapshot mới nhất">⚠️ ${etsyId ? `Etsy ${etsyId} · link unavailable` : `Chưa có link Etsy${needsEtsyLink ? ' · cần ghép' : ''}`}</span>`;
+  const etsyButtonLabel = etsyLink.kind === 'manager'
+    ? '🛠 Manager'
+    : etsyLink.kind === 'fallback'
+      ? '🧭 Manager (snapshot chưa xác minh)'
+      : etsyLink.kind === 'local_unverified'
+        ? '🔗 Etsy (snapshot chưa xác minh)'
+        : '🔗 Etsy';
+  const etsyButtonTitle = etsyLink.kind === 'manager'
+    ? `Mở Shop Manager cho Etsy ${etsyId}`
+    : etsyLink.kind === 'fallback'
+      ? `Mở manager fallback cho Etsy ${etsyId} (snapshot chưa xác minh)`
+      : etsyLink.kind === 'local_unverified'
+        ? `Mở link Etsy local cho ${etsyId} (snapshot chưa xác minh)`
+        : `Mở listing Etsy trực tiếp`;
   const etsyButtonHtml = etsyUrl
-    ? `<button class="btn btn-etsy btn-sm live-etsy-read" data-action-scope="live-etsy" data-risk="read" onclick="openEtsyListing('${escJs(etsyUrl)}')" title="${etsyLink.kind === 'manager' ? `Mở Shop Manager cho Etsy ${etsyId}` : etsyLink.kind === 'fallback' ? `Mở link Etsy từ Excel ${etsyId}` : 'Mở listing Etsy trực tiếp'}">${etsyLink.kind === 'manager' ? '🛠 Manager' : '🔗 Etsy'}</button>`
+    ? `<button class="btn btn-etsy btn-sm live-etsy-read" data-action-scope="live-etsy" data-risk="read" onclick="openEtsyListing('${escJs(etsyUrl)}')" title="${escHtml(etsyButtonTitle)}">${etsyButtonLabel}</button>`
     : etsyId
       ? `<button class="btn btn-ghost btn-sm live-etsy-read" data-action-scope="live-etsy" data-risk="read" disabled title="Không có link Etsy đã xác minh từ snapshot mới nhất">🔒 Unavailable</button>`
       : `<button class="btn btn-warning btn-sm" onclick="openLinkEtsyFromLocal(${p.row})" title="Ghép listing ID/URL Etsy cho sản phẩm này">🔗 Ghép link</button>`;
@@ -2414,51 +3292,65 @@ function productCard(p) {
       ${seoBadges}
       ${renderSocialChannelBadges(p.social_statuses)}
     </div>
-    <div class="status-wrap" id="status-wrap-${p.row}">
-      <div class="status-badge status-${statusClass}" onclick="toggleStatusMenu(${p.row})" title="Click để thay đổi trạng thái" style="cursor:pointer">
-        ${statusLabel} <span style="opacity:0.6;font-size:10px">▾</span>
-      </div>
-      ${errorReason ? `
-        <div class="error-reason" style="font-size:11px; color:var(--red); margin-top:6px; line-height:1.3; max-width:180px; word-break:break-word; text-align:center; font-weight:500;" title="${escHtml(errorReason)}">
-          ⚠️ ${escHtml(errorReason)}
+    <aside class="product-actions product-action-panel" aria-label="Thao tác sản phẩm">
+      <div class="product-action-header">
+        <span class="product-action-title">Thao tác</span>
+        <div class="status-wrap" id="status-wrap-${p.row}">
+          <div class="status-badge status-${statusClass}" onclick="toggleStatusMenu(${p.row})" title="Click để thay đổi trạng thái" style="cursor:pointer">
+            ${statusLabel} <span style="opacity:0.6;font-size:10px">▾</span>
+          </div>
+          ${errorReason ? `
+            <div class="error-reason" style="font-size:11px; color:var(--red); margin-top:6px; line-height:1.3; max-width:180px; word-break:break-word; text-align:right; font-weight:500;" title="${escHtml(errorReason)}">
+              ⚠️ ${escHtml(errorReason)}
+            </div>
+          ` : ''}
+          ${linkWarning ? `
+            <div class="status-warning" style="font-size:11px; color:var(--orange); margin-top:6px; line-height:1.3; max-width:180px; word-break:break-word; text-align:right; font-weight:500;" title="${escHtml(linkWarning)}">
+              ${escHtml(linkWarning)}
+            </div>
+          ` : ''}
+          <div class="status-menu" id="smenu-${p.row}" style="display:none">
+            <div class="smenu-item" onclick="changeStatus(${p.row},'${p.folder}','✅ Đã đăng')">✅ Đã đăng</div>
+            <div class="smenu-item" onclick="changeStatus(${p.row},'${p.folder}','✅ Đã đăng draft')">✅ Đã đăng draft</div>
+            <div class="smenu-item pending" onclick="changeStatus(${p.row},'${p.folder}','⏳ Chờ đăng')">⏳ Chờ đăng</div>
+            <div class="smenu-item error" onclick="changeStatus(${p.row},'${p.folder}','❌ Lỗi')">❌ Lỗi</div>
+          </div>
         </div>
-      ` : ''}
-      <div class="status-menu" id="smenu-${p.row}" style="display:none">
-        <div class="smenu-item" onclick="changeStatus(${p.row},'${p.folder}','✅ Đã đăng')">✅ Đã đăng</div>
-        <div class="smenu-item" onclick="changeStatus(${p.row},'${p.folder}','✅ Đã đăng draft')">✅ Đã đăng draft</div>
-        <div class="smenu-item pending" onclick="changeStatus(${p.row},'${p.folder}','⏳ Chờ đăng')">⏳ Chờ đăng</div>
-        <div class="smenu-item error" onclick="changeStatus(${p.row},'${p.folder}','❌ Lỗi')">❌ Lỗi</div>
       </div>
-    </div>
-    <div class="product-actions">
       <!-- Nhóm 1: Thư mục & Edit -->
       <div class="action-group action-group-local" data-action-scope="local" aria-label="Điều khiển local-only">
         <span class="action-group-label">Local</span>
-        <button class="btn btn-ghost btn-sm" onclick="openFolder(${p.row}, 'files')" title="Mở folder files/">📁</button>
-        <button class="btn btn-ghost btn-sm" onclick="openFolder(${p.row}, 'images')" title="Mở folder images/">🖼</button>
-        <button class="btn btn-ghost btn-sm" onclick="openImageModal(${p.row}, '${p.folder}')" title="Quản lý ảnh">📷</button>
-        <button class="btn btn-ghost btn-sm" onclick="openEditModal(${p.row})" title="Chỉnh sửa Excel">✏️</button>
+        <div class="action-group-buttons">
+          <button class="btn btn-ghost btn-sm" onclick="openFolder(${p.row}, 'files')" title="Mở folder files/">📁</button>
+          <button class="btn btn-ghost btn-sm" onclick="openFolder(${p.row}, 'images')" title="Mở folder images/">🖼</button>
+          <button class="btn btn-ghost btn-sm" onclick="openImageModal(${p.row}, '${p.folder}')" title="Quản lý ảnh">📷</button>
+          <button class="btn btn-ghost btn-sm" onclick="openEditModal(${p.row})" title="Chỉnh sửa Excel">✏️</button>
+        </div>
       </div>
 
       <!-- Nhóm 2: AI & Marketing -->
       <div class="action-group action-group-content" data-action-scope="content" aria-label="Điều khiển nội dung">
         <span class="action-group-label">Content</span>
-        ${p.needs_seo ? `<button class="btn btn-warning btn-sm product-primary-action" data-action-role="primary-next" data-action-scope="local" onclick="quickSEO(${p.row},'${p.folder}')" title="Bước tiếp theo: tạo nhanh SEO">🤖 SEO</button>` : ''}
-        <button class="btn btn-img btn-sm" onclick="openGenModal(${p.row}, '${p.folder}')" title="Generate 10 listing images với AI">🎨 Gen</button>
-        <button class="btn btn-success btn-sm" onclick="regenImages(${p.row}, '${p.folder}')" ${isRunning ? 'disabled' : ''} title="Tạo lại ảnh listing">🔄 Regen</button>
-        <button class="btn btn-ghost btn-sm" onclick="openSocialModal(${p.row}, '${p.folder}')" title="Quản lý & Chia sẻ Social">📢 Share</button>
+        <div class="action-group-buttons">
+          ${p.needs_seo ? `<button class="btn btn-warning btn-sm product-primary-action" data-action-role="primary-next" data-action-scope="local" onclick="quickSEO(${p.row},'${p.folder}')" title="Bước tiếp theo: tạo nhanh SEO">🤖 SEO</button>` : ''}
+          <button class="btn btn-img btn-sm" onclick="openGenModal(${p.row}, '${p.folder}')" title="Generate 10 listing images với AI">🎨 Gen</button>
+          <button class="btn btn-success btn-sm" onclick="regenImages(${p.row}, '${p.folder}')" ${isRunning ? 'disabled' : ''} title="Tạo lại ảnh listing">🔄 Regen</button>
+          <button class="btn btn-ghost btn-sm" onclick="openSocialModal(${p.row}, '${p.folder}')" title="Quản lý & Chia sẻ Social">📢 Share</button>
+        </div>
       </div>
 
       <!-- Nhóm 3: Etsy Actions -->
       <div class="action-group action-group-live-etsy" data-action-scope="live-etsy" aria-label="Điều khiển Etsy live">
         <span class="action-group-label">Etsy live</span>
-        ${etsyButtonHtml}
-        ${etsyId ? `<button class="btn btn-sync btn-sm live-etsy-read" data-action-scope="live-etsy" data-risk="read" onclick="syncListingFromEtsy(${p.row}, '${p.folder}')" ${isRunning ? 'disabled' : ''} title="Đồng bộ thông tin từ Etsy về Dashboard">🔄 Sync</button>` : ''}
-        ${etsyId ? `<button class="btn btn-update btn-sm live-etsy-write ${primaryAction === 'update' ? 'product-primary-action' : ''}" data-action-role="${primaryAction === 'update' ? 'primary-next' : 'live-write'}" data-action-scope="live-etsy" data-risk="write" onclick="openEtsyUpdateModal(${p.row})" ${isRunning ? 'disabled' : ''} title="${primaryAction === 'update' ? 'Bước tiếp theo: review và cập nhật dữ liệu Local lên listing Etsy' : 'Cập nhật dữ liệu Local lên listing Etsy'}">⬆ Update</button>` : ''}
-        <button class="btn btn-primary btn-sm live-etsy-write ${primaryAction === 'post' ? 'product-primary-action' : ''}" data-action-role="${primaryAction === 'post' ? 'primary-next' : 'live-write'}" data-action-scope="live-etsy" data-risk="write" onclick="postProduct(${p.row}, '${p.folder}')" ${isRunning ? 'disabled' : ''} title="${primaryAction === 'post' ? 'Bước tiếp theo: đăng sản phẩm lên Etsy' : 'Đăng lên Etsy'}">🚀 Post</button>
-        <button class="btn btn-danger btn-sm live-etsy-write" data-action-scope="live-etsy" data-risk="write" onclick="deleteProduct(${p.row}, '${p.folder}')" title="Xoá sản phẩm local và/hoặc listing Etsy theo quy trình hiện tại">🗑</button>
+        <div class="action-group-buttons">
+          ${etsyButtonHtml}
+          ${etsyId ? `<button class="btn btn-sync btn-sm live-etsy-read" data-action-scope="live-etsy" data-risk="read" onclick="syncListingFromEtsy(${p.row}, '${p.folder}')" ${isRunning ? 'disabled' : ''} title="Đồng bộ thông tin từ Etsy về Dashboard">🔄 Sync</button>` : ''}
+          ${etsyId ? `<button class="btn btn-update btn-sm live-etsy-write ${primaryAction === 'update' ? 'product-primary-action' : ''}" data-action-role="${primaryAction === 'update' ? 'primary-next' : 'live-write'}" data-action-scope="live-etsy" data-risk="write" onclick="openEtsyUpdateModal(${p.row})" ${isRunning ? 'disabled' : ''} title="${primaryAction === 'update' ? 'Bước tiếp theo: review và cập nhật dữ liệu Local lên listing Etsy' : 'Cập nhật dữ liệu Local lên listing Etsy'}">⬆ Update</button>` : ''}
+          <button class="btn btn-primary btn-sm live-etsy-write ${primaryAction === 'post' ? 'product-primary-action' : ''}" data-action-role="${primaryAction === 'post' ? 'primary-next' : 'live-write'}" data-action-scope="live-etsy" data-risk="write" onclick="postProduct(${p.row}, '${p.folder}')" ${isRunning ? 'disabled' : ''} title="${primaryAction === 'post' ? 'Bước tiếp theo: đăng sản phẩm lên Etsy' : 'Đăng lên Etsy'}">🚀 Post</button>
+          <button class="btn btn-danger btn-sm live-etsy-write" data-action-scope="live-etsy" data-risk="write" onclick="deleteProduct(${p.row}, '${p.folder}')" title="Xoá sản phẩm local và/hoặc listing Etsy theo quy trình hiện tại">🗑</button>
+        </div>
       </div>
-    </div>
+    </aside>
   </div>`;
 }
 
@@ -2920,7 +3812,7 @@ function selectedLocalEtsyMappings() {
 }
 
 function disableEtsyBatchActionButtons() {
-  const buttons = Array.from(document.querySelectorAll('.local-batch-action, .btn-sync, .btn-update'));
+  const buttons = Array.from(document.querySelectorAll('.local-batch-action, .cross-shop-batch-action, .btn-sync, .btn-update'));
   const enabled = [...new Set(buttons)].filter(button => !button.disabled);
   enabled.forEach(button => { button.disabled = true; });
   return () => enabled.forEach(button => { button.disabled = false; });
@@ -2929,6 +3821,10 @@ function disableEtsyBatchActionButtons() {
 function restoreFailedBatchSelection(items) {
   const failedKeys = new Set(items.map(item => `${item.row}\u0000${item.folder}`));
   document.querySelectorAll('.product-cb').forEach((checkbox) => {
+    if (checkbox.disabled) {
+      if (checkbox.checked) checkbox.checked = false;
+      return;
+    }
     const key = `${Number.parseInt(checkbox.value, 10)}\u0000${String(checkbox.dataset.folder || '').trim()}`;
     checkbox.checked = failedKeys.has(key);
   });
@@ -3822,15 +4718,25 @@ async function changeStatus(row, folder, newStatus) {
   // Close menu
   const menu = document.getElementById(`smenu-${row}`);
   if (menu) menu.style.display = 'none';
+  const p = allProducts.find(x => x.row === row);
+  const previousStatus = p?.status || '';
 
   try {
-    await fetch(`/api/products/${row}`, {
+    const { response, data } = await fetchJsonWithTimeout(`/api/products/${row}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: newStatus }),
     });
+    if (!response.ok) {
+      throw new Error(
+        (data && (data.detail || data.error))
+          || `Không lưu được trạng thái (HTTP ${response.status})`,
+      );
+    }
+    if (data && data.ok === false) {
+      throw new Error((data && (data.error || data.detail)) || 'Lưu trạng thái không thành công');
+    }
     // Update local state
-    const p = allProducts.find(x => x.row === row);
     if (p) p.status = newStatus;
     toast('success', `✅ ${folder}: ${newStatus}`);
     // Refresh just this card
@@ -3841,6 +4747,26 @@ async function changeStatus(row, folder, newStatus) {
     updateStats(allProducts);
   } catch (e) {
     toast('error', `Lỗi: ${e.message}`);
+    if (p) p.status = previousStatus;
+    if (p) {
+      try {
+        const refreshedProducts = await loadProducts({
+          throwOnError: true,
+          includeAggregateCatalog: false,
+          includeCloudStatus: false,
+          requestPhase: 'status-readback',
+        });
+        if (!Array.isArray(refreshedProducts)) {
+          throw new Error('Không nhận được dữ liệu read-back đáng tin cậy');
+        }
+        return;
+      } catch {
+        refreshCard(row, folder);
+      }
+    } else {
+      const card = document.getElementById(`card-${row}`);
+      if (card) refreshCard(row, folder);
+    }
   }
 }
 
@@ -3980,6 +4906,104 @@ async function quickSEO(row, folder) {
 
 
 // ── Edit Modal ─────────────────────────────────────────────────────────────────
+const PRODUCT_SAVE_PATCH_TIMEOUT_MS = 15000;
+const PRODUCT_SAVE_READBACK_TIMEOUT_MS = 10000;
+
+class ProductSaveRequestTimeoutError extends Error {
+  constructor(phase, timeoutMs) {
+    super(`Product save ${phase} timed out after ${timeoutMs}ms`);
+    this.name = 'ProductSaveRequestTimeoutError';
+    this.code = 'PRODUCT_SAVE_TIMEOUT';
+    this.phase = phase;
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+function isProductSaveTimeoutError(error) {
+  return error?.code === 'PRODUCT_SAVE_TIMEOUT';
+}
+
+async function fetchJsonWithTimeout(url, init = {}, options = {}) {
+  const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 0;
+  const phase = String(options.phase || 'request');
+  const readResponse = async (requestOptions) => {
+    const response = await fetch(url, requestOptions);
+    try {
+      const data = await response.json();
+      return { response, data };
+    } catch (_) {
+      const error = new Error(`Server trả về dữ liệu không hợp lệ (HTTP ${response.status})`);
+      error.code = 'INVALID_JSON_RESPONSE';
+      throw error;
+    }
+  };
+
+  if (!timeoutMs) return readResponse(init);
+
+  const controller = new AbortController();
+  const timeoutError = new ProductSaveRequestTimeoutError(phase, timeoutMs);
+  let didTimeout = false;
+  let timeoutId;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      didTimeout = true;
+      controller.abort();
+      reject(timeoutError);
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([
+      readResponse({ ...init, signal: controller.signal }),
+      timeoutPromise,
+    ]);
+  } catch (error) {
+    if (didTimeout) throw timeoutError;
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function refreshProductEnrichmentsAfterSave(folder) {
+  // Run after saveEdit's finally block restores the button. Neither whole-shop
+  // catalog nor cloud status is evidence that the local PATCH was persisted.
+  void Promise.resolve().then(async () => {
+    const activeShop = getActiveShopId();
+    const refreshes = [
+      {
+        label: 'catalog tổng',
+        promise: loadAggregateCatalog({ throwOnError: true }),
+      },
+      {
+        label: 'trạng thái cloud',
+        promise: loadCloudAssetStatus({ force: true }).then((result) => {
+          if (activeShop && result === null) {
+            throw new Error(cloudAssetStatusError || 'cloud status unavailable');
+          }
+          return result;
+        }),
+      },
+    ];
+    const results = await Promise.allSettled(refreshes.map(item => item.promise));
+    results.forEach((result, index) => {
+      if (result.status !== 'rejected') return;
+      const label = refreshes[index].label;
+      const message = result.reason?.message || String(result.reason || 'không rõ lỗi');
+      console.warn(`[Product save background refresh: ${label}]`, result.reason);
+      toast('warning', `⚠️ Đã lưu ${folder}, nhưng chưa làm mới được ${label}: ${message}`);
+    });
+  });
+}
+
+function productSaveTimeoutMessage(error, folder) {
+  const seconds = Math.max(1, Math.round(Number(error.timeoutMs || 0) / 1000));
+  if (error.phase === 'local-readback') {
+    return `⚠️ Server đã báo lưu ${folder} thành công, nhưng đọc lại dữ liệu local quá ${seconds} giây nên chưa thể xác nhận. Dashboard không tự gửi PATCH lại. Hãy tải lại danh sách hoặc đóng/mở editor để kiểm tra trước khi bấm Lưu lần nữa.`;
+  }
+  return `⚠️ Yêu cầu lưu ${folder} quá ${seconds} giây nên kết quả chưa chắc chắn: server có thể đã lưu dù trình duyệt chưa nhận phản hồi. Dashboard không tự gửi lại để tránh ghi lặp. Hãy tải lại danh sách hoặc đóng/mở editor để kiểm tra trước khi bấm Lưu lần nữa.`;
+}
+
 function openEditModal(row) {
   const p = allProducts.find(x => x.row === row);
   if (!p) return;
@@ -4039,23 +5063,26 @@ async function saveEdit() {
   saveButton.disabled = true;
   saveButton.innerHTML = '<span class="spinner"></span> Đang lưu...';
   try {
-    const response = await fetch(`/api/products/${row}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-
-    let data;
-    try {
-      data = await response.json();
-    } catch (_) {
-      throw new Error(`Server trả về dữ liệu không hợp lệ (HTTP ${response.status})`);
-    }
+    const { response, data } = await fetchJsonWithTimeout(
+      `/api/products/${row}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      },
+      { timeoutMs: PRODUCT_SAVE_PATCH_TIMEOUT_MS, phase: 'save-patch' },
+    );
     if (!response.ok || !data.ok) {
       throw new Error(data.detail || data.error || data.message || `Server không lưu được (HTTP ${response.status})`);
     }
 
-    await loadProducts({ throwOnError: true });
+    await loadProducts({
+      throwOnError: true,
+      includeAggregateCatalog: false,
+      includeCloudStatus: false,
+      requestTimeoutMs: PRODUCT_SAVE_READBACK_TIMEOUT_MS,
+      requestPhase: 'local-readback',
+    });
     const savedProduct = allProducts.find(product => product.row === row);
     const mismatches = ProductEditSave.findSavedFieldMismatches(payload, savedProduct);
     if (mismatches.length) {
@@ -4068,8 +5095,13 @@ async function saveEdit() {
     closeModal('edit-modal');
     const urlMessage = payload.etsy_url ? ' và Etsy URL' : '';
     toast('success', `✅ Đã lưu ${productBeforeSave.folder}${urlMessage}, kiểm tra lại thành công`);
+    refreshProductEnrichmentsAfterSave(productBeforeSave.folder);
   } catch (e) {
-    toast('error', `❌ Không lưu được ${productBeforeSave.folder}: ${e.message}`);
+    if (isProductSaveTimeoutError(e)) {
+      toast('warning', productSaveTimeoutMessage(e, productBeforeSave.folder));
+    } else {
+      toast('error', `❌ Không lưu được ${productBeforeSave.folder}: ${e.message}`);
+    }
   } finally {
     saveButton.disabled = false;
     saveButton.innerHTML = originalButtonHtml;
@@ -4137,20 +5169,51 @@ async function regenSEO() {
   const keywords = document.getElementById('edit-keywords').value.trim();
   const extra    = document.getElementById('edit-extra').value.trim();
 
-  const btn = document.querySelector('.btn-seo');
+  const modal = document.getElementById('edit-modal');
+  const btn = modal?.querySelector('.btn-seo');
+  if (!Number.isInteger(row) || !folder || !modal || !btn) {
+    toast('error', 'Không xác định được sản phẩm hoặc nút SEO trong cửa sổ chỉnh sửa');
+    return;
+  }
+  if (modalSeoGeneration) {
+    toast('info', `🤖 Đang generate SEO cho ${modalSeoGeneration.folder} — vui lòng chờ`);
+    return;
+  }
+
+  const generation = { row, folder };
+  modalSeoGeneration = generation;
+  const originalButtonHtml = btn.innerHTML;
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Đang tạo SEO...';
   toast('info', `🤖 Đang generate SEO cho ${folder}...`);
 
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REGEN_SEO_REQUEST_TIMEOUT_MS);
   try {
     const res = await fetch(`/api/products/${row}/regen-seo`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title, keywords, extra }),
+      signal: controller.signal,
     });
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
 
-    if (data.ok && data.seo) {
+    if (!res.ok || !data.ok || !data.seo) {
+      const detail = data.detail || data.error || data.message || `Vertex AI trả về HTTP ${res.status}`;
+      toast('error', detail);
+      return;
+    }
+
+    // The request may finish after this modal was closed and reopened for a
+    // different product. Never write one row's generated text into another
+    // product's active form.
+    const activeRow = parseInt(document.getElementById('edit-row').value);
+    if (activeRow !== row) {
+      toast('warning', `⚠️ SEO của ${folder} đã hoàn tất nhưng modal hiện đang mở sản phẩm khác`);
+      return;
+    }
+
+    {
       const seo = data.seo;
       // Smart trim title to ≤140 chars at pipe boundary
       let newTitle = seo.title || seo.etsy_title || title;
@@ -4190,14 +5253,19 @@ async function regenSEO() {
       toast('success', `✅ SEO mới đã fill vào form — nhấn 💾 Lưu để ghi vào Excel`);
       // Reload card UI in background
       loadProducts();
-    } else {
-      toast('error', data.error || 'Vertex AI không phản hồi');
     }
   } catch (e) {
-    toast('error', `Lỗi: ${e.message}`);
+    if (e?.name === 'AbortError') {
+      const seconds = Math.max(1, Math.round(REGEN_SEO_REQUEST_TIMEOUT_MS / 1000));
+      toast('error', `⏱️ Tạo SEO quá thời gian chờ (${seconds}s). Vui lòng thử lại.`);
+    } else {
+      toast('error', `Lỗi: ${e?.message || 'Không rõ lỗi kết nối khi gọi /api/products/.../regen-seo'}`);
+    }
   } finally {
+    clearTimeout(timeoutId);
+    if (modalSeoGeneration === generation) modalSeoGeneration = null;
     btn.disabled = false;
-    btn.innerHTML = '🤖 Tạo SEO';
+    btn.innerHTML = originalButtonHtml;
   }
 }
 
@@ -4851,11 +5919,14 @@ function escHtml(str) {
 }
 
 function escJs(str) {
-  return String(str || '')
+  const jsString = String(str ?? '')
     .replace(/\\/g, '\\\\')
     .replace(/'/g, "\\'")
+    .replace(/\r/g, '\\r')
     .replace(/\n/g, '\\n')
-    .replace(/\r/g, '');
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+  return escHtml(jsString);
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -4885,31 +5956,35 @@ function applyBatchActionVisibility(state) {
   document.querySelectorAll('.shop-batch-action').forEach(button => {
     button.style.display = state.showShopActions ? '' : 'none';
   });
+  document.querySelectorAll('.cross-shop-batch-action').forEach(button => {
+    button.style.display = state.showCrossShopAction ? '' : 'none';
+  });
 }
 
 function toggleSelectAll() {
-  const isChecked = document.getElementById('cb-select-all').checked;
-  const checkboxes = document.querySelectorAll('.product-cb');
+  const selectAll = document.getElementById('cb-select-all');
+  if (!selectAll || selectAll.disabled) return;
+  const isChecked = selectAll.checked;
+  const checkboxes = getSelectableBatchCheckboxes();
   checkboxes.forEach(cb => {
-    // Only check visible ones (filtering might hide some)
-    const card = cb.closest('.product-card');
-    if (card && card.style.display !== 'none') {
-      cb.checked = isChecked;
-    }
+    cb.checked = isChecked;
   });
   updateBatchUI();
 }
 
 function updateBatchUI(e) {
   rememberCatalogSelections();
-  // If an individual checkbox is clicked, uncheck "Select All" if not all are checked
-  if (e) {
-    const allCb = document.querySelectorAll('.product-cb');
-    const checkedCb = document.querySelectorAll('.product-cb:checked');
-    document.getElementById('cb-select-all').checked = (allCb.length > 0 && allCb.length === checkedCb.length);
+  const selectableCheckboxes = getSelectableBatchCheckboxes();
+  const selectAll = document.getElementById('cb-select-all');
+  if (selectAll && !selectAll.disabled) {
+    const checkedSelectable = selectableCheckboxes.filter(cb => cb.checked);
+    selectAll.checked = (
+      selectableCheckboxes.length > 0
+      && selectableCheckboxes.length === checkedSelectable.length
+    );
   }
 
-  const checkedCheckboxes = document.querySelectorAll('.product-cb:checked');
+  const checkedCheckboxes = selectableCheckboxes.filter(cb => cb.checked);
   const actionState = BatchSelection.getBatchActionState(currentProductSource, checkedCheckboxes);
   const checkedCount = actionState.total;
   const batchActions = document.getElementById('batch-actions');
@@ -4934,6 +6009,162 @@ function updateBatchUI(e) {
     draftDeleteButton.title = draftDeleteButton.disabled
       ? 'Chỉ có thể xoá khi mọi listing Etsy đã chọn đều ở trạng thái draft'
       : `Xoá ${draftIds.length} Etsy draft đã chọn`;
+  }
+}
+
+function cloudBatchSkipReason(folder) {
+  const status = cloudAssetStatusForFolder(folder) || null;
+  const state = String(status?.state || '').trim().toUpperCase();
+  if (state === 'CLOUD_ONLY') return 'đã Cloud-only';
+  if (state === 'RESTORING') return 'đang restore từ cloud';
+  if (['UPLOAD_SCHEDULED', 'UPLOADING', 'OFFLOAD_SCHEDULED'].includes(state)) {
+    return 'đã có lịch cloud';
+  }
+  // CLEANUP_PENDING with empty local content is an intentional, idempotent
+  // retry path. The backend still applies the current-revision proof gate.
+  if (
+    state === 'CLEANUP_PENDING'
+    && status?.local_available === false
+    && status?.cloud_available === true
+  ) {
+    return '';
+  }
+  if (
+    status?.local_assets_complete === false
+    || status?.local_error
+    || (
+      state === 'ERROR'
+      && status?.cloud_available !== true
+      && status?.local_available !== true
+    )
+  ) {
+    return 'local thiếu image/file usable — bổ sung assets rồi thử lại';
+  }
+  return '';
+}
+
+async function batchCloudUploadAndOffload() {
+  const activeShop = getActiveShopId();
+  if (!activeShop) {
+    toast('error', 'Thiếu thông tin shop hiện tại để đồng bộ cloud hàng loạt');
+    return;
+  }
+
+  const selected = selectedBatchCheckboxes('local');
+  const items = selected
+    .map((checkbox) => ({
+      checkbox,
+      row: Number.parseInt(checkbox.value, 10),
+      folder: String(checkbox.dataset.folder || '').trim(),
+    }))
+    .filter((item) => Number.isInteger(item.row) && item.row > 0 && /^product-\d+$/.test(item.folder));
+
+  if (!selected.length || !items.length) {
+    toast('warning', 'Chưa chọn sản phẩm local nào để đồng bộ cloud');
+    return;
+  }
+  if (selected.length !== items.length) {
+    toast('error', 'Có checkbox local chưa hợp lệ (row/folder). Vui lòng kiểm tra lại.');
+    return;
+  }
+
+  const uniqueItems = [];
+  const seenFolders = new Set();
+  const skipped = [];
+  for (const item of items) {
+    if (seenFolders.has(item.folder)) continue;
+    seenFolders.add(item.folder);
+    const skipReason = cloudBatchSkipReason(item.folder);
+    if (skipReason) skipped.push(`${item.folder} (${skipReason})`);
+    else uniqueItems.push(item);
+  }
+
+  if (!uniqueItems.length) {
+    toast('info', skipped.length ? `Không có product cần upload; ${skipped.join(', ')}` : 'Không có product hợp lệ để upload cloud');
+    return;
+  }
+
+  const confirmationLines = [
+    `Đồng bộ cloud hàng loạt cho ${uniqueItems.length} sản phẩm?`,
+    '',
+    uniqueItems.map((item) => `• ${item.folder}`).join('\n'),
+    '',
+    'Mỗi product sẽ upload cả images/ và files/, verify manifest/hash trên cloud,',
+    'sau đó XOÁ TRỰC TIẾP images/* và files/* ở local khi cloud xác nhận thành công.',
+    'File local không vào Trash. Sản phẩm đã Cloud-only hoặc có lịch đang chạy sẽ được bỏ qua.',
+  ];
+  if (skipped.length) {
+    confirmationLines.push('', `Bỏ qua sẵn: ${skipped.join(', ')}`);
+  }
+  const confirmFn = typeof window?.confirm === 'function' ? window.confirm.bind(window) : null;
+  if (!confirmFn) {
+    toast('error', 'Không thể xác nhận thao tác xoá local trong cửa sổ hiện tại');
+    return;
+  }
+  if (!confirmFn(confirmationLines.join('\n'))) return;
+
+  const button = document.getElementById('local-batch-cloud-btn');
+  const localButtons = [...document.querySelectorAll('.local-batch-action')];
+  const buttonSnapshots = localButtons.map((element) => ({
+    element,
+    disabled: element.disabled,
+    html: element.innerHTML,
+  }));
+  localButtons.forEach((element) => { element.disabled = true; });
+
+  let queued = 0;
+  const failed = [];
+  try {
+    for (const [index, item] of uniqueItems.entries()) {
+      const card = item.checkbox.closest('.product-card');
+      if (card) card.classList.add('running');
+      if (button) {
+        button.innerHTML = `<span class="spinner"></span> Cloud ${index + 1}/${uniqueItems.length}`;
+      }
+      try {
+        const payload = cloudAssetRequestPayload(item.folder);
+        const productKey = payload.scope === 'master'
+          ? `master_products/${payload.folder}`
+          : `shops/${payload.shop_id}/${payload.folder}`;
+        const data = await postCloudAssetMutation(
+          '/api/cloud-assets/schedule-upload-verify-offload',
+          {
+            ...payload,
+            delete_local: true,
+            confirmed_product_key: productKey,
+          },
+        );
+        const schedule = data?.schedule || {};
+        const currentStatus = cloudAssetStatusForFolder(item.folder) || {};
+        cloudAssetStatusByFolder.set(item.folder, {
+          ...currentStatus,
+          folder: item.folder,
+          state: schedule.status === 'running' ? 'UPLOADING' : 'UPLOAD_SCHEDULED',
+          upload_schedule: { ...schedule, delete_local: true },
+        });
+        item.checkbox.checked = false;
+        queued += 1;
+      } catch (error) {
+        failed.push(`${item.folder}: ${error.message}`);
+      } finally {
+        if (card) card.classList.remove('running');
+      }
+    }
+  } finally {
+    buttonSnapshots.forEach(({ element, disabled, html }) => {
+      element.disabled = disabled;
+      element.innerHTML = html;
+    });
+    rememberCatalogSelections();
+    filterProducts();
+    updateBatchUI();
+  }
+
+  if (queued) {
+    toast('info', `🗓️ Đã xếp ${queued}/${uniqueItems.length} product vào queue Upload + verify + xoá local sau cloud verify.`);
+  }
+  if (failed.length) {
+    toast('error', `❌ ${failed.length} product không xếp được: ${failed.join(' · ')}`);
   }
 }
 
@@ -5235,10 +6466,6 @@ async function startGenerate() {
   const payload = { title, features, style: _genSelectedStyle, emojis, show_canva: showCanva, is_bundle: false };
 
   try {
-    const es = new EventSource('/api/imagegen/generate?' + new URLSearchParams({
-      _body: JSON.stringify(payload)
-    }));
-
     // Use fetch + ReadableStream for POST SSE
     const response = await fetch('/api/imagegen/generate', {
       method: 'POST',
@@ -5774,6 +7001,9 @@ let _factoryFolders = [];
 let _factorySelected = new Set();
 let _factoryFilter = 'all';
 let _factoryShopId = null;
+let _factoryScanController = null;
+let _factoryScanGeneration = 0;
+const FACTORY_SCAN_TIMEOUT_MS = 15000;
 
 async function openFactoryImport() {
   _factorySelected.clear();
@@ -5791,18 +7021,26 @@ async function openFactoryImport() {
 }
 
 async function scanFactory(options = {}) {
+  const scanGeneration = ++_factoryScanGeneration;
+  if (_factoryScanController) _factoryScanController.abort();
+  const controller = new AbortController();
+  _factoryScanController = controller;
+  const timeoutId = setTimeout(() => controller.abort(), FACTORY_SCAN_TIMEOUT_MS);
+
   document.getElementById('factory-loading').style.display = 'block';
   document.getElementById('factory-folder-grid').style.display = 'none';
   document.getElementById('factory-empty').style.display = 'none';
+  document.getElementById('factory-scope-note').style.display = 'none';
   if (!options.preserveResult) document.getElementById('factory-result').style.display = 'none';
   _factorySelected.clear();
   _factoryShopId = null;
+  _factoryFolders = [];
   updateFactoryImportBtn();
 
   try {
-    const res  = await fetch('/api/image-factory/scan');
+    const res  = await fetch('/api/image-factory/scan', { signal: controller.signal });
     const data = await res.json();
-    document.getElementById('factory-loading').style.display = 'none';
+    if (scanGeneration !== _factoryScanGeneration) return;
 
     if (!data.ok || !data.shop_id) {
       document.getElementById('factory-empty').style.display = 'block';
@@ -5835,11 +7073,20 @@ async function scanFactory(options = {}) {
     renderFactoryFolders();
     document.getElementById('factory-folder-grid').style.display = 'grid';
   } catch (e) {
+    if (scanGeneration !== _factoryScanGeneration) return;
     _factoryShopId = null;
-    document.getElementById('factory-loading').style.display = 'none';
     document.getElementById('factory-empty').style.display = 'block';
+    const message = controller.signal.aborted
+      ? 'Quét Image Factory quá thời gian (15 giây). Vui lòng bấm Quét lại để thử lại.'
+      : `Không thể quét Image Factory: ${e.message}. Vui lòng bấm Quét lại để thử lại.`;
     document.getElementById('factory-empty').innerHTML =
-      `<div style="font-size:2rem;margin-bottom:10px;">❌</div><div>Lỗi kết nối: ${escHtml(e.message)}</div>`;
+      `<div style="font-size:2rem;margin-bottom:10px;">❌</div><div>${escHtml(message)}</div>`;
+  } finally {
+    clearTimeout(timeoutId);
+    if (scanGeneration === _factoryScanGeneration) {
+      _factoryScanController = null;
+      document.getElementById('factory-loading').style.display = 'none';
+    }
   }
 }
 

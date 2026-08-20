@@ -318,25 +318,75 @@ class TestSelectedRouteCollision(TestCase):
                 )
 
     def test_single_post_blocks_runall_and_selected(self):
-        with patch.object(dashboard_app, "SHOP_DIR", return_value=self.shop_dir), \
-                patch.object(dashboard_app, "EXCEL_FILE", return_value=self.excel_path), \
-                patch.object(dashboard_app, "_active_shop_id", self.shop_id), \
-                patch.object(dashboard_app, "get_product_by_row", return_value={"folder": "product-369"}), \
-                patch.object(dashboard_app, "save_to_excel", return_value=None), \
-                patch.object(dashboard_app, "_run_poster", new=AsyncMock(return_value=None)):
-            single_resp = asyncio.run(dashboard_app.post_to_etsy(4))
-            self.assertTrue(single_resp["ok"])
+        async def scenario():
+            started = asyncio.Event()
+            release = asyncio.Event()
+            lock_key = dashboard_app._etsy_post_lock_key(self.shop_id)
 
-            run_all = asyncio.run(dashboard_app.run_all_pending())
-            self.assertEqual(409, run_all.status_code)
+            async def fake_wait():
+                started.set()
+                await release.wait()
+                return 0
 
-            with self.assertRaises(HTTPException):
-                asyncio.run(
-                    dashboard_app.run_selected_products(Request({
+            async def fake_subprocess(*_args, **_kwargs):
+                proc = AsyncMock()
+                proc.stdout = None
+                proc.returncode = 0
+                proc.wait = AsyncMock(side_effect=fake_wait)
+                proc.kill = AsyncMock()
+                proc.communicate = AsyncMock(return_value=(b"", b""))
+                return proc
+
+            with patch.object(dashboard_app, "SHOP_DIR", return_value=self.shop_dir), \
+                    patch.object(dashboard_app, "EXCEL_FILE", return_value=self.excel_path), \
+                    patch.object(dashboard_app, "_active_shop_id", self.shop_id), \
+                    patch.object(dashboard_app, "get_product_by_row", return_value={"folder": "product-369"}), \
+                    patch.object(dashboard_app, "_runtime_prefetch_import_check", new=AsyncMock(return_value=(True, "ok"))), \
+                    patch.object(dashboard_app.asyncio, "create_subprocess_exec", new=AsyncMock(side_effect=fake_subprocess)), \
+                    patch.object(dashboard_app, "save_to_excel", return_value=None):
+                single_resp = await dashboard_app.post_to_etsy(4)
+                single_payload = _response_json(single_resp)
+                self.assertEqual(202, single_resp.status_code)
+                self.assertTrue(single_payload["ok"])
+
+                queue_task_key = f"{dashboard_app._OPERATION_QUEUE_TASK_PREFIX}{single_payload['command']['command_id']}"
+                await started.wait()
+
+                run_all = await dashboard_app.run_all_pending()
+                self.assertEqual(409, run_all.status_code)
+
+                with self.assertRaises(HTTPException) as context:
+                    await dashboard_app.run_selected_products(Request({
                         "shop": self.shop_id,
                         "items": [{"row": 4, "folder": "product-369"}],
                     }))
-                )
+                self.assertEqual(409, context.exception.status_code)
+
+                release.set()
+                for _ in range(200):
+                    lock_active = lock_key in dashboard_app._running_processes
+                    queue_task_active = queue_task_key in dashboard_app._running_tasks
+                    queued_active = any(
+                        item.get("status") in {"queued", "running"}
+                        for item in dashboard_app._OPERATION_QUEUE_COMMANDS.values()
+                    )
+                    if not lock_active and not queue_task_active and not queued_active:
+                        break
+                    await asyncio.sleep(0.01)
+                else:
+                    self.fail("Poster lock/queue did not clear after mocked process release.")
+
+                self.assertEqual({}, dashboard_app._running_processes)
+                self.assertEqual({}, dashboard_app._running_tasks)
+                self.assertFalse(any(
+                    item.get("status") in {"queued", "running"}
+                    for item in dashboard_app._OPERATION_QUEUE_COMMANDS.values()
+                ))
+
+                dashboard_app._OPERATION_QUEUE_COMMANDS.clear()
+                dashboard_app._OPERATION_QUEUE_DEDUPE.clear()
+
+        asyncio.run(scenario())
 
 
 class TestSelectedPosterCommand(TestCase):

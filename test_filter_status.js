@@ -88,12 +88,14 @@ const statButtonElements = {
   total: createElementWithClassList(),
   posted: createElementWithClassList(),
   pending: createElementWithClassList(),
+  newImport: createElementWithClassList(),
   error: createElementWithClassList(),
   other: createElementWithClassList(),
 };
 statButtonElements.total.dataset.statusFilter = '';
 statButtonElements.posted.dataset.statusFilter = 'posted';
 statButtonElements.pending.dataset.statusFilter = 'pending';
+statButtonElements.newImport.dataset.statusFilter = 'new_import';
 statButtonElements.error.dataset.statusFilter = 'error';
 statButtonElements.other.dataset.statusFilter = 'other';
 
@@ -122,6 +124,7 @@ const domElements = {
   'stat-card-total': statButtonElements.total,
   'stat-card-posted': statButtonElements.posted,
   'stat-card-pending': statButtonElements.pending,
+  'stat-card-new-import': statButtonElements.newImport,
   'stat-card-error': statButtonElements.error,
   'stat-card-other': statButtonElements.other,
 };
@@ -218,12 +221,13 @@ assert.deepEqual(
     { source: 'etsy', status: 'error', etsy_status: 'error' },
     { source: 'etsy', status: 'inactive', etsy_status: 'inactive' },
   ]) },
-  { total: 5, posted: 1, pending: 1, error: 1, other: 1 },
+  { total: 5, posted: 1, pending: 1, error: 1, other: 1, new_import: 0 },
   'aggregate summary buckets should match the quick-filter semantics; drafts use the dropdown filter',
 );
 
 assert.equal(statusFilterMatches({ status: '⏳ Chờ đăng · Cũ', is_new_import: false, missing_fields: [] }, 'new_import'), false);
 assert.equal(statusFilterMatches({ status: '🆕 Mới import · ⏳ Chờ đăng', missing_fields: [] }, 'new_import'), true);
+assert.equal(statusFilterMatches({ status: '⏳ Chờ đăng', is_new_import: true, missing_fields: [] }, 'new_import'), true);
 assert.equal(statusFilterMatches({ status: '⏳ Chờ đăng', missing_fields: [] }, 'new_import'), false);
 assert.equal(statusFilterMatches({ source: 'etsy', is_new_import: true, status: '🆕 Mới import · active' }, 'new_import'), false);
 assert.equal(statusFilterMatches({ source: 'etsy', is_new_import: false, status: '🆕 Mới import · active' }, 'new_import'), false);
@@ -273,6 +277,13 @@ assert.equal(testWindow.__filterCalls, 1);
 assert.equal(statButtonElements.pending.getAttribute('aria-pressed'), 'true');
 assert.equal(statButtonElements.other.getAttribute('aria-pressed'), 'false');
 
+testWindow.__filterCalls = 0;
+onStatusSummaryClick('new_import');
+assert.equal(filterStatus.value, 'new_import');
+assert.equal(testWindow.__filterCalls, 1);
+assert.equal(statButtonElements.newImport.getAttribute('aria-pressed'), 'true');
+assert.equal(statButtonElements.pending.getAttribute('aria-pressed'), 'false');
+
 // Source=shop disables status summary buttons except total and blocks applying unavailable filter state
 testWindow.__filterCalls = 0;
 vm.runInNewContext('currentProductSource = "shop";', sandbox);
@@ -280,6 +291,7 @@ filterStatus.value = 'posted';
 syncStatusSummaryButtons();
 assert.equal(statButtonElements.posted.disabled, true);
 assert.equal(statButtonElements.other.disabled, true);
+assert.equal(statButtonElements.newImport.disabled, true);
 assert.equal(statButtonElements.total.disabled, false);
 assert.equal(statButtonElements.posted.getAttribute('aria-pressed'), 'false');
 assert.equal(statButtonElements.total.getAttribute('aria-pressed'), 'false');

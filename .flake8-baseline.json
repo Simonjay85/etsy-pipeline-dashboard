@@ -381,9 +381,9 @@
     {
       "path": "dashboard_app.py",
       "code": "B902",
-      "scope": "_generate_vertex_content_with_retry",
+      "scope": "_generate_bai_content_with_retry",
       "source": "except Exception as error:",
-      "fingerprint": "65dcd39d84f44670f4ce678a462e9a68da1077f69e77157d61957e34b09fcfbc",
+      "fingerprint": "67dc9e9bda1634c81a5d81f64bcce54144d0c2b700a73617c4244342f3d514b6",
       "count": 1
     },
     {
@@ -416,6 +416,14 @@
       "scope": "scrape_listing_details",
       "source": "except Exception as exc:",
       "fingerprint": "0930f780d949b61c91f4e6e5cd77297778db137c6b650f14165083da628f21e9",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "set_shop",
+      "source": "except Exception as exc:",
+      "fingerprint": "44fc651fa0571c05475f103b2f1ffc596f34fe6f5780a167e47d565691d75231",
       "count": 1
     },
     {
@@ -765,10 +773,26 @@
     {
       "path": "dashboard_app.py",
       "code": "B902",
+      "scope": "_get_httpx",
+      "source": "except Exception:",
+      "fingerprint": "f17afd4972ca5f615ceec031b5a1e780353236d238cbc7b275ce088e0fe55408",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
       "scope": "_check_http_json_identity",
       "source": "except Exception:",
       "fingerprint": "f3c23d8bbd3d66ae04eff10f3878c667f621b1649d3a6d795a4dc20b387a1f4b",
-      "count": 2
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
+      "scope": "_check_bai_service_async",
+      "source": "except Exception:",
+      "fingerprint": "1f52d7c78a41da21ea0dc431efc90ba064634e5249745a4ae8ce583981d89802",
+      "count": 1
     },
     {
       "path": "dashboard_app.py",
@@ -1061,26 +1085,10 @@
     {
       "path": "etsy_auto_post.py",
       "code": "B902",
-      "scope": "translate_text",
-      "source": "except Exception as e:",
-      "fingerprint": "9d826b73225e761d8bad076ffa8c54358ac6b26e59c399b9c7875da10bfa4d83",
-      "count": 1
-    },
-    {
-      "path": "etsy_auto_post.py",
-      "code": "B902",
       "scope": "smart_fill",
       "source": "except Exception as e:",
       "fingerprint": "97155bb2232c43d40799114f6876b47013dcae34031bc3eee00bbfe9cd042350",
       "count": 1
-    },
-    {
-      "path": "etsy_auto_post.py",
-      "code": "B902",
-      "scope": "generate_visual_alt_text",
-      "source": "except Exception as e:",
-      "fingerprint": "26e5d1be9d5422f0fa5dd79a86ddf402c1b5a06ba79c4bbe85598e64f3db9cb7",
-      "count": 2
     },
     {
       "path": "etsy_auto_post.py",
@@ -1173,6 +1181,14 @@
     {
       "path": "etsy_auto_post.py",
       "code": "B902",
+      "scope": "_open_poster_context",
+      "source": "except Exception as exc:",
+      "fingerprint": "b3882c62bf72df39bca01d095306339dbdd68ab95ea7d4a65d7eea04272cd02b",
+      "count": 1
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
       "scope": "_stage_etsy_customer_files",
       "source": "except Exception as exc:",
       "fingerprint": "d066a0374df4f47a8bc366fa5a086c933631796b4ea159cf1b0edc34bc014dcd",
@@ -1208,6 +1224,14 @@
       "scope": "_read_saved_draft_digital_file_names",
       "source": "except Exception as exc:",
       "fingerprint": "f109472104f476b4b40fb8686074ecb0962ebade78115bc3820181e5185c0465",
+      "count": 1
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "scope": "_open_poster_context",
+      "source": "except Exception as fallback_exc:",
+      "fingerprint": "4536b1ff936f784510653e79cc3834bd341a2d24b67ba97cd50a6c4344a311e0",
       "count": 1
     },
     {
@@ -1320,14 +1344,6 @@
       "scope": "_wait_for_draft_grid_stable",
       "source": "except Exception:",
       "fingerprint": "f25fc82e42988561b3f10b45934b3098e31490aa8fc20b3ccfdb9ca26ed3115a",
-      "count": 1
-    },
-    {
-      "path": "etsy_auto_post.py",
-      "code": "B902",
-      "scope": "translate_tag",
-      "source": "except Exception:",
-      "fingerprint": "46ee0aa071583c3417b17a1e44082632b3830a0e160da3f548b6ee456a3a8f48",
       "count": 1
     },
     {
@@ -1477,9 +1493,9 @@
     {
       "path": "etsy_catalog.py",
       "code": "B902",
-      "scope": "merge_safe_duplicates",
+      "scope": "_merge_safe_duplicates_locked",
       "source": "except Exception as exc:",
-      "fingerprint": "4d38dc1922713fb176d97d3251960462132c1b477d14d8e73cfdc4624cebb78a",
+      "fingerprint": "5cab403054f3ad2b2c3f1437fdf42f6bcc7852bfcaca80a06365e6887bddaf66",
       "count": 1
     },
     {
@@ -1496,14 +1512,6 @@
       "scope": "fill_image_alt_texts",
       "source": "except Exception as alt_btn_ex:",
       "fingerprint": "8f19b1834c9c417b954dbe4ae2e8c8f8175696c4bb85496032966f423da8ee2b",
-      "count": 1
-    },
-    {
-      "path": "etsy_fill_alt_texts.py",
-      "code": "B902",
-      "scope": "generate_visual_alt_text",
-      "source": "except Exception as e:",
-      "fingerprint": "8cef863442310ae6a62b00552ab80a66ba4197f359134bfffc2056a4240a1458",
       "count": 1
     },
     {
@@ -1545,14 +1553,6 @@
       "source": "except:",
       "fingerprint": "d4a907b5fc08070b9a984182532a23524e991e756c6c59acddea2f7dcc23a2dc",
       "count": 2
-    },
-    {
-      "path": "etsy_push_update.py",
-      "code": "B902",
-      "scope": "_open_updater_context",
-      "source": "except BaseException:",
-      "fingerprint": "df45d9359e2d322845344d89ba33385beb057b360b776256069ef7389109fa4d",
-      "count": 1
     },
     {
       "path": "etsy_push_update.py",
@@ -1608,6 +1608,14 @@
       "scope": "main",
       "source": "except Exception as e:",
       "fingerprint": "5b76efc54bf42d6ca625a768e0a90cbcfee3488836989d9060b8717fd4b15a2f",
+      "count": 1
+    },
+    {
+      "path": "etsy_push_update.py",
+      "code": "B902",
+      "scope": "_open_updater_context",
+      "source": "except Exception as exc:",
+      "fingerprint": "3ec6d93cde35024ce189967ae7f5c53d44a6722dd5130ed86e4e331a4707b4c1",
       "count": 1
     },
     {
@@ -1725,14 +1733,6 @@
     {
       "path": "etsy_repair.py",
       "code": "B902",
-      "scope": "translate_text",
-      "source": "except Exception as e:",
-      "fingerprint": "f222e0b5038ef2ccfd403ac9a5c7758230013d19150507401e9a6afeb916e0cf",
-      "count": 1
-    },
-    {
-      "path": "etsy_repair.py",
-      "code": "B902",
       "scope": "repair_listing",
       "source": "except Exception as e:",
       "fingerprint": "1b0f09d1799b652281d7c95869cc04dda878e51527a9c68809a9c07db7181dae",
@@ -1753,14 +1753,6 @@
       "source": "except: pass",
       "fingerprint": "ec5fc9d765c58f27a6604831d77960e10b432ec3453405fd5fad7351b716b55f",
       "count": 2
-    },
-    {
-      "path": "etsy_repair.py",
-      "code": "E722",
-      "scope": "translate_tag",
-      "source": "except: return tag",
-      "fingerprint": "b07a9efa1128e99f2b2bb7c3631825634d458f9cd4adb488dc938bba11e4b4c3",
-      "count": 1
     },
     {
       "path": "etsy_retry_failed.py",
@@ -1877,14 +1869,6 @@
     {
       "path": "etsy_translate_existing.py",
       "code": "B902",
-      "scope": "translate_text",
-      "source": "except Exception as e:",
-      "fingerprint": "a0a73f661ae4cd5effe50d9219313e2a168c22b3c71dcc6adea1c57960c95b88",
-      "count": 1
-    },
-    {
-      "path": "etsy_translate_existing.py",
-      "code": "B902",
       "scope": "translate_listing",
       "source": "except Exception as e:",
       "fingerprint": "8670546cf2332e6934402376f61cfdf30128c5419e097b87aaa9a05d46845184",
@@ -1904,14 +1888,6 @@
       "scope": "translate_listing",
       "source": "except Exception as te:",
       "fingerprint": "821a1b8bcb145a23da2d0eaa626447231771ee94abac12ef4dd2e4c3c218fffe",
-      "count": 1
-    },
-    {
-      "path": "etsy_translate_existing.py",
-      "code": "E722",
-      "scope": "translate_tag",
-      "source": "except:",
-      "fingerprint": "5af81ce8c0075e48130afc2e2c8c10c6bcf22f76ef1c95bebcb7be371307fee3",
       "count": 1
     },
     {

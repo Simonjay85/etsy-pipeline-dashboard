@@ -136,7 +136,7 @@ class EtsyPushUpdateSessionTests(unittest.IsolatedAsyncioTestCase):
         self.chromium.connect_over_cdp.assert_not_awaited()
         self.chromium.launch_persistent_context.assert_not_awaited()
 
-    async def test_unlocked_unready_profile_launches_owned_context(self) -> None:
+    async def test_unlocked_unready_profile_fails_closed_without_launch(self) -> None:
         with patch.object(
             etsy_push_update,
             "load_shops_config",
@@ -149,24 +149,18 @@ class EtsyPushUpdateSessionTests(unittest.IsolatedAsyncioTestCase):
             etsy_push_update,
             "is_etsy_session_ready",
             return_value=False,
-        ), patch.object(
-            etsy_push_update,
-            "CHROME_PATH",
-            self.root / "missing-chrome",
         ):
-            context, page, owns_context = await etsy_push_update._open_updater_context(
-                self.playwright,
-                "daisyflowdigital",
-                self.profile,
-            )
+            with self.assertRaisesRegex(
+                RuntimeError, "Không có phiên đăng nhập Etsy cho updater"
+            ):
+                await etsy_push_update._open_updater_context(
+                    self.playwright,
+                    "daisyflowdigital",
+                    self.profile,
+                )
 
         self.chromium.connect_over_cdp.assert_not_awaited()
-        self.chromium.launch_persistent_context.assert_awaited_once()
-        launch_kwargs = self.chromium.launch_persistent_context.await_args.kwargs
-        self.assertEqual(str(self.profile.resolve()), launch_kwargs["user_data_dir"])
-        self.assertIs(context, self.context)
-        self.assertIs(page, self.page)
-        self.assertTrue(owns_context)
+        self.chromium.launch_persistent_context.assert_not_awaited()
 
     async def test_cleanup_does_not_close_user_owned_cdp_context(self) -> None:
         await etsy_push_update._close_updater_context(

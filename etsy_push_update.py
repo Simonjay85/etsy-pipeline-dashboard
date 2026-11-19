@@ -180,7 +180,7 @@ def _profile_lock_path(profile_dir: Path) -> Path | None:
 
 
 async def _open_updater_context(pw, shop_id: str, browser_dir: Path):
-    """Attach to the exact shop CDP session or safely own a new context."""
+    """Attach to the exact shop CDP session (no owned profile fallback)."""
     shops = load_shops_config()
     session = resolve_etsy_session(BASE_DIR, shops, shop_id)
     expected_profile = session.profile_dir.resolve()
@@ -191,8 +191,31 @@ async def _open_updater_context(pw, shop_id: str, browser_dir: Path):
             f"{requested_profile} != {expected_profile}"
         )
 
+    def _requires_cdp_no_defaults_fallback(error: Exception) -> bool:
+        message = str(error)
+        return (
+            "Browser.setDownloadBehavior" in message
+            and "Browser context management is not supported" in message
+        )
+
     if is_etsy_session_ready(session):
-        browser = await pw.chromium.connect_over_cdp(session.cdp_url, timeout=5000)
+        browser = None
+        try:
+            browser = await pw.chromium.connect_over_cdp(session.cdp_url, timeout=5000)
+        except Exception as exc:
+            if _requires_cdp_no_defaults_fallback(exc):
+                browser = await pw.chromium.connect_over_cdp(
+                    session.cdp_url,
+                    timeout=5000,
+                    no_defaults=True,
+                )
+            else:
+                raise
+        if browser is None:
+            raise RuntimeError(
+                "❌ Kết nối phiên CDP Etsy cho updater thất bại. "
+                "Hãy mở lại cửa sổ “Đăng nhập Etsy cho Post” rồi thử lại."
+            )
         if not browser.contexts:
             raise RuntimeError("Chrome Etsy đúng profile nhưng không có browser context")
         ctx = browser.contexts[0]
@@ -207,25 +230,10 @@ async def _open_updater_context(pw, shop_id: str, browser_dir: Path):
             f"session Etsy đã xác minh cho shop {shop_id}. Đóng Chrome đó rồi mở "
             "lại bằng nút Đăng nhập Etsy cho Post."
         )
-
-    requested_profile.mkdir(parents=True, exist_ok=True)
-    launch_kw = dict(
-        user_data_dir=str(requested_profile),
-        headless=False,
-        args=["--start-maximized", "--disable-blink-features=AutomationControlled"],
-        viewport=None,
+    raise RuntimeError(
+        "❌ Không có phiên đăng nhập Etsy cho updater. "
+        "Hãy mở cửa sổ “Đăng nhập Etsy cho Post” và chạy lại."
     )
-    if CHROME_PATH.exists():
-        launch_kw["executable_path"] = str(CHROME_PATH)
-        log("  🌐 Dùng Google Chrome thật")
-
-    ctx = await pw.chromium.launch_persistent_context(**launch_kw)
-    try:
-        page = ctx.pages[0] if ctx.pages else await ctx.new_page()
-    except BaseException:
-        await ctx.close()
-        raise
-    return ctx, page, True
 
 
 async def _close_updater_context(ctx, page, owns_context: bool) -> None:

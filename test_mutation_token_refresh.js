@@ -125,7 +125,8 @@ async function testBodyBearingRequestCanBeRetriedWithoutConsumption() {
 async function testExactErrorAndSameOriginGating() {
   for (const detail of ['host/origin rejected', 'Forbidden']) {
     let calls = 0;
-    const dashboardFetch = createHarness(async () => {
+    const dashboardFetch = createHarness
+(async () => {
       calls += 1;
       return response(403, { detail });
     });
@@ -135,7 +136,8 @@ async function testExactErrorAndSameOriginGating() {
   }
 
   let crossOriginCalls = 0;
-  const dashboardFetch = createHarness(async () => {
+  const dashboardFetch = createHarness
+(async () => {
     crossOriginCalls += 1;
     return response(403, { detail: 'missing or invalid mutation token' });
   });
@@ -193,7 +195,23 @@ async function testConcurrentFailuresShareOneRefresh() {
   assert.equal(mutationCalls, 4);
 }
 
+
+async function testFinancialPutReceivesMutationToken() {
+  let called = false;
+  const dashboardFetch = createHarness(async (url, init) => {
+    called = true;
+    assert.equal(init.method, 'PUT');
+    assert.equal(new Headers(init.headers).get('X-Dashboard-Mutation-Token'), 'stale-token');
+    return response(200, { ok: true });
+  });
+  await dashboardFetch('/api/shops/BubbleByJulie/financial-settings', {
+    method: 'PUT', body: JSON.stringify({ expected_version: 0, settings: {} }),
+  });
+  assert.equal(called, true);
+}
+
 (async () => {
+  await testFinancialPutReceivesMutationToken();
   await testRecoversWithFreshTokenAndReusableBody();
   await testBodyBearingRequestCanBeRetriedWithoutConsumption();
   await testExactErrorAndSameOriginGating();

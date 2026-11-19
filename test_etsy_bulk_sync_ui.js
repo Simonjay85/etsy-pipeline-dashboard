@@ -9,8 +9,8 @@ assert.match(indexHtml, /id="local-batch-update-btn"[^>]*onclick="openBulkEtsyUp
 assert.match(indexHtml, /class="etsy-bulk-update-field" value="title" checked/);
 assert.match(indexHtml, /class="etsy-bulk-update-field" value="images">/);
 assert.match(indexHtml, /Đây là thao tác ghi LIVE lên các listing Etsy hiện tại/);
-assert.match(indexHtml, /style\.css\?v=20260814-status-summary-click-01/);
-assert.match(indexHtml, /app\.js\?v=20260819-cloud-offload-preflight-01/);
+assert.match(indexHtml, /style\.css\?v=20260904-new-import-filter-01/);
+assert.match(indexHtml, /app\.js\?v=20260922-together-provider-01/);
 
 const start = appJs.indexOf('function selectedLocalEtsyMappings()');
 const end = appJs.indexOf('\nasync function openFolder(', start);

@@ -112,6 +112,24 @@ is_launchd_running() {
   return 1
 }
 
+sync_together_environment() {
+  if [[ -n "${TOGETHER_API_KEY:-}" ]]; then
+    "$LAUNCHD_BIN" setenv TOGETHER_API_KEY "$TOGETHER_API_KEY"
+  fi
+  if [[ -n "${TOGETHER_API_BASE_URL:-}" ]]; then
+    "$LAUNCHD_BIN" setenv TOGETHER_API_BASE_URL "$TOGETHER_API_BASE_URL"
+  fi
+  if [[ -n "${TOGETHER_SEO_MODEL:-}" ]]; then
+    "$LAUNCHD_BIN" setenv TOGETHER_SEO_MODEL "$TOGETHER_SEO_MODEL"
+  fi
+  if [[ -n "${TOGETHER_MODEL:-}" ]]; then
+    "$LAUNCHD_BIN" setenv TOGETHER_MODEL "$TOGETHER_MODEL"
+  fi
+  if [[ -n "${TOGETHER_REASONING_EFFORT:-}" ]]; then
+    "$LAUNCHD_BIN" setenv TOGETHER_REASONING_EFFORT "$TOGETHER_REASONING_EFFORT"
+  fi
+}
+
 write_launchd_plist() {
   mkdir -p "$LAUNCHD_DIR"
 
@@ -124,6 +142,7 @@ write_launchd_plist() {
   <string>$LAUNCHD_LABEL</string>
   <key>ProgramArguments</key>
   <array>
+    <string>$ROOT_DIR/dashboard_launchd_env.command</string>
     <string>$PYTHON</string>
     <string>$APP_PATH</string>
   </array>
@@ -155,6 +174,7 @@ EOF
 
 load_launchd_job() {
   write_launchd_plist
+  sync_together_environment
   "$LAUNCHD_BIN" bootout "$LAUNCHD_JOB" 2>/dev/null || true
   "$LAUNCHD_BIN" bootstrap "gui/$UID_VALUE" "$LAUNCHD_PLIST"
   "$LAUNCHD_BIN" enable "$LAUNCHD_JOB" 2>/dev/null || true

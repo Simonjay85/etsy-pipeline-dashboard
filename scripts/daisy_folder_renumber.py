@@ -45,6 +45,7 @@ from cloud_asset_store import (
     verify_manifest_directory,
 )
 from cloud_asset_store_config import load_config
+from product_financials import FinancialStoreError, read_store, write_store_locked
 
 
 SHOP_ID = "daisyflowdigital"
@@ -62,6 +63,8 @@ PRODUCT_RE = re.compile(r"^product-(\d+)$")
 STATE_NAME = ".cloud-assets.json"
 PRODUCT_LOCK_NAME = ".cloud-assets.lock"
 MIGRATION_LOCK_NAME = ".daisy-folder-renumber.lock"
+FINANCIAL_STORE_NAME = "product_financials.json"
+FINANCIAL_LOCK_NAME = "product_financials.json.lock"
 MANIFEST_NAME = "mapping_manifest.json"
 JOURNAL_NAME = "migration_journal.json"
 CANONICAL_REPO = Path("/Users/aaronnguyen/Developer/Etsy")
@@ -134,6 +137,8 @@ class MigrationPlan:
     source_hashes: dict[str, str]
     inventory: dict[str, tuple[int, ...]]
     workbook_snapshot: dict[str, Any]
+    financial_store: dict[str, Any] | None = None
+    remapped_financial_store: dict[str, Any] | None = None
 
 
 def utc_stamp() -> str:
@@ -149,6 +154,50 @@ def sha256_file(path: Path) -> str:
     except OSError as exc:
         raise MigrationError(f"cannot hash required file {path}: {exc}") from exc
     return digest.hexdigest()
+
+
+def _load_financial_store(shop_dir: Path) -> dict[str, Any] | None:
+    path = shop_dir / FINANCIAL_STORE_NAME
+    if path.is_symlink():
+        raise MigrationError(f"financial store is an unsafe symlink: {path}")
+    if not path.exists():
+        return None
+    if not path.is_file():
+        raise MigrationError(f"financial store is not a regular file: {path}")
+    try:
+        value = read_store(shop_dir.parent.parent, SHOP_ID)
+    except FinancialStoreError as exc:
+        raise MigrationError(f"invalid financial store {path}: {exc}") from exc
+    return value
+
+
+def _remap_financial_store(store: dict[str, Any], mapping: dict[str, str]) -> dict[str, Any]:
+    """Remap all product keys simultaneously so cyclic identities cannot overwrite."""
+    result = copy.deepcopy(store)
+    original = store["products"]
+    remapped: dict[str, Any] = {}
+    moved_sources = {name for name in mapping if mapping[name] != name}
+    for old_name, record in original.items():
+        target = mapping.get(old_name, old_name)
+        if target in remapped:
+            raise MigrationError(f"financial store identity collision after renumber: {target}")
+        if target in original and target not in moved_sources and target != old_name:
+            raise MigrationError(f"financial store target is occupied by another identity: {target}")
+        remapped[target] = copy.deepcopy(record)
+    result["products"] = remapped
+    if remapped != original:
+        result["version"] = int(store["version"]) + 1
+    return result
+
+
+def _write_financial_store_locked(plan: MigrationPlan, value: dict[str, Any]) -> None:
+    path = plan.shop_dir / FINANCIAL_STORE_NAME
+    if path.is_symlink():
+        raise MigrationError(f"financial store became an unsafe symlink: {path}")
+    try:
+        write_store_locked(plan.repo_root, SHOP_ID, value)
+    except FinancialStoreError as exc:
+        raise MigrationError(f"financial store write failed: {exc}") from exc
 
 
 def _atomic_json(path: Path, value: Any) -> None:
@@ -542,10 +591,16 @@ def build_plan(
     for item in moves:
         state_path = shop_dir / item.old_name / STATE_NAME
         hashes[str(state_path)] = sha256_file(state_path)
+    financial_store = _load_financial_store(shop_dir)
+    remapped_financial_store = None
+    if financial_store is not None:
+        financial_path = shop_dir / FINANCIAL_STORE_NAME
+        hashes[str(financial_path)] = sha256_file(financial_path)
+        remapped_financial_store = _remap_financial_store(financial_store, mapping)
     return MigrationPlan(
         repo_root, shop_dir, workbook_path, source_map_path, mappings, edits,
         bound, stale, unregistered, updated_map, map_updates, moves, hashes,
-        inventory_tree(shop_dir, names), snapshot,
+        inventory_tree(shop_dir, names), snapshot, financial_store, remapped_financial_store,
     )
 
 
@@ -575,6 +630,22 @@ class HeldLocks:
                 catalog.close()
                 raise MigrationError(f"catalog workbook lock is held: {catalog_path}") from exc
             self.handles.append(catalog)
+            financial_path = self.plan.shop_dir / FINANCIAL_STORE_NAME
+            if financial_path.exists() or financial_path.is_symlink():
+                if financial_path.is_symlink() or not financial_path.is_file():
+                    raise MigrationError(f"financial store path is unsafe: {financial_path}")
+                lock_path = self.plan.shop_dir / FINANCIAL_LOCK_NAME
+                if lock_path.is_symlink() or (lock_path.exists() and not lock_path.is_file()):
+                    raise MigrationError(f"financial store lock path is unsafe: {lock_path}")
+                if not lock_path.is_file():
+                    raise MigrationError(f"required financial store lock is missing: {lock_path}")
+                financial_lock = lock_path.open("a+")
+                try:
+                    fcntl.flock(financial_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError as exc:
+                    financial_lock.close()
+                    raise MigrationError(f"financial store lock is held: {lock_path}") from exc
+                self.handles.append(financial_lock)
             for item in self.plan.mappings:
                 lock_path = self.plan.shop_dir / item.old_name / PRODUCT_LOCK_NAME
                 if lock_path.is_symlink():
@@ -782,6 +853,9 @@ def create_backup(plan: MigrationPlan, backup_root: Path) -> tuple[Path, dict[st
     for move in plan.cloud_moves:
         source = plan.shop_dir / move.old_name / STATE_NAME
         _atomic_copy(source, cloud_backup / move.old_name / STATE_NAME)
+    if plan.financial_store is not None:
+        _atomic_copy(plan.shop_dir / FINANCIAL_STORE_NAME,
+                     backup_dir / FINANCIAL_STORE_NAME)
     backup_pairs = [(plan.workbook_path, backup_dir / "Etsy_SEO_Generator.xlsx")]
     if plan.source_map_path.exists():
         backup_pairs.append((plan.source_map_path, backup_dir / "product_source_map.json"))
@@ -790,6 +864,9 @@ def create_backup(plan: MigrationPlan, backup_root: Path) -> tuple[Path, dict[st
          cloud_backup / move.old_name / STATE_NAME)
         for move in plan.cloud_moves
     )
+    if plan.financial_store is not None:
+        backup_pairs.append((plan.shop_dir / FINANCIAL_STORE_NAME,
+                             backup_dir / FINANCIAL_STORE_NAME))
     backup_hashes = {}
     for source, destination in backup_pairs:
         source_hash = sha256_file(source)
@@ -869,6 +946,8 @@ def _update_local_files(plan: MigrationPlan) -> None:
         _atomic_pretty_json(plan.source_map_path, plan.updated_source_map)
     for move in plan.cloud_moves:
         _atomic_json(plan.shop_dir / move.new_name / STATE_NAME, move.new_state)
+    if plan.remapped_financial_store is not None:
+        _write_financial_store_locked(plan, plan.remapped_financial_store)
 
 
 def _restore_files(plan: MigrationPlan, backup_dir: Path) -> None:
@@ -881,12 +960,19 @@ def _restore_files(plan: MigrationPlan, backup_dir: Path) -> None:
             backup_dir / "cloud-state" / move.old_name / STATE_NAME,
             plan.shop_dir / move.old_name / STATE_NAME,
         )
+    financial_backup = backup_dir / FINANCIAL_STORE_NAME
+    if financial_backup.exists():
+        _atomic_copy(financial_backup, plan.shop_dir / FINANCIAL_STORE_NAME)
+    elif (plan.shop_dir / FINANCIAL_STORE_NAME).exists():
+        raise MigrationError("financial store appeared after preflight; refusing to delete unreviewed data")
 
 
 def revalidate(plan: MigrationPlan) -> None:
     for path_text, expected in plan.source_hashes.items():
         if sha256_file(Path(path_text)) != expected:
             raise MigrationError(f"source changed after planning: {path_text}")
+    if plan.financial_store is None and (plan.shop_dir / FINANCIAL_STORE_NAME).exists():
+        raise MigrationError("financial store appeared after planning")
     names = tuple(item.old_name for item in plan.mappings)
     if discover_folders(plan.shop_dir, len(names)) != names:
         raise MigrationError("physical folder set changed after planning")
@@ -958,6 +1044,12 @@ def postflight(plan: MigrationPlan, remote: RemoteStore) -> dict[str, int]:
         current = json.loads(plan.source_map_path.read_text(encoding="utf-8"))
         if current != plan.updated_source_map:
             raise MigrationError("postflight source map differs from reviewed transformation")
+    if plan.remapped_financial_store is not None:
+        actual_financial_store = _load_financial_store(plan.shop_dir)
+        if actual_financial_store != plan.remapped_financial_store:
+            raise MigrationError("postflight financial store differs from reviewed identity remap")
+    elif (plan.shop_dir / FINANCIAL_STORE_NAME).exists():
+        raise MigrationError("financial store appeared after preflight")
     actual = inventory_tree(plan.shop_dir, expected_names)
     if actual != remap_inventory(plan.inventory, {item.old_name: item.new_name for item in plan.mappings}):
         raise MigrationError("postflight folder entry metadata/inodes changed")
@@ -972,6 +1064,8 @@ def postflight(plan: MigrationPlan, remote: RemoteStore) -> dict[str, int]:
         "physical_folders": len(names), "workbook_bindings": bound,
         "stale_bindings": stale, "unregistered_physical": len(unregistered),
         "source_map_updates": plan.source_map_updates, "cloud_moves": len(plan.cloud_moves),
+        "financial_records": len(plan.remapped_financial_store["products"])
+        if plan.remapped_financial_store is not None else 0,
     }
 
 

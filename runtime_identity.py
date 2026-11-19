@@ -269,7 +269,7 @@ def runtime_health_payload(
     optional_checks = {
         key: bool(value)
         for key, value in service_checks.items()
-        if isinstance(value, bool) and key in {"vertex_app", "mlx_ai", "watcher"}
+        if isinstance(value, bool) and key in {"image_studio", "together_api", "mlx_ai", "watcher"}
     }
     optional_ok = all(optional_checks.values()) if optional_checks else False
 

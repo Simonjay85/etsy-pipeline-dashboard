@@ -43,6 +43,7 @@ function runChangeStatusHarness(fetchResult, options = {}) {
     __calls: calls,
     loadProductsShouldThrow: Boolean(options.loadProductsShouldThrow),
     loadProductsResult,
+    closeStatusMenu: () => { menuState.style.display = 'none'; },
     fetchJsonWithTimeout: async () => {
       if (options.shouldThrowFetch) {
         throw new Error('fetch transport error');

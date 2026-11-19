@@ -1,0 +1,22 @@
+[Unit]
+Description=Creative Fabrica KDP favorites survey - session 20260913_235156_d6e606
+After=network-online.target hermes-chromium-cdp.service
+Requires=hermes-chromium-cdp.service
+StartLimitIntervalSec=3600
+StartLimitBurst=10
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ubuntu/apps/cf-kdp-survey
+ExecStart=/home/ubuntu/apps/cf-kdp-survey/venv311/bin/python -u scripts/creativefabrica_vps_survey.py --daily-limit 10000 --delay 10
+Restart=on-failure
+RestartSec=60
+RestartPreventExitStatus=78
+TimeoutStopSec=30
+KillMode=mixed
+UMask=0077
+NoNewPrivileges=yes
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+[Install]
+WantedBy=default.target

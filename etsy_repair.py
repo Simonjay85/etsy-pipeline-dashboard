@@ -1,6 +1,6 @@
 import asyncio, sys, argparse, re
 from playwright.async_api import async_playwright
-from deep_translator import GoogleTranslator
+from translation_service import translate_text, translate_tags
 
 # Simplified structure for repairing a listing
 LANGUAGES = [
@@ -14,34 +14,6 @@ LANGUAGES = [
     ("ru", "Russian",    7),
     ("es", "Spanish",    8),
 ]
-
-def translate_text(text: str, lang: str, max_chars=4800) -> str:
-    if not text or not text.strip(): return text
-    try:
-        if len(text) <= max_chars:
-            return GoogleTranslator(source="en", target=lang).translate(text) or text
-        lines = text.split('\n')
-        parts = []
-        current_chunk = ""
-        for line in lines:
-            if len(current_chunk) + len(line) + 1 > max_chars:
-                parts.append(GoogleTranslator(source="en", target=lang).translate(current_chunk) or current_chunk)
-                current_chunk = line + "\n"
-            else:
-                current_chunk += line + "\n"
-        if current_chunk.strip():
-            parts.append(GoogleTranslator(source="en", target=lang).translate(current_chunk) or current_chunk)
-        return "".join(parts).strip()
-    except Exception as e:
-        print(f"    ⚠ translate {lang}: {e}")
-        return text
-
-def translate_tag(tag: str, lang: str) -> str:
-    try:
-        t = (GoogleTranslator(source="en", target=lang).translate(tag) or tag).strip()
-        if len(t) > 20: t = t[:20].rsplit(" ", 1)[0].rstrip(",- ")
-        return t if 1 <= len(t) <= 20 else tag
-    except: return tag
 
 def trim_title(title: str, max_len=140) -> str:
     """Cắt title tối đa max_len ký tự, không cắt giữa từ và dọn dẹp ký tự đặc biệt."""
@@ -156,6 +128,7 @@ async def repair_listing(page, listing_id: str, fix_tabs: bool, fix_desc: bool, 
 
                 trans_title = trim_title(translate_text(title, lang_code))
                 trans_desc  = translate_text(desc, lang_code) if desc else ""
+                trans_tags = translate_tags(tags, lang_code) if (tags and (fix_tags or fix_tabs)) else []
 
                 if fix_tabs:
                     # Title
@@ -187,9 +160,9 @@ async def repair_listing(page, listing_id: str, fix_tabs: bool, fix_desc: bool, 
                             if tag_input:
                                 await tag_input.scroll_into_view_if_needed()
                                 await page.wait_for_timeout(500)
-                                slots_left = int((await page.evaluate(f'''() => {{ let inp = document.querySelector('[id="listing-translations.{idx}.tags-input"]'); if (!inp) return "0 left"; let wrap = inp.closest("fieldset") || inp.parentElement.parentElement; let m = (wrap ? wrap.innerText : "").match(/(\d+) left/); return m ? m[0] : "0 left"; }}''') or "0 left").split()[0])
-                                for tag in tags[:slots_left]:
-                                    await tag_input.fill(translate_tag(tag, lang_code))
+                                slots_left = int((await page.evaluate(f'''() => {{ let inp = document.querySelector('[id="listing-translations.{idx}.tags-input"]'); if (!inp) return "0 left"; let wrap = inp.closest("fieldset") || inp.parentElement.parentElement; let m = (wrap ? wrap.innerText : "").match(/([0-9]+) left/); return m ? m[0] : "0 left"; }}''') or "0 left").split()[0])
+                                for trans_tag in trans_tags[:slots_left]:
+                                    await tag_input.fill(trans_tag)
                                     await page.wait_for_timeout(500)
                                     await tag_input.press("Enter")
                                     await page.wait_for_timeout(500)

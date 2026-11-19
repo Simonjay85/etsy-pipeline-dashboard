@@ -1,0 +1,742 @@
+{
+  "schema": 1,
+  "run_id": "chatgpt-imagegen-redo-20260901",
+  "shop_id": "shop3",
+  "tool_mode": "chatgpt-built-in-imagegen",
+  "canva_used": false,
+  "local_compositor_used": false,
+  "targets": 104,
+  "jobs": 1040,
+  "mutated_shop_images": false,
+  "mutated_workbook": false,
+  "results": [
+    {
+      "product": "product-67",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-67/generation-manifest.json",
+      "source_reference_count": 10
+    },
+    {
+      "product": "product-68",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-68/generation-manifest.json",
+      "source_reference_count": 28
+    },
+    {
+      "product": "product-69",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-69/generation-manifest.json",
+      "source_reference_count": 19
+    },
+    {
+      "product": "product-70",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-70/generation-manifest.json",
+      "source_reference_count": 22
+    },
+    {
+      "product": "product-71",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-71/generation-manifest.json",
+      "source_reference_count": 25
+    },
+    {
+      "product": "product-72",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-72/generation-manifest.json",
+      "source_reference_count": 16
+    },
+    {
+      "product": "product-73",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-73/generation-manifest.json",
+      "source_reference_count": 22
+    },
+    {
+      "product": "product-74",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-74/generation-manifest.json",
+      "source_reference_count": 16
+    },
+    {
+      "product": "product-75",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-75/generation-manifest.json",
+      "source_reference_count": 25
+    },
+    {
+      "product": "product-76",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-76/generation-manifest.json",
+      "source_reference_count": 25
+    },
+    {
+      "product": "product-77",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-77/generation-manifest.json",
+      "source_reference_count": 16
+    },
+    {
+      "product": "product-78",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-78/generation-manifest.json",
+      "source_reference_count": 16
+    },
+    {
+      "product": "product-79",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-79/generation-manifest.json",
+      "source_reference_count": 16
+    },
+    {
+      "product": "product-83",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-83/generation-manifest.json",
+      "source_reference_count": 19
+    },
+    {
+      "product": "product-84",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-84/generation-manifest.json",
+      "source_reference_count": 19
+    },
+    {
+      "product": "product-85",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-85/generation-manifest.json",
+      "source_reference_count": 22
+    },
+    {
+      "product": "product-86",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-86/generation-manifest.json",
+      "source_reference_count": 19
+    },
+    {
+      "product": "product-87",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-87/generation-manifest.json",
+      "source_reference_count": 22
+    },
+    {
+      "product": "product-88",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-88/generation-manifest.json",
+      "source_reference_count": 19
+    },
+    {
+      "product": "product-89",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-89/generation-manifest.json",
+      "source_reference_count": 19
+    },
+    {
+      "product": "product-90",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-90/generation-manifest.json",
+      "source_reference_count": 22
+    },
+    {
+      "product": "product-91",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-91/generation-manifest.json",
+      "source_reference_count": 19
+    },
+    {
+      "product": "product-92",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-92/generation-manifest.json",
+      "source_reference_count": 16
+    },
+    {
+      "product": "product-93",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-93/generation-manifest.json",
+      "source_reference_count": 13
+    },
+    {
+      "product": "product-94",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-94/generation-manifest.json",
+      "source_reference_count": 16
+    },
+    {
+      "product": "product-95",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-95/generation-manifest.json",
+      "source_reference_count": 25
+    },
+    {
+      "product": "product-96",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-96/generation-manifest.json",
+      "source_reference_count": 22
+    },
+    {
+      "product": "product-97",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-97/generation-manifest.json",
+      "source_reference_count": 16
+    },
+    {
+      "product": "product-98",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-98/generation-manifest.json",
+      "source_reference_count": 25
+    },
+    {
+      "product": "product-99",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-99/generation-manifest.json",
+      "source_reference_count": 22
+    },
+    {
+      "product": "product-100",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-100/generation-manifest.json",
+      "source_reference_count": 25
+    },
+    {
+      "product": "product-101",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-101/generation-manifest.json",
+      "source_reference_count": 22
+    },
+    {
+      "product": "product-102",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-102/generation-manifest.json",
+      "source_reference_count": 22
+    },
+    {
+      "product": "product-103",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-103/generation-manifest.json",
+      "source_reference_count": 18
+    },
+    {
+      "product": "product-104",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-104/generation-manifest.json",
+      "source_reference_count": 15
+    },
+    {
+      "product": "product-105",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-105/generation-manifest.json",
+      "source_reference_count": 18
+    },
+    {
+      "product": "product-106",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-106/generation-manifest.json",
+      "source_reference_count": 3
+    },
+    {
+      "product": "product-107",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-107/generation-manifest.json",
+      "source_reference_count": 3
+    },
+    {
+      "product": "product-108",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-108/generation-manifest.json",
+      "source_reference_count": 21
+    },
+    {
+      "product": "product-109",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-109/generation-manifest.json",
+      "source_reference_count": 19
+    },
+    {
+      "product": "product-110",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-110/generation-manifest.json",
+      "source_reference_count": 25
+    },
+    {
+      "product": "product-111",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-111/generation-manifest.json",
+      "source_reference_count": 24
+    },
+    {
+      "product": "product-112",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-112/generation-manifest.json",
+      "source_reference_count": 24
+    },
+    {
+      "product": "product-113",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-113/generation-manifest.json",
+      "source_reference_count": 18
+    },
+    {
+      "product": "product-114",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-114/generation-manifest.json",
+      "source_reference_count": 24
+    },
+    {
+      "product": "product-115",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-115/generation-manifest.json",
+      "source_reference_count": 15
+    },
+    {
+      "product": "product-118",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-118/generation-manifest.json",
+      "source_reference_count": 12
+    },
+    {
+      "product": "product-119",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-119/generation-manifest.json",
+      "source_reference_count": 24
+    },
+    {
+      "product": "product-120",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-120/generation-manifest.json",
+      "source_reference_count": 24
+    },
+    {
+      "product": "product-121",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-121/generation-manifest.json",
+      "source_reference_count": 18
+    },
+    {
+      "product": "product-122",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-122/generation-manifest.json",
+      "source_reference_count": 10
+    },
+    {
+      "product": "product-123",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-123/generation-manifest.json",
+      "source_reference_count": 18
+    },
+    {
+      "product": "product-124",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-124/generation-manifest.json",
+      "source_reference_count": 12
+    },
+    {
+      "product": "product-126",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-126/generation-manifest.json",
+      "source_reference_count": 21
+    },
+    {
+      "product": "product-127",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-127/generation-manifest.json",
+      "source_reference_count": 15
+    },
+    {
+      "product": "product-128",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-128/generation-manifest.json",
+      "source_reference_count": 18
+    },
+    {
+      "product": "product-129",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-129/generation-manifest.json",
+      "source_reference_count": 24
+    },
+    {
+      "product": "product-130",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-130/generation-manifest.json",
+      "source_reference_count": 3
+    },
+    {
+      "product": "product-131",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-131/generation-manifest.json",
+      "source_reference_count": 21
+    },
+    {
+      "product": "product-132",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-132/generation-manifest.json",
+      "source_reference_count": 24
+    },
+    {
+      "product": "product-133",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-133/generation-manifest.json",
+      "source_reference_count": 24
+    },
+    {
+      "product": "product-134",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-134/generation-manifest.json",
+      "source_reference_count": 21
+    },
+    {
+      "product": "product-135",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-135/generation-manifest.json",
+      "source_reference_count": 21
+    },
+    {
+      "product": "product-136",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-136/generation-manifest.json",
+      "source_reference_count": 15
+    },
+    {
+      "product": "product-137",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-137/generation-manifest.json",
+      "source_reference_count": 18
+    },
+    {
+      "product": "product-140",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-140/generation-manifest.json",
+      "source_reference_count": 18
+    },
+    {
+      "product": "product-141",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-141/generation-manifest.json",
+      "source_reference_count": 15
+    },
+    {
+      "product": "product-142",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-142/generation-manifest.json",
+      "source_reference_count": 3
+    },
+    {
+      "product": "product-143",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-143/generation-manifest.json",
+      "source_reference_count": 21
+    },
+    {
+      "product": "product-144",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-144/generation-manifest.json",
+      "source_reference_count": 18
+    },
+    {
+      "product": "product-145",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-145/generation-manifest.json",
+      "source_reference_count": 18
+    },
+    {
+      "product": "product-146",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-146/generation-manifest.json",
+      "source_reference_count": 18
+    },
+    {
+      "product": "product-152",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-152/generation-manifest.json",
+      "source_reference_count": 21
+    },
+    {
+      "product": "product-153",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-153/generation-manifest.json",
+      "source_reference_count": 21
+    },
+    {
+      "product": "product-154",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-154/generation-manifest.json",
+      "source_reference_count": 18
+    },
+    {
+      "product": "product-155",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-155/generation-manifest.json",
+      "source_reference_count": 12
+    },
+    {
+      "product": "product-156",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-156/generation-manifest.json",
+      "source_reference_count": 6
+    },
+    {
+      "product": "product-157",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-157/generation-manifest.json",
+      "source_reference_count": 9
+    },
+    {
+      "product": "product-158",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-158/generation-manifest.json",
+      "source_reference_count": 9
+    },
+    {
+      "product": "product-159",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-159/generation-manifest.json",
+      "source_reference_count": 12
+    },
+    {
+      "product": "product-160",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-160/generation-manifest.json",
+      "source_reference_count": 15
+    },
+    {
+      "product": "product-161",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-161/generation-manifest.json",
+      "source_reference_count": 18
+    },
+    {
+      "product": "product-162",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-162/generation-manifest.json",
+      "source_reference_count": 12
+    },
+    {
+      "product": "product-163",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-163/generation-manifest.json",
+      "source_reference_count": 9
+    },
+    {
+      "product": "product-164",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-164/generation-manifest.json",
+      "source_reference_count": 24
+    },
+    {
+      "product": "product-165",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-165/generation-manifest.json",
+      "source_reference_count": 21
+    },
+    {
+      "product": "product-170",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-170/generation-manifest.json",
+      "source_reference_count": 12
+    },
+    {
+      "product": "product-171",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-171/generation-manifest.json",
+      "source_reference_count": 24
+    },
+    {
+      "product": "product-172",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-172/generation-manifest.json",
+      "source_reference_count": 24
+    },
+    {
+      "product": "product-173",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-173/generation-manifest.json",
+      "source_reference_count": 24
+    },
+    {
+      "product": "product-175",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-175/generation-manifest.json",
+      "source_reference_count": 12
+    },
+    {
+      "product": "product-176",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-176/generation-manifest.json",
+      "source_reference_count": 7
+    },
+    {
+      "product": "product-177",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-177/generation-manifest.json",
+      "source_reference_count": 6
+    },
+    {
+      "product": "product-178",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-178/generation-manifest.json",
+      "source_reference_count": 9
+    },
+    {
+      "product": "product-179",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-179/generation-manifest.json",
+      "source_reference_count": 18
+    },
+    {
+      "product": "product-180",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-180/generation-manifest.json",
+      "source_reference_count": 12
+    },
+    {
+      "product": "product-181",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-181/generation-manifest.json",
+      "source_reference_count": 3
+    },
+    {
+      "product": "product-182",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-182/generation-manifest.json",
+      "source_reference_count": 12
+    },
+    {
+      "product": "product-183",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-183/generation-manifest.json",
+      "source_reference_count": 3
+    },
+    {
+      "product": "product-184",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-184/generation-manifest.json",
+      "source_reference_count": 9
+    },
+    {
+      "product": "product-185",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-185/generation-manifest.json",
+      "source_reference_count": 27
+    },
+    {
+      "product": "product-186",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-186/generation-manifest.json",
+      "source_reference_count": 12
+    },
+    {
+      "product": "product-187",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-187/generation-manifest.json",
+      "source_reference_count": 12
+    },
+    {
+      "product": "product-188",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/chatgpt-imagegen-redo-20260901/product-188/generation-manifest.json",
+      "source_reference_count": 6
+    }
+  ]
+}

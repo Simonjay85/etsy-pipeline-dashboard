@@ -20,9 +20,11 @@ const SAFE_SCRIPTS = Object.freeze([
   'test_cloud_assets_ui.js',
   'test_cross_shop_sync_ui.js',
   'test_dashboard_compact_density_ui.js',
+  'test_dashboard_header_controls_ui.js',
   'test_dashboard_etsy_manager_link_ui.js',
   'test_dashboard_stats_ui.js',
   'test_edit_save.js',
+  'test_financials_ui.js',
   'test_etsy_bulk_sync_ui.js',
   'test_etsy_link_unverified_ui.js',
   'test_etsy_listing_links_ui.js',
@@ -34,9 +36,12 @@ const SAFE_SCRIPTS = Object.freeze([
   'test_modal_accessibility_ui.js',
   'test_mutation_token_refresh.js',
   'test_operation_queue_dashboard.js',
+  'test_pipeline_workbench_ui.js',
   'test_regen_seo_ui.js',
+  'test_together_keychain_ui.js',
   'test_runtime_health_ui.js',
   'test_social_ui_badges.js',
+  'test_shop_context_guard_ui.js',
 ]);
 
 const failures = [];

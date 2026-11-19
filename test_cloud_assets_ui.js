@@ -22,7 +22,7 @@ assert.match(appJs, /return \{ shop_id: shopId, scope: 'shop', folder: safeFolde
 assert.match(appJs, /withCloudAssetMutation\(/);
 assert.match(appJs, /cloudAssetMutationInFlight/);
 assert.match(indexHtml, /id="local-batch-cloud-btn"[^>]*onclick="batchCloudUploadAndOffload\(\)"/);
-assert.match(indexHtml, /app\.js\?v=[^"]*cloud-offload-preflight/);
+assert.match(indexHtml, /app\.js\?v=20260922-together-provider-01/);
 assert.match(appJs, /async function batchCloudUploadAndOffload\(\)/);
 assert.match(appJs, /cloudBatchSkipReason/);
 for (const endpoint of ['schedule-upload-verify', 'schedule-upload-verify-offload', 'restore', 'cancel-offload']) {
@@ -136,6 +136,9 @@ const setCloudStatus = (folder, status) => {
 vm.createContext(context);
 vm.runInContext(appJs, context);
 context.toast = () => {};
+context.BatchSelection = {
+  selectedByKind(nodes) { return [...nodes]; },
+};
 
 assert.deepEqual(JSON.parse(JSON.stringify(context.cloudAssetRequestPayload(' product-01 '))), {
   shop_id: 'templystudios',
@@ -157,6 +160,44 @@ assert.equal(context.cloudAssetStatusCategory({ state: 'CLOUD_ONLY' }), 'cloud-o
 assert.equal(context.cloudAssetStatusCategory({ state: 'ERROR' }), 'error');
 assert.equal(context.cloudAssetStatusLabel({ state: 'CLOUD_ONLY' }), '☁️ Cloud-only');
 assert.equal(context.cloudAssetStatusLabel({ state: 'OFFLOAD_SCHEDULED' }), '⏱ Offload scheduled');
+const postedMetadata = context.renderProductCardMetadata({
+  status: '✅ Đã đăng',
+  etsy_posted_at: '2026-08-30T13:45:00Z',
+  local_file_bytes: 19467011,
+  local_file_count: 8,
+});
+assert.match(postedMetadata, /Etsy đăng:/);
+assert.match(postedMetadata, /File local: 19\.47 MB · 8 file/);
+assert.doesNotMatch(postedMetadata, /snapshotAt|2026-08-31/);
+const pendingMetadata = context.renderProductCardMetadata({
+  status: '⏳ Chờ đăng',
+  local_file_bytes: 0,
+  local_file_count: 0,
+});
+assert.match(pendingMetadata, /Etsy đăng: chưa đăng/);
+assert.match(pendingMetadata, /File local: 0 B · 0 file/);
+const unavailablePostedMetadata = context.renderProductCardMetadata({ status: '✅ Đã đăng' });
+assert.match(unavailablePostedMetadata, /Etsy đăng: chưa có dữ liệu/);
+const remotePostedMetadata = context.renderProductCardMetadata({
+  managerStatus: 'active',
+  formatted_state_date: 'Aug 29, 2026',
+});
+assert.match(remotePostedMetadata, /Etsy đăng:/);
+assert.doesNotMatch(remotePostedMetadata, /Etsy đăng: chưa đăng/);
+assert.match(remotePostedMetadata, /File local: chưa có dữ liệu/);
+const remoteRawDateMetadata = context.renderProductCardMetadata({
+  managerStatus: 'active',
+  state_date: 1788163200,
+});
+assert.match(remoteRawDateMetadata, /Etsy đăng:/);
+assert.doesNotMatch(remoteRawDateMetadata, /1788163200/);
+const aggregateFileFallbackMetadata = context.renderProductCardMetadata({
+  status: '⏳ Chờ đăng',
+  file_bytes: 321,
+  file_count: 1,
+});
+assert.match(aggregateFileFallbackMetadata, /File local: 321 B · 1 file/);
+assert.match(appJs, /function remoteEtsyProductCard\([\s\S]*?renderProductCardMetadata\(/);
 
 vm.runInContext(`cloudAssetStatusByFolder.set('product-01', {
   state: 'OFFLOAD_SCHEDULED',
@@ -442,6 +483,31 @@ product08UiNode?.setAttribute('data-cloud-ui-key', context.cloudAssetUiRenderKey
   assert.equal(calls.filter((u) => u.includes('/api/cloud-assets/verify')).length, 0);
   assert.equal(firstButton.disabled, false);
   assert.equal(secondButton.disabled, false);
+
+  vm.runInContext(`allProducts = [
+    { folder: 'product-pending', status: '⏳ Chờ đăng' },
+    { folder: 'product-posted', status: '✅ Đã đăng draft (URL chưa xác minh)' },
+  ];`, context);
+  const pendingWarnings = [];
+  context.toast = (level, message) => pendingWarnings.push({ level, message });
+  assert.match(
+    context.cloudBatchSkipReason('product-pending'),
+    /chưa ở trạng thái Đã đăng/,
+    'Batch cloud must visibly skip pending products',
+  );
+  const requestCountBeforePending = calls.length;
+  await context.cloudAssetUploadAndOffload(
+    'product-pending',
+    { disabled: false, innerHTML: 'upload' },
+  );
+  assert.equal(
+    calls.length,
+    requestCountBeforePending,
+    'Pending per-card cloud click must send zero requests',
+  );
+  assert.equal(pendingWarnings.length, 1, 'Pending per-card cloud click must warn');
+  assert.match(pendingWarnings[0].message, /đưa sản phẩm lên Đã đăng/);
+
 
   context.window.confirm = () => false;
   await context.cloudAssetUploadAndOffload('product-02', { disabled: false, innerHTML: 'upload' });

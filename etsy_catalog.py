@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import copy
 import json
 import stat
 import re
@@ -17,12 +18,46 @@ from pathlib import Path
 from typing import Any
 
 import openpyxl
+from product_financials import (
+    FinancialConflict,
+    FinancialStoreError,
+    assert_merge_compatible,
+    product_financials_lock,
+    read_store,
+    write_store_locked,
+)
 
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 DIGITAL_EXTS = {".pdf", ".zip"}
 HASH_EXTS = {".pdf", ".zip", ".svg", ".eps", ".dxf", ".ai", ".psd"}
 IGNORED_NAMES = {".DS_Store"}
+FINANCIAL_STORE_NAME = "product_financials.json"
+FINANCIAL_LOCK_NAME = "product_financials.json.lock"
+
+
+def _load_product_financials(shop_dir: Path, shop_id: str) -> dict[str, Any] | None:
+    path = shop_dir / FINANCIAL_STORE_NAME
+    if path.is_symlink():
+        raise ValueError(f"financial store is an unsafe symlink: {path}")
+    if not path.exists():
+        return None
+    try:
+        store = read_store(shop_dir.parent.parent, shop_id)
+    except FinancialStoreError as exc:
+        raise ValueError(f"financial store cannot be read safely: {exc}") from exc
+    return store
+
+
+def _write_product_financials(shop_dir: Path, shop_id: str, store: dict[str, Any]) -> None:
+    """Persist through the financial backend while its shared lock is held."""
+    path = shop_dir / FINANCIAL_STORE_NAME
+    if path.is_symlink():
+        raise ValueError(f"financial store is an unsafe symlink: {path}")
+    try:
+        write_store_locked(shop_dir.parent.parent, shop_id, store)
+    except FinancialStoreError as exc:
+        raise ValueError(f"financial store could not be saved: {exc}") from exc
 
 
 def _natural_sort_key(value: str) -> tuple[tuple[int, Any], ...]:
@@ -605,6 +640,12 @@ def _canonical_record(records: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def merge_safe_duplicates(base_dir: Path, shop_id: str, excel_path: Path, requested_group_ids: list[str] | None = None) -> dict[str, Any]:
+    shop_dir = base_dir / "shops" / shop_id
+    with product_financials_lock(base_dir, shop_id):
+        return _merge_safe_duplicates_locked(base_dir, shop_id, excel_path, requested_group_ids)
+
+
+def _merge_safe_duplicates_locked(base_dir: Path, shop_id: str, excel_path: Path, requested_group_ids: list[str] | None = None) -> dict[str, Any]:
     catalog = build_unified_catalog(base_dir, shop_id, excel_path)
     groups = [group for group in catalog["duplicate_groups"] if group["safe_to_merge"]]
     if requested_group_ids is not None:
@@ -615,15 +656,57 @@ def merge_safe_duplicates(base_dir: Path, shop_id: str, excel_path: Path, reques
 
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     shop_dir = base_dir / "shops" / shop_id
+    try:
+        financial_store = _load_product_financials(shop_dir, shop_id)
+    except ValueError as exc:
+        blocked = [{
+            "group_id": group["group_id"],
+            "match_type": group["match_type"],
+            "reason": f"Financial store safety check failed before mutation: {exc}",
+            "folders": sorted(str(item.get("folder")) for item in group["records"] if item.get("folder")),
+        } for group in groups]
+        return {"ok": False, "message": "Từ chối dồn folder vì kho tài chính không an toàn.",
+                "merged": [], "skipped": blocked, "catalog": catalog}
+
+    financial_conflicts: list[dict[str, Any]] = []
+    compatible_groups: list[dict[str, Any]] = []
+    if financial_store is not None:
+        for group in groups:
+            folders = sorted({str(item.get("folder")) for item in group["records"] if item.get("folder")})
+            try:
+                assert_merge_compatible(base_dir, shop_id, folders)
+            except FinancialConflict:
+                financial_conflicts.append({
+                    "group_id": group["group_id"],
+                    "match_type": group["match_type"],
+                    "reason": "Product financial records differ; resolve them before merging folders.",
+                    "folders": folders,
+                })
+            else:
+                compatible_groups.append(group)
+    else:
+        compatible_groups = groups
+    if not compatible_groups:
+        return {"ok": not financial_conflicts,
+                "message": "Không có nhóm nào đủ an toàn để dồn.", "merged": [],
+                "skipped": financial_conflicts, "catalog": catalog}
+    groups = compatible_groups
+
     quarantine = shop_dir / f".quarantine_duplicates_{timestamp}"
     quarantine.mkdir(parents=True, exist_ok=True)
     backup = excel_path.with_name(f"{excel_path.stem}.backup_aggregate_merge_{timestamp}{excel_path.suffix}")
     shutil.copy2(excel_path, backup)
+    financial_backup: Path | None = None
+    if financial_store is not None:
+        financial_backup = shop_dir / f"{FINANCIAL_STORE_NAME}.backup_aggregate_merge_{timestamp}"
+        shutil.copy2(shop_dir / FINANCIAL_STORE_NAME, financial_backup)
+        if _safe_hash(shop_dir / FINANCIAL_STORE_NAME) != _safe_hash(financial_backup):
+            raise OSError(f"Financial store backup verification failed: {financial_backup}")
 
     workbook = openpyxl.load_workbook(excel_path)
     sheet = workbook["Listings"]
     merged: list[dict[str, Any]] = []
-    skipped: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = list(financial_conflicts)
     moved_source_folders: set[str] = set()
     for group in groups:
         local_records = [item for item in group["records"] if item.get("folder")]
@@ -702,6 +785,8 @@ def merge_safe_duplicates(base_dir: Path, shop_id: str, excel_path: Path, reques
         temporary_targets: list[Path] = []
         quarantined: list[tuple[Path, Path]] = []
         row_backups: list[tuple[int, Any, Any, Any, Any, Any]] = []
+        financial_store_before = copy.deepcopy(financial_store)
+        financial_store_changed = False
         mapped_record = next((record for record in available_records if record.get("listing_id")), None)
         mapped_row = mapped_record.get("row") if mapped_record else None
         mapped_url = str(sheet.cell(row=mapped_row, column=16).value or "").strip() if mapped_row else ""
@@ -773,14 +858,36 @@ def merge_safe_duplicates(base_dir: Path, shop_id: str, excel_path: Path, reques
                     note = f"merged_into={canonical_folder}; quarantine={quarantine.name}"
                     sheet.cell(row=row_num, column=17).value = f"{old_extra} | {note}".strip(" |")
 
+            # Keep the source key as archival history. If the canonical folder
+            # has no record, promote an identical source payload before commit.
+            if financial_store is not None and canonical_folder not in financial_store["products"]:
+                source_financial = next((
+                    financial_store["products"][str(record["folder"])]
+                    for record in available_records
+                    if str(record["folder"]) in financial_store["products"]
+                ), None)
+                if source_financial is not None:
+                    financial_store["products"][canonical_folder] = copy.deepcopy(source_financial)
+                    financial_store["version"] += 1
+                    financial_store_changed = True
+
             # Persist the workbook inside this group's transaction. Saving to a
             # sibling and replacing atomically keeps the previous workbook valid
             # if serialization fails.
+            if financial_store_changed:
+                _write_product_financials(shop_dir, shop_id, financial_store)
             workbook.save(workbook_stage)
             workbook_stage.replace(excel_path)
             for folder in moved_folders:
                 moved_source_folders.add(folder)
         except Exception as exc:
+            financial_rollback_error: str | None = None
+            if financial_store_changed and financial_store_before is not None:
+                try:
+                    financial_store = financial_store_before
+                    _write_product_financials(shop_dir, shop_id, financial_store)
+                except (OSError, ValueError) as rollback_exc:
+                    financial_rollback_error = str(rollback_exc)
             for row_num, folder_value, status_value, url_value, extra_value, sku_value in row_backups:
                 sheet.cell(row=row_num, column=2).value = folder_value
                 sheet.cell(row=row_num, column=14).value = status_value
@@ -795,11 +902,18 @@ def merge_safe_duplicates(base_dir: Path, shop_id: str, excel_path: Path, reques
             for temporary in temporary_targets:
                 temporary.unlink(missing_ok=True)
             workbook_stage.unlink(missing_ok=True)
+            reason = f"Lỗi khi dồn; đã rollback group: {exc}"
+            if financial_rollback_error is not None:
+                reason = (
+                    f"Lỗi khi dồn; rollback tài chính thất bại: {financial_rollback_error}; "
+                    f"bản sao lưu cần khôi phục thủ công: {financial_backup}"
+                )
             skipped.append({
                 "group_id": group["group_id"],
                 "match_type": group["match_type"],
                 "verification_mode": verification_mode,
-                "reason": f"Lỗi khi dồn; đã rollback group: {exc}",
+                "reason": reason,
+                "financial_backup": str(financial_backup) if financial_backup else None,
                 "folders": sorted({str(item.get("folder")) for item in available_records}),
                 "folder_digital_hashes": folder_hashes,
                 "failed_relative_paths": failed_paths,
@@ -828,6 +942,7 @@ def merge_safe_duplicates(base_dir: Path, shop_id: str, excel_path: Path, reques
         "shop": shop_id,
         "quarantine": str(quarantine),
         "excel_backup": str(backup),
+        "financial_backup": str(financial_backup) if financial_backup else None,
         "skipped": skipped,
         "merged": merged,
         "pre_merge_counts": catalog["counts"],

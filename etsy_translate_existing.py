@@ -25,7 +25,7 @@ def ensure_deps():
 ensure_deps()
 
 from playwright.async_api import async_playwright
-from deep_translator import GoogleTranslator
+from translation_service import translate_text, translate_tags
 
 BASE_DIR    = Path(__file__).parent
 BROWSER_DIR = BASE_DIR / ".browser-session"
@@ -44,41 +44,6 @@ LANGUAGES = [
 ]
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
-def translate_text(text: str, lang: str, max_chars=4800) -> str:
-    if not text or not text.strip():
-        return text
-    try:
-        if len(text) <= max_chars:
-            return GoogleTranslator(source="en", target=lang).translate(text) or text
-            
-        # Chia theo dòng để không bị cắt ngang từ
-        lines = text.split('\n')
-        parts = []
-        current_chunk = ""
-        for line in lines:
-            if len(current_chunk) + len(line) + 1 > max_chars:
-                parts.append(GoogleTranslator(source="en", target=lang).translate(current_chunk) or current_chunk)
-                current_chunk = line + "\n"
-            else:
-                current_chunk += line + "\n"
-                
-        if current_chunk.strip():
-            parts.append(GoogleTranslator(source="en", target=lang).translate(current_chunk) or current_chunk)
-            
-        return "".join(parts).strip()
-    except Exception as e:
-        print(f"    ⚠ translate {lang}: {e}")
-        return text
-
-def translate_tag(tag: str, lang: str) -> str:
-    try:
-        t = (GoogleTranslator(source="en", target=lang).translate(tag) or tag).strip()
-        if len(t) > 20:
-            t = t[:20].rsplit(" ", 1)[0].rstrip(",- ")
-        return t if 1 <= len(t) <= 20 else tag
-    except:
-        return tag
-
 def trim_title(title: str, max_len=140) -> str:
     """Cắt title tối đa max_len ký tự, không cắt giữa từ và dọn dẹp ký tự đặc biệt."""
     import re, html
@@ -298,6 +263,7 @@ async def translate_listing(page, listing_id: str, listing_num: int, total: int)
             # Dịch
             trans_title = trim_title(translate_text(title, lang_code))
             trans_desc  = translate_text(desc, lang_code) if desc else ""
+            trans_tags = translate_tags(tags, lang_code) if tags else []
 
             # Điền title
             filled_title = False
@@ -389,8 +355,7 @@ async def translate_listing(page, listing_id: str, listing_num: int, total: int)
                         # All slots full, nothing to add
                         tags_filled = 13
                     else:
-                        for tag in tags[:slots_left]:
-                            trans_tag = translate_tag(tag, lang_code)
+                        for trans_tag in trans_tags[:slots_left]:
                             await tag_input.fill(trans_tag)
                             await page.wait_for_timeout(800)
                             await tag_input.press("Enter")

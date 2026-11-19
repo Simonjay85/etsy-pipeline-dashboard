@@ -15,7 +15,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 
 import openpyxl
-from playwright.async_api import async_playwright
+from playwright.async_api import Error as PlaywrightError, async_playwright
 
 from cloud_asset_store import CloudAssetError, CloudAssetStore
 from etsy_browser_session import is_session_ready, resolve_etsy_session
@@ -194,6 +194,65 @@ async def scrape_visible_listings(page, status: str, page_num: int) -> list[dict
               break;
             }
             if (!title) title = `Listing ${id}`;
+            const stateDateValue = (value) => {
+              if (typeof value === 'number' && Number.isFinite(value)) return value;
+              return String(value || '').trim();
+            };
+            const findNestedField = (value, field, depth = 0) => {
+              if (!value || typeof value !== 'object' || depth > 4) return '';
+              if (Object.prototype.hasOwnProperty.call(value, field)) {
+                return stateDateValue(value[field]);
+              }
+              for (const child of Object.values(value)) {
+                const found = findNestedField(child, field, depth + 1);
+                if (found !== '') return found;
+              }
+              return '';
+            };
+            const readStateDate = (node, field) => {
+              if (!node) return '';
+              const nodes = [node, ...Array.from(node.querySelectorAll?.('*') || [])];
+              const attrNames = [
+                `data-${field}`,
+                `data-${field.replace(/_/g, '-')}`,
+                field,
+              ];
+              for (const element of nodes) {
+                for (const attrName of attrNames) {
+                  const raw = element.getAttribute?.(attrName);
+                  const value = stateDateValue(raw);
+                  if (value !== '') return value;
+                }
+                for (const attrName of ['data-listing', 'data-listing-data', 'data-state']) {
+                  const raw = element.getAttribute?.(attrName);
+                  if (!raw) continue;
+                  try {
+                    const value = findNestedField(JSON.parse(raw), field);
+                    if (value !== '') return value;
+                  } catch (_) {
+                    // Etsy can leave a non-JSON marker in a data attribute.
+                    // Continue to the next DOM/API representation.
+                  }
+                }
+                for (const script of Array.from(element.querySelectorAll?.('script[type="application/json"]') || [])) {
+                  try {
+                    const value = findNestedField(JSON.parse(script.textContent || ''), field);
+                    if (value !== '') return value;
+                  } catch (_) {
+                    // Keep the DOM crawl tolerant of partial/escaped JSON.
+                  }
+                }
+              }
+              const html = String(node.outerHTML || '');
+              const fieldPattern = field.replace(/_/g, '[-_]');
+              const match = html.match(new RegExp(
+                `["']${fieldPattern}["']\\s*:\\s*(?:"([^"]*)"|'([^']*)'|(\\d+(?:\\.\\d+)?))`,
+                'i',
+              ));
+              return stateDateValue(match?.[1] ?? match?.[2] ?? (match?.[3] ? Number(match[3]) : ''));
+            };
+            const formattedStateDate = readStateDate(card, 'formatted_state_date');
+            const stateDate = readStateDate(card, 'state_date');
             out.push({
               id,
               title,
@@ -201,12 +260,147 @@ async def scrape_visible_listings(page, status: str, page_num: int) -> list[dict
               url: `https://www.etsy.com/listing/${id}`,
               managerStatus: status,
               page: pageNum,
+              ...(formattedStateDate !== '' ? { formatted_state_date: formattedStateDate } : {}),
+              ...(stateDate !== '' ? { state_date: stateDate } : {}),
             });
           }
           return out;
         }""",
         {"status": status, "pageNum": page_num},
     )
+    if not isinstance(items, list):
+        items = []
+
+    # Etsy sometimes keeps the listing dates only in the JSON response that
+    # rendered the current Manager page.  Read that already-loaded GET
+    # response through the page's own session as a fallback for cards whose
+    # markup does not expose the fields.  This is deliberately read-only and
+    # returns an empty map when Etsy changes the route, payload, or browser
+    # test double.
+    network_dates: dict[str, dict[str, object]] = {}
+    try:
+        loaded_dates = await page.evaluate(
+            """async ({ status }) => {
+              const dateFields = [
+                'formatted_state_date', 'formattedStateDate',
+                'state_date', 'stateDate',
+                'posted_at', 'postedAt',
+                'published_at', 'publishedAt',
+                'listed_at', 'listedAt',
+                'date_listed', 'dateListed',
+                'creation_tsz', 'creationTsz',
+                'creation_timestamp', 'creationTimestamp',
+                'created_at', 'createdAt',
+              ];
+              const cleanValue = (value) => {
+                if (typeof value === 'number' && Number.isFinite(value)) return value;
+                if (typeof value === 'string') return value.trim();
+                return '';
+              };
+              const recordsFrom = (payload) => {
+                if (Array.isArray(payload)) return payload;
+                if (!payload || typeof payload !== 'object') return [];
+                for (const key of ['results', 'listings', 'items', 'data']) {
+                  const value = payload[key];
+                  if (Array.isArray(value)) return value;
+                  if (value && typeof value === 'object') {
+                    const nested = recordsFrom(value);
+                    if (nested.length) return nested;
+                  }
+                }
+                return [];
+              };
+              try {
+                const resources = Array.from(performance.getEntriesByType('resource') || [])
+                  .map(entry => String(entry.name || ''))
+                  .filter(Boolean)
+                  .reverse();
+                const resourceUrl = resources.find((rawUrl) => {
+                  try {
+                    const parsed = new URL(rawUrl, location.href);
+                    const pathParts = parsed.pathname.split('/');
+                    const searchPath = (pathParts.length === 9 && pathParts[8] === 'search')
+                      || (pathParts.length === 10 && pathParts[8] === 'search' && pathParts[9] === '');
+                    return parsed.origin === location.origin
+                      && searchPath
+                      && pathParts[1] === 'api'
+                      && pathParts[2] === 'v3'
+                      && pathParts[3] === 'ajax'
+                      && pathParts[4] === 'shop'
+                      && /^\\d+$/.test(pathParts[5])
+                      && pathParts[6] === 'listings'
+                      && pathParts[7] === 'v3'
+                      && pathParts[8] === 'search'
+                      && String(parsed.searchParams.get('state') || '').toLowerCase() === String(status || '').toLowerCase();
+                  } catch (_) {
+                    return false;
+                  }
+                });
+                if (!resourceUrl || typeof fetch !== 'function') return {};
+                const response = await fetch(resourceUrl, { credentials: 'include' });
+                if (!response.ok) return {};
+                const payload = await response.json();
+                const output = {};
+                for (const record of recordsFrom(payload)) {
+                  if (!record || typeof record !== 'object') continue;
+                  const id = String(record.listing_id || record.listingId || record.id || '').trim();
+                  if (!/^\\d+$/.test(id)) continue;
+                  const dates = {};
+                  for (const field of dateFields) {
+                    const value = cleanValue(record[field]);
+                    if (value !== '') dates[field] = value;
+                  }
+                  if (Object.keys(dates).length) output[id] = dates;
+                }
+                return output;
+              } catch (_) {
+                return {};
+              }
+            }""",
+            {"status": status},
+        )
+        if isinstance(loaded_dates, dict):
+            network_dates = {
+                str(listing_id): dates
+                for listing_id, dates in loaded_dates.items()
+                if isinstance(dates, dict)
+            }
+    except (AttributeError, KeyError, OSError, PlaywrightError, RuntimeError, TypeError, ValueError):
+        # The DOM result remains valid when the internal API is not visible or
+        # when a minimal test page does not implement a second evaluate call.
+        network_dates = {}
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        fallback_dates = network_dates.get(str(item.get("id") or ""), {})
+        if not isinstance(fallback_dates, dict):
+            continue
+        # Only merge the allowlisted date fields.  Listing title, links,
+        # status, and pagination must continue to come from the DOM crawl.
+        for field in (
+            "formatted_state_date",
+            "formattedStateDate",
+            "state_date",
+            "stateDate",
+            "posted_at",
+            "postedAt",
+            "published_at",
+            "publishedAt",
+            "listed_at",
+            "listedAt",
+            "date_listed",
+            "dateListed",
+            "creation_tsz",
+            "creationTsz",
+            "creation_timestamp",
+            "creationTimestamp",
+            "created_at",
+            "createdAt",
+        ):
+            if item.get(field) in (None, "") and fallback_dates.get(field) not in (None, ""):
+                item[field] = fallback_dates[field]
+
     deduped = []
     seen = set()
     for item in items:

@@ -1,0 +1,438 @@
+CREATE A COMPLETE PREMIUM ETSY LISTING IMAGE SET FOR THE FURNITURE PRODUCT SHOWN IN THE UPLOADED SOURCE PHOTOS.
+
+==============================
+PRIMARY GOAL
+==============================
+
+Redesign the current Etsy listing image set so it feels significantly more premium, desirable, warm, editorial, and purchase-oriented.
+
+The customer should look at the images and immediately imagine the product inside their own home.
+
+Visual direction:
+- premium Etsy furniture photography
+- warm Japandi
+- Scandinavian natural interior
+- quiet luxury
+- organic modern
+- natural materials
+- editorial interior magazine quality
+- warm sunlight
+- soft ivory / cream / natural beige environment
+- subtle greenery
+- tasteful ceramic and linen props
+- premium but realistic
+
+DO NOT make the listing look like a technical catalogue.
+DO NOT overload the images with text.
+
+==============================
+SOURCE-OF-TRUTH RULE
+==============================
+
+The uploaded product photos are the VISUAL SOURCE OF TRUTH.
+
+Preserve the real product as faithfully as possible:
+
+- exact overall silhouette
+- tabletop / seat shape
+- number of legs
+- leg angle
+- leg thickness
+- support bars / stretchers
+- joints
+- proportions
+- wood tone
+- wood grain character
+- finish
+- rounded edges
+- visible imperfections or distinctive markings
+
+DO NOT redesign the furniture.
+DO NOT change its construction.
+DO NOT modernize its legs.
+DO NOT make it thinner, thicker, taller or wider.
+DO NOT invent extra pieces.
+DO NOT remove structural pieces.
+DO NOT substitute another furniture model.
+
+The same identifiable product must appear consistently throughout all images.
+
+If several source photos are uploaded, study ALL of them before generating.
+
+==============================
+FACTUAL SOURCE
+==============================
+
+Only use factual information explicitly provided by the user, source file, JSON, PDF, or product photos.
+
+Do not invent:
+- material
+- dimensions
+- weight
+- load capacity
+- handmade claims
+- sustainability claims
+- country of origin
+- custom options
+- features
+- warranty
+- use cases that would be unsafe
+
+PRODUCT DIMENSIONS TO DISPLAY:
+
+[REPLACE WITH VERIFIED DIMENSIONS]
+
+Example:
+W350 × D420 × H480 mm
+
+This dimension text should appear ONLY on the dedicated dimensions image.
+
+==============================
+TEXT RULE — VERY IMPORTANT
+==============================
+
+Use almost NO text.
+
+Images 1–3 and 5–10:
+NO headings.
+NO labels.
+NO marketing slogans.
+NO product name.
+NO "product details".
+NO "recommended spaces".
+NO "material & color".
+NO "custom option".
+NO CTA.
+NO unnecessary typography.
+
+Image 4 is the ONLY image that contains meaningful text:
+[W350 × D420 × H480 mm]
+
+Keep the dimension typography elegant, simple and highly readable.
+
+Let the photography sell the product.
+
+==============================
+CREATE EXACTLY 10 IMAGES
+==============================
+
+Return EXACTLY TEN SEPARATE STANDALONE IMAGES.
+
+Each image must be its own square Etsy listing image.
+
+DO NOT create one 10-image contact sheet.
+DO NOT combine the complete set into one canvas.
+
+Recommended format:
+1:1 square
+high resolution
+optimized to remain attractive as a small Etsy thumbnail.
+
+==============================
+IMAGE 1 — HERO / MAIN ETSY COVER
+==============================
+
+This is the most important image.
+
+Create a beautiful aspirational living-room lifestyle photograph.
+
+Place the real product prominently in the foreground beside a premium ivory / cream sofa.
+
+Environment:
+- warm natural sunlight
+- cream or textured rug
+- light natural wood flooring
+- one tasteful indoor plant
+- subtle ceramics
+- soft linen textures
+- clean warm Japandi room
+
+Product should occupy approximately 60–75% of the visual attention.
+
+Keep the product sharp.
+Background slightly softer.
+
+The wood should strongly contrast against the lighter environment.
+
+NO TEXT.
+
+The thumbnail must instantly communicate:
+beautiful furniture + warm home + premium craftsmanship.
+
+==============================
+IMAGE 2 — CLEAN HERO PRODUCT
+==============================
+
+Show one large clean 3/4 product view.
+
+Background:
+soft warm ivory.
+
+Use realistic contact shadow.
+
+Product should fill most of the canvas while still having elegant breathing room.
+
+Emphasize:
+- silhouette
+- proportions
+- warm wood
+- construction
+
+NO TEXT.
+NO props.
+
+Make this image ideal for customers who want to clearly inspect the complete item.
+
+==============================
+IMAGE 3 — CRAFTSMANSHIP DETAILS
+==============================
+
+Create an elegant detail-focused layout.
+
+Use the authentic product and show:
+
+- one main product view
+- close-up of tabletop / seat
+- close-up of wood grain
+- close-up of one structural joint / support
+- close-up of leg or stretcher construction
+
+Minimal ivory background.
+
+No labels such as:
+SEAT
+LEGS
+BASE SUPPORT
+
+NO TEXT.
+
+The close-ups should communicate quality visually.
+
+==============================
+IMAGE 4 — DIMENSIONS
+==============================
+
+Create a clean premium dimensions image.
+
+Use the product on a warm ivory background.
+
+Add elegant, readable labels directly beside the corresponding measurement arrows:
+- place the verified width label directly alongside the horizontal width arrow
+- place the verified depth label directly alongside the depth arrow
+- place the verified height label directly alongside the vertical height arrow
+
+Use only the exact verified dimension components from the product source JSON. Never copy example values from this prompt.
+
+For products with verified dimensions, place each component directly beside its corresponding arrow:
+- width component beside the horizontal width arrow
+- depth component beside the depth arrow
+- height component beside the vertical height arrow
+
+Use these exact labels for this product:
+[VERIFIED_WIDTH_LABEL]
+[VERIFIED_DEPTH_LABEL]
+[VERIFIED_HEIGHT_LABEL]
+
+For products without verified dimensions, omit all measurement arrows, dimension labels, dimension numbers, and dimension text. Do not invent or estimate any measurement.
+
+[INSERT DIMENSIONS]
+
+Example:
+W350 × D420 × H480 mm
+
+Do not add headings such as:
+STANDARD DIMENSIONS
+PRODUCT SIZE
+SIZE GUIDE
+
+Keep it extremely clean.
+
+The dimension must remain legible on mobile.
+
+==============================
+IMAGE 5 — SCALE / REAL-WORLD PROPORTION
+==============================
+
+Place the product beside a sofa or another normal-size piece of furniture.
+
+Purpose:
+allow customers to intuitively understand its actual scale.
+
+Natural interior.
+Warm sunlight.
+Minimal styling.
+
+NO TEXT.
+
+Do not artificially change the product dimensions to make the composition easier.
+
+==============================
+IMAGE 6 — LIVING ROOM LIFESTYLE
+==============================
+
+Show the product naturally used next to a sofa.
+
+Add only a few tasteful props, for example:
+- ceramic mug
+- neutral book
+- small plant
+
+Avoid clutter.
+
+Create a warm "I want this in my home" feeling.
+
+Product remains the hero.
+
+NO TEXT.
+
+==============================
+IMAGE 7 — BEDROOM LIFESTYLE
+==============================
+
+Place the exact same product naturally beside a bed.
+
+Warm neutral bedroom:
+- linen bedding
+- subtle bedside lamp
+- simple ceramic vase
+- natural wood
+- soft morning sunlight
+
+Keep styling premium, calm, and believable.
+
+NO TEXT.
+
+Do not alter the product to make it look like a different bedside table.
+
+==============================
+IMAGE 8 — DECOR / STYLING USE
+==============================
+
+Show the product styled tastefully with ONE main decorative use.
+
+Examples:
+small plant
+ceramic vase
+books
+
+Keep product clearly visible.
+
+Avoid overloading the tabletop.
+
+The composition should feel like a modern interior design magazine.
+
+NO TEXT.
+
+==============================
+IMAGE 9 — MATERIAL / GRAIN BEAUTY SHOT
+==============================
+
+Create a premium close-up beauty photograph focused on the real wood surface.
+
+Show:
+- wood grain
+- rounded edge
+- surface finish
+- subtle natural tonal variation
+
+Include enough of the product so buyers understand what they are looking at.
+
+Very realistic macro detail.
+
+NO TEXT.
+
+Do not invent a different grain pattern or exotic wood species.
+
+==============================
+IMAGE 10 — CLOSING EDITORIAL HERO
+==============================
+
+Create a second aspirational lifestyle image that feels different from Image 1.
+
+Editorial interior photography.
+
+Possible composition:
+- product placed between sofa and natural wood coffee table
+- warm side lighting
+- greenery
+- linen
+- ceramics
+- quiet luxury styling
+
+Keep room beautiful but restrained.
+
+Product must remain clearly dominant.
+
+NO TEXT.
+
+This final image should leave the buyer with a strong emotional impression of owning the product.
+
+==============================
+VISUAL CONSISTENCY
+==============================
+
+Across all 10 images maintain:
+
+- same furniture model
+- same construction
+- same proportions
+- same wood tone
+- same finish
+- same recognizable wood character
+- warm cream / ivory palette
+- consistent natural sunlight
+- premium Japandi atmosphere
+- realistic photography
+- subtle shadows
+- no heavy filters
+
+The full image set should look like it came from ONE professional furniture campaign.
+
+==============================
+ETSY OPTIMIZATION
+==============================
+
+Prioritize mobile thumbnail performance.
+
+Avoid:
+- tiny product
+- excessive empty space
+- low contrast
+- text-heavy designs
+- pale product blending into background
+- catalog-style headings
+- generic icon infographics
+- excessive props
+- busy rooms
+- fake luxury styling
+- dramatic unrealistic AI lighting
+
+Use light neutral backgrounds so the warm brown product pops immediately.
+
+On lifestyle images, composition should create visual depth while keeping the product unmistakably the hero.
+
+==============================
+STRICT PRODUCT FIDELITY
+==============================
+
+Do not regenerate the product into a similar-looking stool/table.
+
+Treat the uploaded product as an object that must be preserved.
+
+Changing the background, lighting, camera framing and surrounding environment is allowed.
+
+Changing the furniture design is NOT allowed.
+
+If any visual detail is uncertain, follow the uploaded product photography instead of inventing it.
+
+==============================
+FINAL OUTPUT
+==============================
+
+Return exactly:
+10 separate square Etsy listing images.
+
+No explanation.
+No contact sheet.
+No combined 10-image board.
+No extra text.

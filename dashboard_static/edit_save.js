@@ -6,7 +6,7 @@
   'use strict';
 
   const VERIFIED_FIELDS = Object.freeze([
-    'title', 'tags', 'keywords', 'description', 'price', 'section',
+    'title', 'tags', 'keywords', 'category', 'description', 'price', 'section',
     'extra', 'etsy_url', 'sku', 'qty',
   ]);
 

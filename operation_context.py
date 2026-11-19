@@ -10,6 +10,8 @@ import time
 import uuid
 from typing import Mapping
 
+from pipeline_contracts import CONTRACT_VERSION, PipelineStage, build_idempotency_key
+
 
 _LISTING_URL_RE = re.compile(r"/(?:listing-editor/edit/|listing/)(\d+)")
 _ROW_RE = re.compile(r"^[1-9][0-9]*$")
@@ -17,6 +19,104 @@ _ROW_RE = re.compile(r"^[1-9][0-9]*$")
 
 class OperationContextError(ValueError):
     """Raised when a request identity is stale, incomplete, or contradictory."""
+
+
+@dataclass(frozen=True)
+class PipelineOperationContext:
+    """Immutable identity for one candidate-stage pipeline operation.
+
+    Unlike :class:`OperationContext`, this context does not require a
+    workbook row or Etsy listing id.  Research and asset creation therefore
+    remain addressable after a restart, before a catalog row exists.
+    """
+
+    campaign_id: str
+    shop_id: str
+    candidate_id: str
+    product_id: str
+    stage: PipelineStage
+    input_version: str
+    source_checksum: str
+    contract_version: str = CONTRACT_VERSION
+    side_effect_boundary: str = "none"
+    created_at: float = 0.0
+
+    def __post_init__(self) -> None:
+        if not self.campaign_id or not self.shop_id or not self.candidate_id:
+            raise OperationContextError("Pipeline context thiếu campaign/shop/candidate")
+        if not self.input_version:
+            raise OperationContextError("Pipeline context thiếu input_version")
+        if self.side_effect_boundary not in {"none", "etsy", "etsy_write", "external_write"}:
+            raise OperationContextError("side_effect_boundary không hợp lệ")
+
+    @property
+    def idempotency_key(self) -> str:
+        return build_idempotency_key(
+            self.campaign_id,
+            self.shop_id,
+            self.product_id or self.candidate_id,
+            self.stage,
+            input_version=self.input_version,
+            source_fingerprint_value=self.source_checksum,
+            contract_version=self.contract_version,
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "campaign_id": self.campaign_id,
+            "shop_id": self.shop_id,
+            "candidate_id": self.candidate_id,
+            "product_id": self.product_id,
+            "stage": self.stage.value,
+            "input_version": self.input_version,
+            "source_checksum": self.source_checksum,
+            "contract_version": self.contract_version,
+            "side_effect_boundary": self.side_effect_boundary,
+            "idempotency_key": self.idempotency_key,
+            "created_at": self.created_at,
+        }
+
+
+def build_pipeline_operation_context(
+    *,
+    campaign_id: str,
+    shop_id: str,
+    stage: str | PipelineStage,
+    candidate_id: str | None = None,
+    product_id: str | None = None,
+    input_version: str = "1",
+    source_checksum: str = "",
+    contract_version: str = CONTRACT_VERSION,
+    side_effect_boundary: str = "none",
+) -> PipelineOperationContext:
+    """Validate and freeze a pipeline identity at admission."""
+
+    try:
+        resolved_stage = stage if isinstance(stage, PipelineStage) else PipelineStage(str(stage).strip().lower())
+    except ValueError as exc:
+        raise OperationContextError(f"Pipeline stage không hợp lệ: {stage}") from exc
+    campaign = str(campaign_id or "").strip()
+    shop = str(shop_id or "").strip()
+    candidate = str(candidate_id or "").strip() or f"candidate-{uuid.uuid4()}"
+    product = str(product_id or "").strip()
+    version = str(input_version or "").strip()
+    checksum = str(source_checksum or "").strip()
+    if not campaign or not shop:
+        raise OperationContextError("Pipeline context thiếu campaign/shop")
+    if not version:
+        raise OperationContextError("Pipeline context thiếu input_version")
+    return PipelineOperationContext(
+        campaign_id=campaign,
+        shop_id=shop,
+        candidate_id=candidate,
+        product_id=product,
+        stage=resolved_stage,
+        input_version=version,
+        source_checksum=checksum,
+        contract_version=str(contract_version or CONTRACT_VERSION),
+        side_effect_boundary=str(side_effect_boundary or "none"),
+        created_at=time.time(),
+    )
 
 
 _OPERATION_ALIASES = {

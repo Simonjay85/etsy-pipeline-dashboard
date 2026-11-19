@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi import HTTPException
 
 import dashboard_app
+from etsy_browser_session import EtsyBrowserSession
 
 
 class _Request:
@@ -100,6 +101,85 @@ class TestPostRouteAdmissionGuard(TestCase):
             _cell_value(self.fixture.excel_path, 4, 14),
         )
 
+    def _make_eligible(self) -> None:
+        wb = openpyxl.load_workbook(self.fixture.excel_path)
+        wb["Listings"].cell(row=4, column=16, value="")
+        wb.save(self.fixture.excel_path)
+        wb.close()
+
+    def _shop3_session(self) -> EtsyBrowserSession:
+        return EtsyBrowserSession(
+            shop_id="shop3",
+            profile_dir=self.fixture.tmp / "etsy-poster-profile",
+            debug_port=46282,
+        )
+
+    def test_post_route_rejects_unavailable_exact_session_before_enqueue(self):
+        self._make_eligible()
+        session = self._shop3_session()
+        queue_before = dict(dashboard_app._OPERATION_QUEUE_COMMANDS)
+
+        with patch.object(dashboard_app, "SHOP_DIR", return_value=self.fixture.shop_dir), \
+                patch.object(dashboard_app, "EXCEL_FILE", return_value=self.fixture.excel_path), \
+                patch.object(dashboard_app, "_active_shop_id", "shop3"), \
+                patch.object(dashboard_app, "resolve_etsy_session", return_value=session) as resolve_session, \
+                patch.object(dashboard_app, "is_etsy_session_ready", return_value=False) as session_ready, \
+                patch.object(dashboard_app, "_enqueue_operation", new_callable=AsyncMock) as enqueue_operation:
+            response = asyncio.run(dashboard_app.post_to_etsy(4))
+
+        payload = _response_payload(response)
+        self.assertEqual(409, response.status_code)
+        self.assertFalse(payload["ok"])
+        self.assertFalse(payload["created"])
+        self.assertEqual("shop3", payload["shop_id"])
+        self.assertEqual(str(session.profile_dir), payload["profile_dir"])
+        self.assertEqual(46282, payload["debug_port"])
+        self.assertIn("shop3", payload["error"])
+        self.assertIn(str(session.profile_dir), payload["error"])
+        self.assertIn("46282", payload["error"])
+        self.assertIn("Đăng nhập Etsy", payload["error"])
+        self.assertIn("Post", payload["error"])
+        self.assertIn("chờ Chrome sẵn sàng", payload["error"])
+        resolve_session.assert_called_once_with(dashboard_app.BASE_DIR, dashboard_app.SHOPS, "shop3")
+        session_ready.assert_called_once_with(session)
+        enqueue_operation.assert_not_awaited()
+        self.assertEqual(queue_before, dashboard_app._OPERATION_QUEUE_COMMANDS)
+        self.assertEqual("⏳ Chờ đăng", _cell_value(self.fixture.excel_path, 4, 14))
+        self.assertIsNone(_cell_value(self.fixture.excel_path, 4, 16))
+
+    def test_post_route_with_ready_exact_session_uses_existing_enqueue_path(self):
+        self._make_eligible()
+        session = self._shop3_session()
+        command = {
+            "command_id": "ready-command",
+            "operation": "etsy-post",
+            "shop_id": "shop3",
+            "target": "4:product-259",
+            "status": "queued",
+        }
+
+        with patch.object(dashboard_app, "SHOP_DIR", return_value=self.fixture.shop_dir), \
+                patch.object(dashboard_app, "EXCEL_FILE", return_value=self.fixture.excel_path), \
+                patch.object(dashboard_app, "_active_shop_id", "shop3"), \
+                patch.object(dashboard_app, "resolve_etsy_session", return_value=session) as resolve_session, \
+                patch.object(dashboard_app, "is_etsy_session_ready", return_value=True) as session_ready, \
+                patch.object(dashboard_app, "_enqueue_operation", new_callable=AsyncMock, return_value=(command, True)) as enqueue_operation:
+            response = asyncio.run(dashboard_app.post_to_etsy(4))
+
+        payload = _response_payload(response)
+        self.assertEqual(202, response.status_code)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["created"])
+        self.assertEqual("ready-command", payload["command"]["command_id"])
+        resolve_session.assert_called_once_with(dashboard_app.BASE_DIR, dashboard_app.SHOPS, "shop3")
+        session_ready.assert_called_once_with(session)
+        enqueue_operation.assert_awaited_once()
+        self.assertEqual("etsy-post", enqueue_operation.await_args.kwargs["operation"])
+        self.assertEqual("shop3", enqueue_operation.await_args.kwargs["shop_id"])
+        self.assertEqual("4:product-259", enqueue_operation.await_args.kwargs["target"])
+        self.assertTrue(callable(enqueue_operation.await_args.kwargs["callback"]))
+        self.assertEqual("⏳ Chờ đăng", _cell_value(self.fixture.excel_path, 4, 14))
+
 
 class TestRunPosterFailurePropagation(TestCase):
     def setUp(self) -> None:
@@ -122,6 +202,7 @@ class TestRunPosterFailurePropagation(TestCase):
                 patch.object(dashboard_app, "_runtime_prefetch_import_check", AsyncMock(return_value=(True, "ok")), \
                 ), \
                 patch.object(dashboard_app, "_terminate_subprocess", new=AsyncMock(return_value=None)), \
+                patch.object(dashboard_app, "_read_product_status_at_row", return_value=""), \
                 patch.object(dashboard_app, "save_to_excel") as save_to_excel:
             with self.assertRaises(RuntimeError) as caught:
                 asyncio.run(
@@ -142,6 +223,43 @@ class TestRunPosterFailurePropagation(TestCase):
             )
         )
 
+    def test_non_zero_poster_exit_preserves_detailed_status(self):
+        fake_proc = AsyncMock()
+        fake_proc.stdout = None
+        fake_proc.wait = AsyncMock(return_value=1)
+
+        async def fake_subprocess(*_args, **_kwargs):
+            return fake_proc
+
+        with patch.object(dashboard_app.asyncio, "create_subprocess_exec", AsyncMock(side_effect=fake_subprocess)), \
+                patch.object(dashboard_app, "_runtime_prefetch_import_check", AsyncMock(return_value=(True, "ok")), \
+                ), \
+                patch.object(dashboard_app, "_terminate_subprocess", new=AsyncMock(return_value=None)), \
+                patch.object(dashboard_app, "save_to_excel") as save_to_excel, \
+                patch.object(
+                    dashboard_app,
+                    "_read_product_status_at_row",
+                    return_value="❌ Lỗi: Không thể xác minh trùng lặp draft trước khi tạo mới, dừng để tránh lỗi trùng",
+                ):
+            with self.assertRaises(RuntimeError) as caught:
+                asyncio.run(
+                    dashboard_app._run_poster(
+                        4,
+                        "product-232",
+                        "daisyflowdigital",
+                        lock_key="test-post-lock",
+                    )
+                )
+
+        self.assertIn("❌ Lỗi exit 1", str(caught.exception))
+        self.assertFalse(
+            any(
+                "❌ Lỗi exit" in str(call.args[1].get("status") or "")
+                for call in save_to_excel.call_args_list
+                if len(call.args) > 1 and isinstance(call.args[1], dict)
+            )
+        )
+
 
 class TestRunQueuedOperationFailure(IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
@@ -150,8 +268,18 @@ class TestRunQueuedOperationFailure(IsolatedAsyncioTestCase):
         dashboard_app._OPERATION_QUEUE_DEDUPE.clear()
         dashboard_app._running_tasks.clear()
         dashboard_app._running_processes.clear()
+        self._session_ready_patcher = patch.object(
+            dashboard_app, "is_etsy_session_ready", return_value=True
+        )
+        self._session_ready_patcher.start()
+        self._status_reader_patcher = patch.object(
+            dashboard_app, "_read_product_status_at_row", return_value=""
+        )
+        self._status_reader_patcher.start()
 
     async def asyncTearDown(self) -> None:
+        self._session_ready_patcher.stop()
+        self._status_reader_patcher.stop()
         dashboard_app._OPERATION_QUEUE_COMMANDS.clear()
         dashboard_app._OPERATION_QUEUE_DEDUPE.clear()
         dashboard_app._running_tasks.clear()

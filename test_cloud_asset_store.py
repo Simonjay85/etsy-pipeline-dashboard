@@ -373,6 +373,47 @@ class CloudAssetStoreTests(unittest.TestCase):
             self.assertEqual((product / "images" / "01-hero.png").read_bytes(), b"image-one")
             self.assertEqual((product / "files" / "source.zip").read_bytes(), b"downloadable-source")
 
+    def test_status_marks_images_only_never_uploaded_product_as_local_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "repo"
+            product = make_product(root)
+            shutil.rmtree(product / "files")
+            store, _ = make_store(root, Path(temporary) / "remote", Path(temporary) / "cache")
+
+            status = store.status(product)
+
+            self.assertTrue(status["ok"])
+            self.assertEqual(status["state"], "LOCAL_ONLY")
+            self.assertEqual(load_local_state(product)["state"], "LOCAL_ONLY")
+
+    def test_status_keeps_error_for_never_uploaded_product_without_assets(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "repo"
+            product = make_product(root)
+            shutil.rmtree(product / "images")
+            shutil.rmtree(product / "files")
+            store, _ = make_store(root, Path(temporary) / "remote", Path(temporary) / "cache")
+
+            status = store.status(product)
+
+            self.assertFalse(status["ok"])
+            self.assertEqual(status["state"], "ERROR")
+            self.assertEqual(load_local_state(product)["state"], "ERROR")
+
+    def test_status_keeps_error_when_content_dir_is_symlink_without_cloud_revision(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "repo"
+            product = make_product(root)
+            shutil.rmtree(product / "images")
+            shutil.rmtree(product / "files")
+            (product / "images").symlink_to(product / "images-does-not-exist", target_is_directory=True)
+            store, _ = make_store(root, Path(temporary) / "remote", Path(temporary) / "cache")
+
+            status = store.status(product)
+
+            self.assertFalse(status["ok"])
+            self.assertEqual(status["state"], "ERROR")
+
     def test_immediate_offload_preserves_local_when_remote_reverification_fails(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "repo"

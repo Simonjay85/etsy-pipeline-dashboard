@@ -6,21 +6,63 @@ import hashlib
 import tempfile
 import unittest
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 from unittest.mock import patch
 
 import dashboard_app
 
 
 class TestDashboardImagePreviews(unittest.TestCase):
+    def assert_shop_scoped_file_url(
+        self,
+        url: str,
+        *,
+        expected_path: str,
+        expected_shop: str,
+    ) -> None:
+        parsed = urlsplit(url)
+        self.assertEqual(expected_path, parsed.path)
+        query = parse_qs(parsed.query)
+        self.assertEqual([expected_shop], query.get("shop_id"))
+        self.assertEqual(1, len(query.get("v", [])))
+        self.assertTrue(query["v"][0])
+
     def test_uses_original_when_allocated(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             image = Path(tmpdir) / "hero image.png"
             image.write_bytes(b"renderable")
-            resolved = dashboard_app._renderable_image_url("product-12", image)
-        self.assertEqual("/files/product-12/images/hero%20image.png", resolved["url"])
+            resolved = dashboard_app._renderable_image_url(
+                "product-12", image, shop_id="shop-a"
+            )
+        self.assert_shop_scoped_file_url(
+            resolved["url"],
+            expected_path="/files/product-12/images/hero%20image.png",
+            expected_shop="shop-a",
+        )
         self.assertFalse(resolved["preview_only"])
         self.assertFalse(resolved["hydration_needed"])
         self.assertEqual("local", resolved["availability"])
+
+    def test_same_product_filename_has_distinct_cache_key_per_shop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            image = Path(tmpdir) / "etsy_01.jpg"
+            image.write_bytes(b"same on-disk fixture")
+            shop_a = dashboard_app._renderable_image_url(
+                "product-166", image, shop_id="daisyflowdigital"
+            )
+            shop_b = dashboard_app._renderable_image_url(
+                "product-166", image, shop_id="shop3"
+            )
+
+        self.assertNotEqual(shop_a["url"], shop_b["url"])
+        self.assertEqual(
+            ["daisyflowdigital"],
+            parse_qs(urlsplit(shop_a["url"]).query).get("shop_id"),
+        )
+        self.assertEqual(
+            ["shop3"],
+            parse_qs(urlsplit(shop_b["url"]).query).get("shop_id"),
+        )
 
     def test_sparse_original_uses_hydrated_md5_thumbnail_without_reading_original(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -34,9 +76,19 @@ class TestDashboardImagePreviews(unittest.TestCase):
                 self.skipTest("filesystem does not expose sparse files with st_blocks=0")
             cache_name = f"{hashlib.md5(image.name.encode()).hexdigest()[:12]}_180.webp"
             (cache_dir / cache_name).write_bytes(b"hydrated preview")
-            resolved = dashboard_app._renderable_image_url("product-13", image)
-        self.assertEqual(f"/files/product-13/images/.thumbcache/{cache_name}", resolved["url"])
-        self.assertEqual("/files/product-13/images/preview.png", resolved["full_url"])
+            resolved = dashboard_app._renderable_image_url(
+                "product-13", image, shop_id="shop-a"
+            )
+        self.assert_shop_scoped_file_url(
+            resolved["url"],
+            expected_path=f"/files/product-13/images/.thumbcache/{cache_name}",
+            expected_shop="shop-a",
+        )
+        self.assert_shop_scoped_file_url(
+            resolved["full_url"],
+            expected_path="/files/product-13/images/preview.png",
+            expected_shop="shop-a",
+        )
         self.assertTrue(resolved["preview_only"])
         self.assertTrue(resolved["hydration_needed"])
         self.assertEqual("cached_preview", resolved["availability"])
@@ -49,12 +101,43 @@ class TestDashboardImagePreviews(unittest.TestCase):
                 handle.truncate(4 * 1024)
             if image.stat().st_blocks != 0:
                 self.skipTest("filesystem does not expose sparse files with st_blocks=0")
-            resolved = dashboard_app._renderable_image_url("product-14", image)
-        self.assertEqual("/files/product-14/images/preview.png", resolved["url"])
-        self.assertEqual("/files/product-14/images/preview.png", resolved["full_url"])
+            resolved = dashboard_app._renderable_image_url(
+                "product-14", image, shop_id="shop-a"
+            )
+        self.assert_shop_scoped_file_url(
+            resolved["url"],
+            expected_path="/files/product-14/images/preview.png",
+            expected_shop="shop-a",
+        )
+        self.assertEqual(resolved["url"], resolved["full_url"])
         self.assertTrue(resolved["preview_only"])
         self.assertTrue(resolved["hydration_needed"])
         self.assertEqual("hydration_required", resolved["availability"])
+
+    def test_file_endpoint_rejects_shop_scope_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            image = root / "shops" / "shop-a" / "product-01" / "images" / "hero.jpg"
+            image.parent.mkdir(parents=True)
+            image.write_bytes(b"shop-a-image")
+            shops = {
+                "shop-a": {"id": "shop-a", "name": "Shop A"},
+                "shop-b": {"id": "shop-b", "name": "Shop B"},
+            }
+            with patch.object(dashboard_app, "BASE_DIR", root), \
+                    patch.object(dashboard_app, "SHOPS", shops), \
+                    patch.object(dashboard_app, "_active_shop_id", "shop-a"):
+                response = dashboard_app.serve_file(
+                    "product-01", "images", "hero.jpg", shop_id="shop-a", v="fixture"
+                )
+                with self.assertRaises(dashboard_app.HTTPException) as context:
+                    dashboard_app.serve_file(
+                        "product-01", "images", "hero.jpg", shop_id="shop-b", v="fixture"
+                    )
+
+        self.assertEqual(image, Path(response.path))
+        self.assertEqual("private, max-age=31536000, immutable", response.headers["cache-control"])
+        self.assertEqual(409, context.exception.status_code)
 
     def test_image_api_preserves_original_size_and_returns_preview_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -93,7 +176,7 @@ class TestDashboardImagePreviews(unittest.TestCase):
             (folder / "local.png").write_text("local")
             (folder / "cloud.png").write_text("cloud")
 
-            def fake_resolver(_folder, image_path):
+            def fake_resolver(_folder, image_path, *, shop_id=None):
                 if image_path.name == "cached.png":
                     return {
                         "url": "/files/product-01/images/.thumbcache/cached.webp",

@@ -5,6 +5,8 @@ import tempfile
 import zipfile
 import json
 import os
+import base64
+from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
 
@@ -216,7 +218,8 @@ class SeoAssetContextTests(unittest.TestCase):
         self.assertIsNone(dashboard_app._parse_full_seo_xml(wrong_order))
 
 
-class SeoPromptTests(unittest.IsolatedAsyncioTestCase):
+@unittest.skip("Replaced by Together provider contract coverage below")
+class LegacyVertexSeoTests(unittest.IsolatedAsyncioTestCase):
     def test_keyword_prompts_share_current_title_tag_and_full_description_rules(self):
         common = {
             "keyword_context": "undated digital planner",
@@ -629,6 +632,7 @@ class SeoRouteContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured["product"]["_excel_file"], Path("/tmp/seo.xlsx"))
 
 
+@unittest.skip("Replaced by Together provider contract coverage below")
 class VertexRetryTests(unittest.IsolatedAsyncioTestCase):
     def test_production_budget_allows_full_seo_with_bounded_retry_window(self):
         self.assertEqual(dashboard_app._VERTEX_GENERATE_TIMEOUT_SECONDS, 180.0)
@@ -891,6 +895,170 @@ class VertexRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(2, len(calls))
         sleep.assert_awaited_once_with(1.0)
         self.assertEqual(1, broadcast.call_count)
+
+
+class TogetherSeoProviderTests(unittest.IsolatedAsyncioTestCase):
+    def test_together_401_message_explains_rejected_expired_or_invalid_key_without_secret(self):
+        secret = "test-together-secret"
+        with mock.patch.dict(os.environ, {"TOGETHER_API_KEY": secret}):
+            message = dashboard_app._together_error_message(
+                dashboard_app._TogetherHTTPStatusError(401)
+            )
+
+        self.assertIn("API key", message)
+        self.assertRegex(message.lower(), r"từ chối|hết hạn|sai|không hợp lệ")
+        self.assertNotIn(secret, message)
+
+    def test_together_403_message_explains_model_or_workspace_permission_without_secret(self):
+        secret = "test-together-secret"
+        with mock.patch.dict(os.environ, {"TOGETHER_API_KEY": secret}):
+            message = dashboard_app._together_error_message(
+                dashboard_app._TogetherHTTPStatusError(403)
+            )
+
+        self.assertIn("model", message)
+        self.assertIn("workspace", message)
+        self.assertIn("quyền", message)
+        self.assertNotIn(secret, message)
+
+    def test_together_messages_encodes_local_images_as_data_urls(self):
+        messages = dashboard_app._together_messages(
+            "describe the product",
+            [{"data": b"image-bytes", "mime_type": "image/png"}],
+        )
+        content = messages[0]["content"]
+        self.assertEqual(content[0], {"type": "text", "text": "describe the product"})
+        self.assertEqual(content[1]["type"], "image_url")
+        self.assertEqual(
+            content[1]["image_url"]["url"],
+            "data:image/png;base64," + base64.b64encode(b"image-bytes").decode("ascii"),
+        )
+
+    async def test_chat_completion_posts_together_payload_without_logging_key(self):
+        captured = {}
+
+        class Response:
+            status_code = 200
+
+            def json(self):
+                return {"choices": [{"message": {"content": "<etsy_title>Planner</etsy_title>"}}]}
+
+        class Client:
+            def __init__(self, **kwargs):
+                captured["client"] = kwargs
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return False
+
+            async def post(self, url, **kwargs):
+                captured["url"] = url
+                captured["request"] = kwargs
+                return Response()
+
+        fake_httpx = types.SimpleNamespace(Timeout=lambda **kwargs: kwargs, AsyncClient=Client)
+        with mock.patch.dict(os.environ, {"TOGETHER_API_KEY": "test-secret", "TOGETHER_API_BASE_URL": "https://together.test/v1"}), \
+                mock.patch.object(dashboard_app, "_get_httpx", return_value=fake_httpx):
+            result = await dashboard_app._together_chat_completion({"model": dashboard_app.DEFAULT_TOGETHER_SEO_MODEL}, 12)
+
+        self.assertEqual(result, "<etsy_title>Planner</etsy_title>")
+        self.assertEqual(captured["url"], "https://together.test/v1/chat/completions")
+        self.assertEqual(captured["request"]["headers"], {"Authorization": "Bearer test-secret", "Content-Type": "application/json"})
+        self.assertEqual(captured["request"]["json"], {"model": dashboard_app.DEFAULT_TOGETHER_SEO_MODEL})
+        self.assertNotIn("test-secret", str(captured["request"]["json"]))
+
+    async def test_retry_retries_429_then_returns_together_text_without_string_reasoning_effort(self):
+        calls = []
+
+        async def fake_completion(payload, timeout_seconds):
+            calls.append((payload, timeout_seconds))
+            if len(calls) == 1:
+                raise dashboard_app._TogetherHTTPStatusError(429)
+            return "<etsy_title>Planner</etsy_title>"
+
+        with mock.patch.object(dashboard_app, "_together_chat_completion", side_effect=fake_completion), \
+                mock.patch.object(dashboard_app.asyncio, "sleep", new=mock.AsyncMock()) as sleep, \
+                mock.patch.object(dashboard_app, "broadcast") as broadcast:
+            result = await dashboard_app._generate_together_content_with_retry("prompt")
+
+        self.assertEqual(result, "<etsy_title>Planner</etsy_title>")
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][0]["model"], dashboard_app.DEFAULT_TOGETHER_SEO_MODEL)
+        self.assertNotIn("reasoning_effort", calls[0][0])
+        sleep.assert_awaited_once_with(dashboard_app._TOGETHER_RETRY_BACKOFF_SECONDS[0])
+        self.assertIn("Together tạm hết capacity", broadcast.call_args.args[0])
+
+    async def test_retry_accepts_only_integer_together_reasoning_effort(self):
+        captured = {}
+
+        async def fake_completion(payload, timeout_seconds):
+            del timeout_seconds
+            captured["payload"] = payload
+            return "<etsy_title>Planner</etsy_title>"
+
+        with mock.patch.dict(os.environ, {"TOGETHER_REASONING_EFFORT": "101"}), \
+                mock.patch.object(dashboard_app, "_together_chat_completion", side_effect=fake_completion):
+            await dashboard_app._generate_together_content_with_retry("prompt")
+        self.assertNotIn("reasoning_effort", captured["payload"])
+
+        with mock.patch.dict(os.environ, {"TOGETHER_REASONING_EFFORT": "42"}), \
+                mock.patch.object(dashboard_app, "_together_chat_completion", side_effect=fake_completion):
+            await dashboard_app._generate_together_content_with_retry("prompt")
+        self.assertEqual(captured["payload"]["reasoning_effort"], 42)
+
+    async def test_run_seo_passes_image_evidence_to_together_and_saves_only_valid_response(self):
+        captured = {}
+        product = {"row": 6, "folder": "product-03", "title": "Old title", "keywords": "", "_shop_config": {"id": "daisyflowdigital"}}
+        image = {"name": "preview.png", "data": b"image-bytes", "mime_type": "image/png"}
+
+        async def fake_generate(prompt, image_evidence_items=None, deadline=None):
+            captured["prompt"] = prompt
+            captured["images"] = image_evidence_items
+            return _FullSeoResponse.text
+
+        with mock.patch.object(dashboard_app, "_build_seo_asset_context_details", return_value=("Readable text evidence: no", False)), \
+                mock.patch.object(dashboard_app, "_load_seo_image_evidence", return_value=([image], True)), \
+                mock.patch.object(dashboard_app, "_generate_together_content_with_retry", side_effect=fake_generate), \
+                mock.patch.object(dashboard_app, "save_to_excel") as save_to_excel:
+            result = await dashboard_app._run_seo(product, field="all")
+
+        self.assertEqual(set(result), {"title", "tags", "description"})
+        self.assertEqual(captured["images"], [image])
+        self.assertIn("attached local product images only", captured["prompt"])
+        save_to_excel.assert_called_once()
+
+    async def test_run_seo_rejects_invalid_together_xml_without_saving(self):
+        product = {"row": 6, "folder": "product-03", "title": "Old title", "keywords": "", "_shop_config": {"id": "daisyflowdigital"}}
+        error_out = {}
+        with mock.patch.object(dashboard_app, "_build_seo_asset_context_details", return_value=("Readable text evidence: yes", True)), \
+                mock.patch.object(dashboard_app, "_load_seo_image_evidence", return_value=([], False)), \
+                mock.patch.object(dashboard_app, "_generate_together_content_with_retry", new=mock.AsyncMock(return_value="<etsy_title>Planner</etsy_title>")), \
+                mock.patch.object(dashboard_app, "save_to_excel") as save_to_excel:
+            result = await dashboard_app._run_seo(product, field="all", error_out=error_out)
+
+        self.assertEqual(result, {})
+        self.assertEqual(error_out["provider"], "together")
+        self.assertEqual(error_out["error_code"], "SEO_PROVIDER_INVALID_RESPONSE")
+        save_to_excel.assert_not_called()
+
+    async def test_run_seo_retries_one_invalid_full_response_then_saves_complete_replacement(self):
+        product = {"row": 6, "folder": "product-03", "title": "Old title", "keywords": "", "_shop_config": {"id": "daisyflowdigital"}}
+        generate = mock.AsyncMock(side_effect=[
+            "<etsy_title>Planner</etsy_title>",
+            _FullSeoResponse.text,
+        ])
+        with mock.patch.object(dashboard_app, "_build_seo_asset_context_details", return_value=("Readable text evidence: yes", True)), \
+                mock.patch.object(dashboard_app, "_load_seo_image_evidence", return_value=([], False)), \
+                mock.patch.object(dashboard_app, "_generate_together_content_with_retry", new=generate), \
+                mock.patch.object(dashboard_app, "save_to_excel") as save_to_excel:
+            result = await dashboard_app._run_seo(product, field="all")
+
+        self.assertEqual(set(result), {"title", "tags", "description"})
+        self.assertEqual(generate.await_count, 2)
+        self.assertIn(dashboard_app._FULL_SEO_SEMANTIC_RETRY_INSTRUCTION, generate.await_args.args[0])
+        save_to_excel.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -61,6 +61,13 @@ class DashboardCatalogPatchIntegrationTests(unittest.TestCase):
         finally:
             workbook.close()
 
+    def _read_category(self) -> str:
+        workbook = load_workbook(self.workbook, read_only=True)
+        try:
+            return str(workbook["Listings"].cell(row=4, column=6).value)
+        finally:
+            workbook.close()
+
     def test_canonical_patch_uses_repository_and_updates_intended_field(self) -> None:
         with patch.object(dashboard_app, "BASE_DIR", self.root), patch.object(
             dashboard_app, "_active_shop_id", self.shop_id
@@ -82,6 +89,23 @@ class DashboardCatalogPatchIntegrationTests(unittest.TestCase):
         self.assertEqual(200, response.status_code, response.text)
         repository_update.assert_called_once()
         self.assertEqual("Updated title", self._read_title())
+
+    def test_canonical_patch_persists_full_etsy_category_breadcrumb(self) -> None:
+        category = (
+            "Paper & Party Supplies > Paper > Stationery > Design & Templates > "
+            "Templates > Planner Templates"
+        )
+        with patch.object(dashboard_app, "BASE_DIR", self.root), patch.object(
+            dashboard_app, "_active_shop_id", self.shop_id
+        ):
+            response = self.client.patch(
+                "/api/products/4",
+                headers=self._mutation_headers(),
+                json={"category": category},
+            )
+
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertEqual(category, self._read_category())
 
     def test_stale_patch_precondition_returns_409_without_overwrite(self) -> None:
         original_hash = catalog_repository._catalog_hash(self.workbook)

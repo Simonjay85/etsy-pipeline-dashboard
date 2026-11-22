@@ -1,6 +1,6 @@
-## Imported Claude Cowork project instructions
+## Project instruction routing
 
-At the start of every conversation, immediately read the file /Users/aaronnguyen/Developer/Etsy/CLAUDE.md before doing anything else. This file contains the full workflow, folder structure, and instructions for this Etsy project. After reading it, you will understand the setup completely and won't need to ask clarifying questions for common tasks like "đăng sản phẩm lên Etsy", "generate SEO", "tình trạng sản phẩm", etc.
+Read the relevant sections of `CLAUDE.md` for dashboard, pipeline, shop-data, posting, synchronization, SEO, or other workflows it defines. For a focused instruction audit or a change that only affects project guidance, read the applicable sections and references without forcing an unrelated full-project read.
 
 ## Canonical workspace (only root)
 
@@ -9,27 +9,28 @@ This repository is the **only** canonical Etsy project. Resolve paths from the r
 | Role | Canonical path |
 |------|----------------|
 | Project root | `/Users/aaronnguyen/Developer/Etsy` |
-| Factory source | `/Users/aaronnguyen/Developer/Etsy/master_products` |
+| Archive/cloud scope | `/Users/aaronnguyen/Developer/Etsy/master_products` (optional; not a shop intake source) |
 | Shop data | `/Users/aaronnguyen/Developer/Etsy/shops` |
 | Backups | `/Users/aaronnguyen/Developer/Etsy/output/backup` |
 
 `/Users/aaronnguyen/Documents/Claude/Projects/Etsy` is an **obsolete duplicate**. Never use it as a source or destination for reads, writes, imports, syncs, or backups.
 
-Also see `master_products/AGENTS.md` and `shops/AGENTS.md` for factory vs shop rules.
+See `shops/AGENTS.md` for shop rules. If an optional `master_products/` archive exists, it is independent archive/cloud data and never a shop import source.
 
-## Model workflow for project changes
+## Agent workflow for project changes
 
-- When modifying this project, use Sol Medium for analysis, planning, and technical review.
-- Use a GPT-5.3 Codex Spark sub-agent to implement the approved code changes.
-- Only when GPT-5.3 Codex Spark cannot run the task or is not exposed by the current runtime, delegate the implementation to a GPT Luna High sub-agent.
-- If neither GPT-5.3 Codex Spark nor GPT Luna High is available, use the strongest available coding sub-agent and explicitly report the substitution; do not stop at analysis.
-- After implementation, use Sol Medium to review the changes and verification results.
-- Do not treat analysis or review as implementation; the code change must be executed and verified in the real project workspace.
+- For every project change, GPT 6.1 Sol Medium (`gpt-6.1-sol`, `reasoning_effort=medium`) performs analysis, planning, and task assignment with explicit scope and acceptance checks.
+- GPT 6 Luna Max (`gpt-6-luna`, `reasoning_effort=max`) subagent implements scoped code or project changes and runs proportionate checks.
+- After implementation, GPT 6.1 Sol Medium independently reviews the actual diff and verification evidence. Planning and review alone do not count as implementation; delegation does not transfer external mutation authority.
+- If a required model or reasoning effort is unavailable in the current runtime, report the exact unavailable role and configuration; do not silently substitute another model or effort. Report any substitution explicitly, and never claim a requested model ran based on configuration alone.
+- Continue through the authorized scoped result and run proportionate targeted checks. Report local, staged, deployed, cache-bounded live, and public acceptance states separately when they differ.
+- Preserve unrelated staged, unstaged, and untracked work. Do not reset, stage, or rewrite it.
+- If a targeted check exposes a failure caused by the requested change, continue the scoped repair until it passes or report the exact blocker.
 
-## Bug reports imply authorization to fix
+## Task authorization
 
-- When the user reports a bug, error, or incorrect behavior, treat the request as authorization to diagnose the root cause, implement the narrow fix, and verify it in the real project workspace without asking again.
-- Ask for confirmation only when the fix would be genuinely destructive or high-risk, or when a materially ambiguous product decision cannot be resolved safely from the project context.
+- A user request to fix a bug, error, or incorrect behavior authorizes diagnosis, a narrow implementation, and proportionate verification in the real project workspace without repeated approval.
+- Existing authorization persists for the current requested task and its in-scope steps. Ask again only for a destructive, high-risk, or new external action that is not already covered by clear task authorization, or for a materially ambiguous product decision.
 
 ## Backup policy
 

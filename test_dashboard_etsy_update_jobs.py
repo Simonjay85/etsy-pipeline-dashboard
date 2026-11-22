@@ -7,7 +7,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, patch
 
 import dashboard_app
 from job_store import JOB_STATUS_QUEUED, JobStore
@@ -42,15 +42,19 @@ class TestEtsyUpdateJobsPersistence(IsolatedAsyncioTestCase):
         dashboard_app._running_tasks.clear()
         with TemporaryDirectory(prefix="etsy-update-job-store-") as tmpdir:
             store = JobStore(Path(tmpdir) / "jobs.sqlite")
+            enqueue_operation = AsyncMock(
+                return_value=(
+                    {"command_id": "test-etsy-update-command", "status": JOB_STATUS_QUEUED},
+                    True,
+                )
+            )
             with patch.object(dashboard_app, "_active_shop_id", "templystudios"), \
                 patch.object(
                     dashboard_app,
                     "get_product_by_row",
                     return_value=self.product,
                 ), \
-                patch.object(dashboard_app, "_run_etsy_updater", AsyncMock(return_value=None)), \
-                patch.object(dashboard_app, "_register_background_task", Mock()), \
-                patch.object(dashboard_app, "_pop_background_task", Mock()), \
+                patch.object(dashboard_app, "_enqueue_operation", enqueue_operation), \
                 patch.object(dashboard_app, "_get_job_store", return_value=store):
 
                 response = await dashboard_app.push_local_updates_to_etsy(4, _JsonRequest(self.request_payload))
@@ -69,16 +73,22 @@ class TestEtsyUpdateJobsPersistence(IsolatedAsyncioTestCase):
                 self.assertFalse(second["created"])
                 self.assertEqual(job_id, second["job_id"])
                 self.assertIn("đã có trong hàng chờ", second["message"])
+                enqueue_operation.assert_awaited_once()
 
     async def test_etsy_update_status_reads_store_payload(self) -> None:
         dashboard_app._running_processes.clear()
         dashboard_app._running_tasks.clear()
         with TemporaryDirectory(prefix="etsy-update-job-store-") as tmpdir:
             store = JobStore(Path(tmpdir) / "jobs.sqlite")
+            enqueue_operation = AsyncMock(
+                return_value=(
+                    {"command_id": "test-etsy-update-command", "status": JOB_STATUS_QUEUED},
+                    True,
+                )
+            )
             with patch.object(dashboard_app, "_active_shop_id", "templystudios"), \
                 patch.object(dashboard_app, "get_product_by_row", return_value=self.product), \
-                patch.object(dashboard_app, "_run_etsy_updater", AsyncMock(return_value=None)), \
-                patch.object(dashboard_app, "_register_background_task", Mock()), \
+                patch.object(dashboard_app, "_enqueue_operation", enqueue_operation), \
                 patch.object(dashboard_app, "_get_job_store", return_value=store):
 
                 response = await dashboard_app.push_local_updates_to_etsy(4, _JsonRequest(self.request_payload))
@@ -89,3 +99,4 @@ class TestEtsyUpdateJobsPersistence(IsolatedAsyncioTestCase):
                 self.assertEqual(status["job_id"], job_id)
                 self.assertEqual(status["operation"], "etsy_push_update")
                 self.assertIn(status["status"], {"starting", JOB_STATUS_QUEUED, "running"})
+                enqueue_operation.assert_awaited_once()

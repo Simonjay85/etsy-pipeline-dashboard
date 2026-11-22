@@ -17,23 +17,16 @@ def ensure_deps():
         except ImportError:
             print(f"▶ Cài {pkg}...")
             subprocess.run([sys.executable, "-m", "pip", "install", pkg, "--quiet"], check=True)
-    try:
-        from google import genai
-    except ImportError:
-        print("▶ Cài google-genai...")
-        subprocess.run([sys.executable, "-m", "pip", "install", "google-genai", "--quiet"], check=True)
 
 ensure_deps()
 
 import openpyxl
 from playwright.async_api import async_playwright
-
-try:
-    from google import genai
-    from google.genai import types
-    has_genai = True
-except ImportError:
-    has_genai = False
+from etsy_image_alt_text import (
+    ALT_TEXT_GENERATION_TIMEOUT_SECONDS,
+    build_text_fallback_alt_text,
+    generate_visual_alt_text,
+)
 
 BASE_DIR    = Path(__file__).parent
 EXCEL_FILE  = BASE_DIR / "shops" / "templystudios" / "Etsy_SEO_Generator.xlsx"
@@ -60,111 +53,15 @@ async def click_tab(page, *names):
 
 # ── Alt text generator ────────────────────────────────────────────────────────
 def generate_alt_texts(title: str, keywords: str, count: int) -> list:
-    """Tạo alt text cho từng ảnh dựa vào title và keywords (tối đa 250 ký tự/ảnh)."""
-    clean_title = (title or "")[:200].strip()
-    kw_list = [k.strip() for k in (keywords or "").split(",") if k.strip()]
-
-    suffixes = [
-        "instant download",
-        "printable PDF",
-        "digital download",
-        "printable template",
-        "digital planner",
-        "PDF download",
-        "printable download",
-        "digital file",
-        "instant printable",
-        "editable template",
+    """Tạo fallback alt text nhất quán, tối đa 250 ký tự/ảnh."""
+    return [
+        build_text_fallback_alt_text(title, keywords, i + 1, count)
+        for i in range(count)
     ]
-
-    alt_texts = []
-    for i in range(count):
-        if i == 0:
-            alt_texts.append(clean_title[:250])
-        else:
-            suffix = suffixes[i % len(suffixes)]
-            if kw_list:
-                kw = kw_list[i % len(kw_list)]
-                text = f"{kw} - {suffix}"
-            else:
-                text = f"{clean_title[:200]} - {suffix}"
-            alt_texts.append(text[:250])
-    return alt_texts
-
-# ── Visual Alt Text Generator ──────────────────────────────────────────────────
-def generate_visual_alt_text(img_path, title, keywords):
-    """
-    Sử dụng Gemini 2.5 Flash thông qua Vertex AI để phân tích hình ảnh và sinh Alt Text chuẩn SEO.
-    Nếu thất bại hoặc không có thư viện, trả về None để dùng cơ chế fallback dựa trên text.
-    """
-    if not has_genai:
-        print("      ⚠️ Không có thư viện google-genai. Sử dụng Text SEO fallback.")
-        return None
-
-    try:
-        # Đọc ảnh dưới dạng bytes
-        with open(img_path, "rb") as f:
-            img_bytes = f.read()
-
-        # Xác định mime_type
-        suffix = Path(img_path).suffix.lower()
-        mime_type = "image/png"
-        if suffix in [".jpg", ".jpeg"]:
-            mime_type = "image/jpeg"
-        elif suffix == ".webp":
-            mime_type = "image/webp"
-        elif suffix == ".gif":
-            mime_type = "image/gif"
-
-        # Khởi tạo client Vertex AI
-        client = genai.Client(vertexai=True, project="temply-ai-lab", location="us-central1")
-
-        prompt = f"""
-Analyze the provided product image and generate a highly descriptive, SEO-optimized Alt Text for Etsy.
-
-Instructions:
-1. Describe the layout, visual design, text, and specific pages or features shown in the image in detail.
-2. Incorporate 1-2 relevant SEO keywords from the following list: {keywords}.
-3. The description must be natural, engaging, and extremely helpful for visually impaired buyers.
-4. Keep the length strictly under 250 characters.
-5. Do NOT use generic phrases like "image of" or "screenshot of".
-6. Output ONLY the raw alt text, no quotes, no markdown, no comments, just the plain text.
-
-Listing Title: {title}
-"""
-        part = types.Part.from_bytes(
-            data=img_bytes,
-            mime_type=mime_type
-        )
-
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[part, prompt]
-        )
-
-        text = response.text
-        if text:
-            text = text.strip()
-            # Loại bỏ các dấu nháy nếu Gemini trả về
-            if text.startswith('"') and text.endswith('"'):
-                text = text[1:-1].strip()
-            if text.startswith("'") and text.endswith("'"):
-                text = text[1:-1].strip()
-
-            # Đảm bảo độ dài dưới 250 ký tự
-            if len(text) > 250:
-                text = text[:247] + "..."
-        else:
-            text = ""
-
-        return text
-    except Exception as e:
-        print(f"      ❌ Lỗi khi phân tích ảnh qua Gemini: {e}")
-        return None
 
 # ── Fill Alt Text ─────────────────────────────────────────────────────────────
 async def fill_image_alt_texts(page, title, keywords, folder=None):
-    """Điền alt text cho từng ảnh bằng Playwright modal thumbnail, dùng phân tích ảnh Gemini làm cốt lõi."""
+    """Điền alt text bằng Together AI image analysis với text SEO fallback."""
     print("  ✍️ Đang quét các ô ảnh thumbnail trên Etsy...")
     await page.wait_for_timeout(3000)
 
@@ -222,28 +119,32 @@ async def fill_image_alt_texts(page, title, keywords, folder=None):
                 await page.wait_for_timeout(1000)
                 continue
 
-            # 3. Tạo nội dung Alt Text (Thử Gemini trước, nếu lỗi/thiếu ảnh thì dùng Fallback)
+            # 3. Tạo nội dung Alt Text (Thử Together AI Vision trước, nếu lỗi/thiếu ảnh thì dùng Fallback)
             alt_val = None
             if i < len(img_files):
                 img_path = img_files[i]
-                print(f"      📸 Đang phân tích ảnh cục bộ qua Gemini: {img_path.name}...")
+                print(f"      📸 Đang phân tích ảnh cục bộ qua Together AI Vision: {img_path.name}...")
                 try:
                     alt_val = await asyncio.wait_for(
                         asyncio.to_thread(generate_visual_alt_text, img_path, title, keywords),
-                        timeout=15.0
+                        timeout=ALT_TEXT_GENERATION_TIMEOUT_SECONDS
                     )
                 except asyncio.TimeoutError:
-                    print("      ⚠️ Gemini API call timed out after 15 seconds. Using Text SEO fallback.")
+                    print(
+                        "      ⚠️ Together AI Vision API call timed out after "
+                        f"{ALT_TEXT_GENERATION_TIMEOUT_SECONDS:g} seconds. "
+                        "Using Text SEO fallback."
+                    )
                     alt_val = None
                 except Exception as g_err:
-                    print(f"      ⚠️ Lỗi khi gọi Gemini: {g_err}. Using Text SEO fallback.")
+                    print(f"      ⚠️ Lỗi khi gọi Together AI Vision: {g_err}. Using Text SEO fallback.")
                     alt_val = None
             
             if not alt_val:
                 alt_val = fallback_alts[i]
                 print(f"      ⚠️ Sử dụng Alt Text văn bản SEO (fallback): '{alt_val[:50]}...'")
             else:
-                print(f"      ✨ Sinh Alt Text bằng Gemini thành công: '{alt_val}'")
+                print(f"      ✨ Sinh Alt Text bằng Together AI Vision thành công: '{alt_val}'")
 
             # 4. Tìm textarea trong Alt Text modal và điền
             alt_input = page.locator('div[role="dialog"]:visible textarea, div[class*="dialog"]:visible textarea, [class*="modal"]:visible textarea').first

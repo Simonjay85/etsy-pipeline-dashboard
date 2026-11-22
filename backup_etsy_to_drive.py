@@ -22,6 +22,8 @@ import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
+
+MIN_DIAGNOSTIC_AGE_DAYS = 7
 from pathlib import Path
 
 
@@ -74,10 +76,15 @@ def is_dataless(path: Path) -> bool:
 
 
 def validate_source_file(path: Path) -> None:
-    if path.stat().st_size <= 0:
-        raise RuntimeError(f"source is zero-byte (hydrate it before backup): {path}")
     if is_dataless(path):
         raise RuntimeError(f"source is iCloud dataless (hydrate it before backup): {path}")
+    if path.stat().st_size <= 0:
+        raise RuntimeError(f"source is zero-byte (hydrate it before backup): {path}")
+    if path.suffix.lower() == ".json":
+        try:
+            json.loads(path.read_bytes())
+        except (ValueError, UnicodeError) as exc:
+            raise RuntimeError(f"source is invalid JSON: {path}") from exc
 
 
 def copy_file(source: Path, staging: Path, files: list[dict[str, object]], root: Path) -> None:
@@ -122,7 +129,25 @@ def copy_tree(source: Path, staging: Path, files: list[dict[str, object]], root:
         )
 
 
-def collect_sources(kind: str, staging: Path, files: list[dict[str, object]], root: Path) -> None:
+def scratch_files(root: Path):
+    """Walk scratch without traversing symbolic links."""
+    scratch = root / "scratch"
+    if scratch.is_symlink():
+        return
+    for directory, dirs, names in os.walk(scratch, followlinks=False):
+        dirs[:] = sorted(name for name in dirs if not (Path(directory) / name).is_symlink())
+        for name in sorted(names):
+            path = Path(directory) / name
+            if name.endswith(".json") and not path.is_symlink() and path.is_file():
+                yield path
+
+
+def collect_sources(kind: str, staging: Path, files: list[dict[str, object]], root: Path,
+                    excluded: list[dict[str, object]] | None = None,
+                    now: datetime | None = None) -> None:
+    if excluded is None:
+        excluded = []
+    now = now or datetime.now(timezone.utc)
     # Live catalog workbooks are the authoritative spreadsheet sources.
     copy_file(root / "Etsy_Listing_Template.xlsx", staging, files, root)
     for shop in ("daisyflowdigital", "templystudios"):
@@ -131,8 +156,40 @@ def collect_sources(kind: str, staging: Path, files: list[dict[str, object]], ro
     # Config, active-shop context, mapping and generated JSON snapshots.
     for name in ("shops_config.json", "product_source_map.json", "active_shop.txt"):
         copy_file(root / name, staging, files, root)
-    for snapshot in sorted((root / "scratch").rglob("*.json")):
-        copy_file(snapshot, staging, files, root)
+    for snapshot in scratch_files(root):
+        # Check placeholders before inspecting size or reading any bytes.
+        if is_dataless(snapshot):
+            raise RuntimeError(f"source is iCloud dataless (hydrate it before backup): {snapshot}")
+        stat = snapshot.stat()
+        reason = None
+        data = b""
+        if stat.st_size == 0:
+            reason = "zero_byte"
+        else:
+            try:
+                data = snapshot.read_bytes()
+                json.loads(data)
+            except (ValueError, UnicodeError):
+                reason = "invalid_json"
+        after = snapshot.stat()
+        if (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns) != (
+            after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns
+        ) or snapshot.is_symlink():
+            raise RuntimeError(f"scratch source changed during inspection: {snapshot}")
+        age = now.timestamp() - stat.st_mtime
+        if reason and age >= MIN_DIAGNOSTIC_AGE_DAYS * 86400:
+            entry = {
+                "path": snapshot.relative_to(root).as_posix(),
+                "reason": reason,
+                "size": stat.st_size,
+                "mtime_utc": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+                "minimum_age_days": MIN_DIAGNOSTIC_AGE_DAYS,
+            }
+            if stat.st_size:
+                entry["sha256"] = hashlib.sha256(data).hexdigest()
+            excluded.append(entry)
+        else:
+            copy_file(snapshot, staging, files, root)
     for report in sorted((root / "shops").glob("*/etsy_shop_sync_report_*.json")):
         copy_file(report, staging, files, root)
 
@@ -152,7 +209,9 @@ def make_snapshot_manifest(
         raise ValueError(kind)
 
     files: list[dict[str, object]] = []
-    collect_sources(kind, staging, files, root)
+    excluded: list[dict[str, object]] = []
+    collect_sources(kind, staging, files, root, excluded, now)
+    log(f"excluded stale scratch diagnostics: {len(excluded)}")
     if not files:
         raise RuntimeError("no backup sources found")
 
@@ -164,6 +223,8 @@ def make_snapshot_manifest(
         "created_at": now.isoformat(),
         "repository": str(root),
         "file_count": len(files),
+        "excluded_count": len(excluded),
+        "excluded_diagnostics": sorted(excluded, key=lambda item: str(item["path"])),
         "files": sorted(files, key=lambda item: str(item["path"])),
     }
     manifest_path = staging / "manifest.json"

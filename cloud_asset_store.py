@@ -2433,6 +2433,17 @@ class CloudAssetStore:
         return False
 
     @staticmethod
+    def _local_has_real_assets(product_root: Path) -> bool:
+        """True khi ít nhất một thư mục nội dung thật (không symlink) có dữ liệu bên trong."""
+        for name in CONTENT_DIRS:
+            directory = product_root / name
+            if directory.is_symlink() or not directory.is_dir():
+                continue
+            if any(directory.iterdir()):
+                return True
+        return False
+
+    @staticmethod
     def _has_current_verified_revision(state: Mapping[str, Any], identity: ProductIdentity) -> bool:
         """Check the local proof needed for an empty-directory offload retry.
 
@@ -3376,8 +3387,12 @@ class CloudAssetStore:
             if not state.get("current_revision"):
                 if state.get("candidate_revision"):
                     desired = "DIRTY_LOCAL"
+                elif local_present or self._local_has_real_assets(product_path):
+                    # Images-only product (no files/ dir) still has real local
+                    # assets and was never uploaded — LOCAL_ONLY, not an error.
+                    desired = "LOCAL_ONLY"
                 else:
-                    desired = "LOCAL_ONLY" if local_present else "ERROR"
+                    desired = "ERROR"
             elif (
                 local_empty_after_offload
                 and state.get("state") in {"CLOUD_ONLY", "CLEANUP_PENDING"}

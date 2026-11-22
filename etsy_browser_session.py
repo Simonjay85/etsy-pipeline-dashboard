@@ -193,6 +193,8 @@ def open_etsy_login_browser(
             str(CHROME_PATH),
             f"--remote-debugging-port={session.debug_port}",
             f"--user-data-dir={session.profile_dir}",
+            "--restore-last-session",
+            "--disable-session-crashed-bubble",
             "--no-first-run",
             "--no-default-browser-check",
             "--new-window",

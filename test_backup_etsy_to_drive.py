@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import os
+
+import pytest
 import shutil
 import tempfile
 import unittest
@@ -216,6 +220,107 @@ class BackupScriptTests(unittest.TestCase):
 
         for plist_name in ("com.user.etsy-backup.daily.plist", "com.user.etsy-backup.weekly.plist"):
             plist_path = root / plist_name
+            if not plist_path.exists():
+                self.skipTest("launchd plists are not present in this staging fixture")
             plist_text = plist_path.read_text(encoding="utf-8")
             self.assertNotIn("/Users/aaronnguyen/Documents/Claude/Projects/Etsy", plist_text)
             self.assertIn("/Users/aaronnguyen/Developer/Etsy", plist_text)
+
+
+@pytest.fixture
+def offline_repo(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    _build_minimal_repo(repo, include_weekly=True)
+    monkeypatch.setattr(backup, "is_dataless", lambda path: False)
+    monkeypatch.setattr(backup, "log", lambda message: None)
+    monkeypatch.setattr(backup, "run_rclone", lambda *args, **kwargs: pytest.fail("unexpected rclone"))
+    monkeypatch.setattr(backup, "list_snapshots", lambda *args: pytest.fail("unexpected rclone listing"))
+    return repo
+
+
+@pytest.fixture
+def snapshot_time():
+    return datetime(2026, 8, 8, 3, 15, tzinfo=timezone.utc)
+
+
+def _manifest(repo, tmp_path, now, kind="daily"):
+    staging = tmp_path / "staging"
+    staging.mkdir(exist_ok=True)
+    return backup.make_snapshot_manifest(kind, staging, repo, now)[1]
+
+
+def _age(path, now, days):
+    timestamp = now.timestamp() - days * 86400
+    os.utime(path, (timestamp, timestamp))
+
+
+def test_stale_scratch_exclusions_are_audited(offline_repo, tmp_path, snapshot_time):
+    zero = offline_repo / "scratch" / "zero.json"
+    invalid = offline_repo / "scratch" / "invalid.json"
+    valid = offline_repo / "scratch" / "old.json"
+    for path, data in ((zero, b""), (invalid, b"{!"), (valid, b"{}")):
+        _write(path, data)
+        _age(path, snapshot_time, 7)
+    manifest = _manifest(offline_repo, tmp_path, snapshot_time)
+    assert manifest["excluded_count"] == 2
+    assert manifest["excluded_diagnostics"] == [
+        {"path": "scratch/invalid.json", "reason": "invalid_json", "size": 2,
+         "sha256": hashlib.sha256(b"{!").hexdigest(),
+         "mtime_utc": datetime.fromtimestamp(invalid.stat().st_mtime, timezone.utc).isoformat(),
+         "minimum_age_days": 7},
+        {"path": "scratch/zero.json", "reason": "zero_byte", "size": 0,
+         "mtime_utc": datetime.fromtimestamp(zero.stat().st_mtime, timezone.utc).isoformat(),
+         "minimum_age_days": 7},
+    ]
+    assert zero.read_bytes() == b"" and invalid.read_bytes() == b"{!"
+    paths = {item["path"] for item in manifest["files"]}
+    assert "files/scratch/old.json" in paths
+    assert "files/scratch/invalid.json" not in paths
+    altered = dict(manifest, excluded_count=0)
+    assert backup.manifest_digest(manifest) != backup.manifest_digest(altered)
+
+
+@pytest.mark.parametrize("data", [b"", b"{!"])
+def test_recent_bad_scratch_fails(offline_repo, tmp_path, snapshot_time, data):
+    path = offline_repo / "scratch" / "recent.json"
+    _write(path, data)
+    _age(path, snapshot_time, 6)
+    with pytest.raises(RuntimeError):
+        _manifest(offline_repo, tmp_path, snapshot_time)
+
+
+@pytest.mark.parametrize("data", [b"", b"{!"])
+def test_stale_dataless_scratch_fails(offline_repo, tmp_path, snapshot_time, monkeypatch, data):
+    path = offline_repo / "scratch" / "cloud.json"
+    _write(path, data)
+    _age(path, snapshot_time, 49)
+    monkeypatch.setattr(backup, "is_dataless", lambda candidate: candidate == path)
+    with pytest.raises(RuntimeError, match="dataless"):
+        _manifest(offline_repo, tmp_path, snapshot_time)
+
+
+def test_core_zero_fails(offline_repo, tmp_path, snapshot_time):
+    _write(offline_repo / "shops_config.json", b"")
+    with pytest.raises(RuntimeError, match="zero-byte"):
+        _manifest(offline_repo, tmp_path, snapshot_time)
+
+
+@pytest.mark.parametrize("relative,kind", [("shops/templystudios/nested/bad.json", "weekly"),
+                                            ("product_source_map.json", "daily"),
+                                            ("shops/daisyflowdigital/etsy_shop_sync_report_alpha.json", "daily")])
+def test_authoritative_invalid_json_fails(offline_repo, tmp_path, snapshot_time, relative, kind):
+    path = offline_repo / relative
+    _write(path, b"{!")
+    _age(path, snapshot_time, 49)
+    with pytest.raises(RuntimeError, match="invalid JSON"):
+        _manifest(offline_repo, tmp_path, snapshot_time, kind)
+
+
+def test_scratch_symlinks_are_not_followed(offline_repo, tmp_path, snapshot_time):
+    outside = tmp_path / "outside"
+    _write(outside / "bad.json", b"{!")
+    (offline_repo / "scratch" / "linked-dir").symlink_to(outside, target_is_directory=True)
+    (offline_repo / "scratch" / "linked.json").symlink_to(outside / "bad.json")
+    manifest = _manifest(offline_repo, tmp_path, snapshot_time)
+    assert manifest["excluded_count"] == 0
+    assert not any("linked" in entry["path"] for entry in manifest["files"])

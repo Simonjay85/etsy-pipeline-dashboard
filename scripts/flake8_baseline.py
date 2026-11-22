@@ -183,6 +183,19 @@ def _staged_python_paths() -> list[str]:
     )
 
 
+def _tracked_python_paths() -> list[str]:
+    """Return every tracked Python path from the current working tree."""
+
+    output = subprocess.check_output(
+        ["git", "ls-files", "-z", "--", "*.py"], cwd=ROOT
+    )
+    return sorted(
+        os.fsdecode(raw)
+        for raw in output.split(b"\0")
+        if raw and os.fsdecode(raw).endswith(".py")
+    )
+
+
 def _run_staged_flake8(
     filenames: list[str],
 ) -> tuple[int, str, str, dict[str, str], dict[str, str]]:
@@ -247,13 +260,24 @@ def main(argv: list[str] | None = None) -> int:
             "read the exact Git-index Python snapshot."
         ),
     )
+    parser.add_argument(
+        "--all-tracked",
+        action="store_true",
+        help="Check every tracked Python file in the working tree.",
+    )
     parser.add_argument("filenames", nargs="*", help="Python files to check")
     args = parser.parse_args(argv)
+
+    if args.all_tracked and args.filenames:
+        parser.error("--all-tracked cannot be combined with filenames")
 
     filenames = [name for name in args.filenames if name.endswith(".py")]
     source_map: dict[str, str] | None = None
     aliases: dict[str, str] | None = None
-    if not filenames:
+    if args.all_tracked:
+        filenames = _tracked_python_paths()
+        return_code, output, error_output = _run_flake8(filenames)
+    elif not filenames:
         if not args.write_baseline:
             return 0
         filenames = _staged_python_paths()

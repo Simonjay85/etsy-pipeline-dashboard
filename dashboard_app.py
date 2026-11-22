@@ -3,9 +3,9 @@ Etsy Pipeline Dashboard — port 8090
 Quản lý & điều khiển pipeline tạo/đăng Etsy listing.
 Chạy: python3 dashboard_app.py
 """
-import asyncio, hashlib, html, io, json, logging, os, re, secrets, shutil, socket, subprocess, sys, tempfile, time, urllib.parse
+import asyncio, hashlib, html, io, json, logging, os, re, secrets, shutil, socket, subprocess, sys, tempfile, threading, time, urllib.parse, zipfile
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 # httpx lazy-imported to avoid hanging at startup on macOS (SSL init issue)
 _HAS_HTTPX = True  # assume available; will fail gracefully if not
 httpx = None       # lazy-loaded on first use
@@ -14,16 +14,45 @@ from difflib import SequenceMatcher
 from typing import Any, Callable, Mapping, NoReturn, Optional, cast
 
 import runtime_identity
+import ai_credentials
 import openpyxl
+from etsy_seo_prompts import (
+    SEO_TITLE_PROMPT_RULES as _SEO_TITLE_PROMPT_RULES,
+    SEO_TAG_PROMPT_RULES as _SEO_TAG_PROMPT_RULES,
+    SEO_DESCRIPTION_PROMPT_TEMPLATE as _SEO_DESCRIPTION_PROMPT_TEMPLATE,
+)
 from job_store import (
     JOB_STATUS_CANCELLED,
     JOB_STATUS_FAILED,
     JOB_STATUS_QUEUED,
     JOB_STATUS_RUNNING,
     JOB_STATUS_SUCCEEDED,
+    PIPELINE_ACTIVE_STATUSES,
+    PIPELINE_ALLOWED_STAGES as STORE_PIPELINE_ALLOWED_STAGES,
+    PIPELINE_DRAFT_STAGE,
+    PIPELINE_STATUS_BLOCKED,
+    PIPELINE_STATUS_CANCELLED,
+    PIPELINE_STATUS_FAILED,
+    PIPELINE_STATUS_QUEUED,
+    PIPELINE_STATUS_RECONCILING,
+    PIPELINE_STATUS_RUNNING,
+    PIPELINE_STATUS_UNKNOWN,
+    PIPELINE_STATUS_VERIFIED,
+    PIPELINE_STATUS_WAITING,
+    JobStoreError,
     JobStore,
 )
-from operation_context import OperationContext, OperationContextError
+from operation_context import OperationContext, OperationContextError, build_pipeline_operation_context
+from pipeline_contracts import (
+    CONTRACT_VERSION as PIPELINE_CONTRACT_VERSION,
+    PipelinePolicy,
+    PipelineStage,
+    PipelineContractError,
+    validate_customer_files,
+    validate_final_artifact,
+    validate_seo_payload,
+)
+from pipeline_artifacts import read_pipeline_product_manifest, write_pipeline_product_manifest
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile, BackgroundTasks
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -60,6 +89,7 @@ from cloud_asset_store import (
 )
 from cloud_asset_store_config import load_config as load_cloud_asset_config
 import catalog_repository
+import product_financials as financial_store
 from asset_readiness import AssetReadinessEngine, AssetReadinessError
 from catalog_repository import (
     CatalogRepositoryError,
@@ -412,9 +442,222 @@ ETSY_POSTER    = str(BASE_DIR / "etsy_auto_post.py")
 ETSY_UPDATER   = str(BASE_DIR / "etsy_push_update.py")
 TRIGGER_SCRIPT = str(Path.home() / "TN/App/Truyen ngan/automation/trigger_planner.py")
 PROCESSED_DIR  = Path.home() / "Desktop" / "Auto_Etsy_Planner" / ".processed"
+_TOGETHER_DEFAULT_API_BASE_URL = "https://api.together.xyz/v1"
+TOGETHER_API_BASE_URL = (
+    os.environ.get("TOGETHER_API_BASE_URL", _TOGETHER_DEFAULT_API_BASE_URL).strip().rstrip("/")
+    or _TOGETHER_DEFAULT_API_BASE_URL
+)
+DEFAULT_TOGETHER_SEO_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash"
+TOGETHER_SEO_MODEL = (
+    os.environ.get("TOGETHER_SEO_MODEL", DEFAULT_TOGETHER_SEO_MODEL).strip()
+    or DEFAULT_TOGETHER_SEO_MODEL
+)
+_TOGETHER_READINESS_CACHE_SECONDS = 60.0
+_TOGETHER_RUNTIME_PROBE_TIMEOUT_SECONDS = 8.0
+_TOGETHER_READINESS_FAILURE_CACHE_SECONDS = 5.0
+_together_readiness_ok_until = 0.0
+_together_readiness_cache_identity: str | None = None
+_together_readiness_failure_identity: str | None = None
+_together_readiness_retry_after = 0.0
+_together_readiness_probe_task: asyncio.Task | None = None
+_together_readiness_probe_identity: str | None = None
+_together_readiness_generation = 0
+_TOGETHER_RUNTIME_CONFIG_LOCK = threading.RLock()
+_TOGETHER_CONFIG_UPDATE_LOCK = threading.Lock()
+_TOGETHER_MODEL_MAX_LENGTH = 256
+_together_persisted_identity: str | None = None
+_together_storage_error = ""
+
+
+def _validate_together_base_url(value: object) -> str:
+    """Return one canonical, credential-free OpenAI-compatible API base URL."""
+
+    if value is None or (isinstance(value, str) and not value.strip()):
+        value = _TOGETHER_DEFAULT_API_BASE_URL
+    if not isinstance(value, str):
+        raise ValueError("Together base URL must be a valid http(s) URL")
+
+    raw = value.strip().rstrip("/")
+    if not raw or any(char.isspace() for char in raw):
+        raise ValueError("Together base URL must be a valid http(s) URL")
+    if "?" in raw or "#" in raw:
+        raise ValueError("Together base URL must not contain a query or fragment")
+    try:
+        parsed = urllib.parse.urlsplit(raw)
+        hostname = parsed.hostname
+        # Accessing .port validates malformed ports such as :not-a-port.
+        _ = parsed.port
+    except (TypeError, ValueError):
+        raise ValueError("Together base URL must be a valid http(s) URL") from None
+
+    if (
+        parsed.scheme.lower() not in {"http", "https"}
+        or not parsed.netloc
+        or not hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("Together base URL must be http(s), include a host, and have no credentials")
+
+    # Accept either https://host or https://host/v1, but keep one canonical
+    # /v1 suffix so readiness and chat-completion calls never produce /v1/v1.
+    path = parsed.path.rstrip("/")
+    if path.lower().endswith("/v1"):
+        path = path[:-3].rstrip("/")
+    canonical_path = f"{path}/v1" if path else "/v1"
+    return urllib.parse.urlunsplit((parsed.scheme.lower(), parsed.netloc, canonical_path, "", ""))
+
+
+def _validate_together_model(value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("Together model must be non-empty")
+    model = value.strip()
+    if len(model) > _TOGETHER_MODEL_MAX_LENGTH:
+        raise ValueError(f"Together model must be at most {_TOGETHER_MODEL_MAX_LENGTH} characters")
+    if any(char in model for char in "\r\n"):
+        raise ValueError("Together model contains invalid line breaks")
+    return model
+
+
+def _together_runtime_api_key() -> str:
+    with _TOGETHER_RUNTIME_CONFIG_LOCK:
+        return (os.environ.get("TOGETHER_API_KEY") or "").strip()
+
+
+def _together_env_base_url() -> str:
+    raw = os.environ.get("TOGETHER_API_BASE_URL", _TOGETHER_DEFAULT_API_BASE_URL)
+    try:
+        return _validate_together_base_url(raw)
+    except ValueError:
+        # A malformed inherited environment must not prevent the dashboard
+        # from starting or leak raw configuration into a response.
+        return _TOGETHER_DEFAULT_API_BASE_URL
+
+
+def _together_env_model() -> str:
+    try:
+        return _validate_together_model(os.environ.get("TOGETHER_SEO_MODEL", DEFAULT_TOGETHER_SEO_MODEL))
+    except ValueError:
+        return DEFAULT_TOGETHER_SEO_MODEL
+
+
+def _together_key_hint(key: str) -> str:
+    return key[-4:] if len(key) > 4 else ""
+
+
+def _together_config_identity(key: str, base_url: str, model: str) -> str:
+    return hashlib.sha256(json.dumps([key, base_url, model]).encode()).hexdigest()
+
+
+def _restore_together_config() -> None:
+    """Restore a validated provider tuple at app startup, not at import time."""
+    global _together_persisted_identity, _together_storage_error
+    with _TOGETHER_CONFIG_UPDATE_LOCK:
+        with _TOGETHER_RUNTIME_CONFIG_LOCK:
+            _together_persisted_identity = None
+            _together_storage_error = ""
+        try:
+            config = ai_credentials.load_config()
+            if not config:
+                return
+            base_url = _validate_together_base_url(config["base_url"])
+            model = _validate_together_model(config["model"])
+        except (ai_credentials.CredentialStoreError, ValueError):
+            with _TOGETHER_RUNTIME_CONFIG_LOCK:
+                _together_storage_error = "Không nạp được cấu hình Keychain. Mở khoá Keychain rồi lưu lại cấu hình API."
+            return
+        # Keychain is authoritative by default, including over stale launchd
+        # variables. Environment overrides must be explicitly opted into.
+        with _TOGETHER_RUNTIME_CONFIG_LOCK:
+            use_environment = os.environ.get("ETSY_DASHBOARD_USE_ENV_TOGETHER", "").strip() == "1"
+            if not (use_environment and _together_runtime_api_key()):
+                os.environ["TOGETHER_API_KEY"] = config["api_key"]
+                os.environ["TOGETHER_API_BASE_URL"] = base_url
+                os.environ["TOGETHER_SEO_MODEL"] = model
+            _together_persisted_identity = _together_config_identity(config["api_key"], base_url, model)
+
+
+def _apply_together_config(new_key: str, base_url: str, model: str, *, clear_key: bool, persist: bool) -> dict:
+    """Serialize Keychain writes before changing runtime state; safe for to_thread."""
+    global _together_persisted_identity, _together_storage_error
+    # The slower OS credential operation must not block runtime readers, health
+    # checks or the event loop while Keychain waits for user permission.
+    with _TOGETHER_CONFIG_UPDATE_LOCK:
+        effective_key = new_key or _together_runtime_api_key()
+        persisted_identity = _together_persisted_identity
+        try:
+            if clear_key:
+                # Always delete the saved value too, even for an older UI request.
+                ai_credentials.delete_config()
+                effective_key = ""
+                persisted_identity = None
+            elif persist:
+                if not effective_key:
+                    raise ValueError("Nhập API key trước khi lưu vào Keychain.")
+                ai_credentials.save_config({"api_key": effective_key, "base_url": base_url, "model": model})
+                persisted_identity = _together_config_identity(effective_key, base_url, model)
+        except ai_credentials.CredentialStoreError as exc:
+            # Read-back failure leaves durability unverified, even if the write
+            # succeeded. Serialize this invalidation with subsequent saves.
+            with _TOGETHER_RUNTIME_CONFIG_LOCK:
+                if exc.mutation_completed:
+                    # The OS committed the mutation but verification failed.
+                    # Honour the new runtime value (especially a requested
+                    # deletion), while keeping durability visibly unverified.
+                    if clear_key:
+                        os.environ.pop("TOGETHER_API_KEY", None)
+                    else:
+                        os.environ["TOGETHER_API_KEY"] = effective_key
+                    os.environ["TOGETHER_API_BASE_URL"] = base_url
+                    os.environ["TOGETHER_SEO_MODEL"] = model
+                _together_persisted_identity = None
+                _together_storage_error = str(exc)
+            raise
+        with _TOGETHER_RUNTIME_CONFIG_LOCK:
+            if effective_key:
+                os.environ["TOGETHER_API_KEY"] = effective_key
+            else:
+                os.environ.pop("TOGETHER_API_KEY", None)
+            os.environ["TOGETHER_API_BASE_URL"] = base_url
+            os.environ["TOGETHER_SEO_MODEL"] = model
+            _together_persisted_identity = persisted_identity
+            _together_storage_error = ""
+            return _together_public_config()
+
+
+def _together_public_config() -> dict:
+    """Return the only Together configuration fields safe for the browser."""
+    with _TOGETHER_RUNTIME_CONFIG_LOCK:
+        key = (os.environ.get("TOGETHER_API_KEY") or "").strip()
+        return {
+            "ok": True,
+            "configured": bool(key),
+            "key_hint": _together_key_hint(key),
+            "base_url": _together_env_base_url(),
+            "model": _together_env_model(),
+            "persisted": bool(key) and _together_persisted_identity == _together_config_identity(
+                key, _together_env_base_url(), _together_env_model(),
+            ),
+            "storage": "macos_keychain",
+            "storage_error": _together_storage_error,
+        }
+
+
+def _together_child_env(*, include_together: bool = False) -> dict[str, str]:
+    """Only authorized Together callers receive the persisted provider secret."""
+
+    with _TOGETHER_RUNTIME_CONFIG_LOCK:
+        environment = {**os.environ, "PYTHONUNBUFFERED": "1"}
+        if not include_together:
+            for name in tuple(environment):
+                if name.startswith("TOGETHER_") or name == "ETSY_DASHBOARD_USE_ENV_TOGETHER":
+                    environment.pop(name, None)
+        return environment
 VERTEX_URL        = "http://127.0.0.1:8080"
 MLX_URL           = "http://127.0.0.1:8000"        # rapid-mlx Qwen (SEO AI)
-VERTEX_IMG_URL    = "http://127.0.0.1:8080"         # Vertex Etsy Listing Studio (image gen)
+VERTEX_IMG_URL    = "http://127.0.0.1:8080"         # Existing local Etsy Listing Studio (image gen)
 VERTEX_OUTPUT_DIR = Path("/Users/aaronnguyen/vertex_etsy_listing/output")
 VERTEX_INPUT_DIR  = Path("/Users/aaronnguyen/vertex_etsy_listing/input")
 
@@ -424,6 +667,8 @@ _DASHBOARD_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "127.0.0.1:8090", 
 _DASHBOARD_LAN_MODE_ENV = "ETSY_DASHBOARD_ALLOW_LAN"
 _DASHBOARD_ALLOWED_HOSTS_ENV = "ETSY_DASHBOARD_ALLOWED_HOSTS"
 _DASHBOARD_MUTATION_TOKEN = secrets.token_urlsafe(32)
+_ANNA_BRIDGE_TOKEN_HEADER = "x-anna-bridge-token"
+_ANNA_BRIDGE_TOKEN = (os.environ.get("ETSY_ANNA_BRIDGE_TOKEN") or "").strip()
 
 
 def _env_flag_truthy(name: str) -> bool:
@@ -485,6 +730,18 @@ def _mutation_token_matches(request: Request) -> bool:
     return secrets.compare_digest(token, _DASHBOARD_MUTATION_TOKEN)
 
 
+def _anna_bridge_token_matches(request: Request) -> bool:
+    """Authenticate the local Dashboard↔ANNA outbox bridge.
+
+    The bridge token is intentionally opt-in. If no token is configured the
+    pull/ack endpoints stay disabled rather than becoming an unauthenticated
+    event sink on a misconfigured LAN listener.
+    """
+    expected = (_ANNA_BRIDGE_TOKEN or os.environ.get("ETSY_ANNA_BRIDGE_TOKEN") or "").strip()
+    supplied = str(request.headers.get(_ANNA_BRIDGE_TOKEN_HEADER) or "")
+    return bool(expected and supplied) and secrets.compare_digest(supplied, expected)
+
+
 def _dashboard_listen_host() -> str:
     return "0.0.0.0" if _dashboard_lan_mode() else "127.0.0.1"
 
@@ -510,13 +767,58 @@ def _dashboard_index_html() -> str:
 
 # ── App ─────────────────────────────────────────────────────────────────────────
 app = FastAPI(title="Etsy Dashboard")
+
+# Price Studio Shop 4: local-only module, parent security remains in force.
+# The "Chi phi shop 4" tree is untracked local data; when it is absent
+# (CI checkouts, fresh clones) the integration is simply not registered.
+import importlib.util as _price_studio_importlib
+_price_studio_root = Path(__file__).resolve().parent / "Chi phi shop 4"
+_price_studio_integration = _price_studio_root / "integration.py"
+if _price_studio_integration.exists():
+    _price_studio_spec = _price_studio_importlib.spec_from_file_location(
+        "etsy_price_studio_integration", _price_studio_integration
+    )
+    if _price_studio_spec is None or _price_studio_spec.loader is None:
+        raise RuntimeError("Shop 4 Price Studio integration module is missing")
+    _price_studio_module = _price_studio_importlib.module_from_spec(_price_studio_spec)
+    _price_studio_spec.loader.exec_module(_price_studio_module)
+    _price_studio_module.register(
+        app, _price_studio_root,
+        lambda: _DASHBOARD_MUTATION_TOKEN, _DASHBOARD_MUTATION_TOKEN_HEADER,
+    )
+
+
+
+@app.on_event("startup")
+async def _dashboard_startup_credentials() -> None:
+    await asyncio.to_thread(_restore_together_config)
+
+
+@app.on_event("startup")
+async def _dashboard_startup_cloud_scheduler() -> None:
+    """Start automatic posted-product cloud reconciliation only with the app."""
+
+    recovered = _get_job_store().recover_pipeline_jobs()
+    if recovered.get("queued") or recovered.get("unknown"):
+        broadcast(
+            "[PIPELINE] ♻️ Khôi phục worker: "
+            f"queued={recovered.get('queued', 0)}, unknown={recovered.get('unknown', 0)}"
+        )
+    await _start_cloud_auto_scheduler()
+
+
+@app.on_event("shutdown")
+async def _dashboard_shutdown_cloud_scheduler() -> None:
+    await _stop_cloud_auto_scheduler()
+
+
 @app.middleware("http")
 async def _dashboard_security_middleware(request: Request, call_next):
     if not _host_allowed(request):
         return JSONResponse({"detail": "host not allowed"}, status_code=403)
     if not _origin_allowed(request):
         return JSONResponse({"detail": "origin not allowed"}, status_code=403)
-    if request.method in {"POST", "PATCH", "DELETE"}:
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
         if not _mutation_token_matches(request):
             return JSONResponse({"detail": "missing or invalid mutation token"}, status_code=403)
     response = await call_next(request)
@@ -540,8 +842,20 @@ _etsy_single_sync_busy_shops: set[str] = set()
 _DIAGNOSTICS_DIR = BASE_DIR / ".etsy-dashboard-diagnostics"
 _JOB_STORE_PATH = _DIAGNOSTICS_DIR / "etsy_jobs.sqlite"
 _ETSY_JOB_STORE: JobStore | None = None
+PIPELINE_POLICY = PipelinePolicy()
+PIPELINE_SHOP_IDS = ("templystudios", "daisyflowdigital", "shop3", "BubbleByJulie")
+# Publishing remains an explicit human approval action in v1.  Keep the enum
+# value for receipt/history compatibility, but do not admit it as an
+# executable Dashboard job or expose it as a worker stage.
+PIPELINE_ALLOWED_STAGES = STORE_PIPELINE_ALLOWED_STAGES
+PIPELINE_ALLOWED_STATUSES = frozenset(PIPELINE_ACTIVE_STATUSES | {
+    PIPELINE_STATUS_VERIFIED,
+    PIPELINE_STATUS_FAILED,
+    PIPELINE_STATUS_BLOCKED,
+    PIPELINE_STATUS_CANCELLED,
+})
 _ETSY_POST_LOCK_PREFIX = "__ETSY_POST__"
-_RUNTIME_PRECHECK_MODULES_POSTER = ("openpyxl", "playwright.async_api", "deep_translator", "google.genai.types")
+_RUNTIME_PRECHECK_MODULES_POSTER = ("openpyxl", "playwright.async_api", "deep_translator")
 _RUNTIME_PRECHECK_MODULES_UPDATER = ("openpyxl", "playwright.async_api")
 
 _RUNTIME_PRECHECK_TIMEOUT = 15
@@ -557,6 +871,19 @@ _CLOUD_ASSET_UPLOAD_QUEUE_BY_SHOP: dict[str, list[str]] = {}
 _CLOUD_ASSET_UPLOAD_WORKERS: dict[str, asyncio.Task] = {}
 _CLOUD_ASSET_UPLOAD_QUEUE_GUARD = asyncio.Lock()
 _CLOUD_ASSET_UPLOAD_IDLE_POLL_SECONDS = 0.75
+
+# A shop product is eligible for automatic cloud upload only after it has been
+# observed in one of the exact successful catalog states below.  Keep this
+# matcher intentionally strict: a status containing the words "Đã đăng" is
+# not sufficient evidence by itself.
+_AUTO_CLOUD_DELAY_SECONDS = 24 * 60 * 60
+_AUTO_CLOUD_RECONCILE_INTERVAL_SECONDS = 60
+_CANONICAL_POSTED_STATUS_RE = re.compile(
+    r"^(?:🆕 Mới import · )?✅ Đã đăng(?: draft)?(?: \(URL chưa xác minh\))?$"
+)
+_CLOUD_AUTO_LEDGER_FILE_NAME = "cloud-upload-eligibility.json"
+_CLOUD_AUTO_SCHEDULER_TASK_KEY = "__CLOUD_AUTO_SCHEDULER__"
+_cloud_auto_scheduler_task: asyncio.Task | None = None
 
 # One FIFO for commands that touch Etsy's shared Chrome profile or mutate the
 # cloud asset copy.  The previous implementation had separate locks for
@@ -666,6 +993,714 @@ async def operation_queue_status():
         active = [item for item in _OPERATION_QUEUE_COMMANDS.values() if item.get("status") in {"queued", "running"}]
         active.sort(key=lambda item: float(item.get("enqueued_at") or 0))
         return {"ok": True, "commands": [_operation_queue_public(item) for item in active]}
+
+
+# ── API: durable product pipeline ─────────────────────────────────────────────
+# These endpoints are deliberately local and contract-first.  Hermes/Anna may
+# enqueue and report work through them, while Etsy browser mutation remains in
+# ``etsy_auto_post.py`` and still requires a verified shop session.  No route
+# here calls a paid provider or publishes an Etsy listing.
+
+def _pipeline_shop_id(value: object) -> str:
+    shop_id = str(value or "").strip()
+    if shop_id not in PIPELINE_SHOP_IDS or shop_id not in SHOPS:
+        raise HTTPException(400, f"Shop pipeline không hợp lệ: {shop_id or '[trống]'}")
+    return shop_id
+
+
+def _pipeline_json_payload(value: object) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise HTTPException(400, "payload phải là JSON object")
+    try:
+        encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, "payload chứa kiểu dữ liệu không hỗ trợ") from exc
+    if len(encoded.encode("utf-8")) > 64 * 1024:
+        raise HTTPException(413, "payload pipeline vượt giới hạn 64KB")
+    # Secrets must never become an artifact or an Anna event.  The actual
+    # credentials stay in the local browser/keychain integrations.
+    if re.search(r"(?i)(api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret|cookie)\s*[:=]", encoded):
+        raise HTTPException(400, "payload không được chứa secret/token")
+    return dict(value)
+
+
+def _pipeline_worker_snapshot() -> dict[str, Any]:
+    """Return non-secret local readiness hints for the pipeline workbench."""
+
+    def port_ready(port: int) -> bool:
+        try:
+            with socket.create_connection(("127.0.0.1", int(port)), timeout=0.15):
+                return True
+        except (OSError, ValueError, TypeError):
+            return False
+
+    hermes_port = _coerce_int(os.environ.get("HERMES_DESKTOP_PORT"), 49447)
+    chatgpt_port = _coerce_int(os.environ.get("CHATGPT_CDP_PORT"), 9333)
+    return {
+        "hermes": {
+            "configured": True,
+            "version": "0.21.1",
+            "gateway": "online" if port_ready(hermes_port) else "unknown",
+            "gateway_port": hermes_port,
+            "profiles": ["research", "download", "make-image", "organizer", "tai-hinh"],
+            "profile_aliases": {"reserach": "research"},
+            "scheduler_owner": "anna",
+            "kanban_role": "subordinate_execution_surface",
+        },
+        "chatgpt": {
+            "configured": True,
+            "transport": "chrome_cdp",
+            "cdp": "online" if port_ready(chatgpt_port) else "unknown",
+            "cdp_port": chatgpt_port,
+            "image_count_per_job": PIPELINE_POLICY.image_count,
+            "provider_role": "primary_ui",
+        },
+        "image_api": {
+            "enabled": False,
+            "budget_usd": PIPELINE_POLICY.api_budget_usd,
+            "reason": "paid_api_disabled_budget_zero",
+        },
+        "anna": {
+            "project_id": "etsy",
+            "registered": True,
+            "execution": "disabled_until_local_worker_verification",
+            "vps_deploy": False,
+        },
+    }
+
+
+def _pipeline_health_payload() -> dict[str, Any]:
+    store = _get_job_store()
+    jobs = store.list_pipeline_jobs(limit=500)
+    active = [job for job in jobs if str(job.get("status")) in PIPELINE_ACTIVE_STATUSES]
+    by_status: dict[str, int] = {}
+    by_shop: dict[str, int] = {}
+    for job in jobs:
+        status = str(job.get("status") or "unknown")
+        by_status[status] = by_status.get(status, 0) + 1
+        if status in PIPELINE_ACTIVE_STATUSES:
+            shop = str(job.get("shop_id") or "")
+            by_shop[shop] = by_shop.get(shop, 0) + 1
+    return {
+        "ok": True,
+        "contract_version": PIPELINE_CONTRACT_VERSION,
+        "policy": PIPELINE_POLICY.to_dict(),
+        "shops": [
+            {
+                "id": shop_id,
+                "name": str(SHOPS.get(shop_id, {}).get("name") or shop_id),
+                "listing_type": "digital",  # type admitted by this pipeline
+                "pipeline_listing_type": "digital",
+                "catalog_types": ["digital", "physical"] if shop_id in {"shop3", "BubbleByJulie"} else ["digital"],
+            }
+            for shop_id in PIPELINE_SHOP_IDS
+            if shop_id in SHOPS
+        ],
+        "active_shop": _active_shop_id,
+        "jobs": {"total": len(jobs), "active": len(active), "by_status": by_status, "active_by_shop": by_shop},
+        "quota": store.pipeline_quota_snapshot(shop_ids=PIPELINE_SHOP_IDS, policy=PIPELINE_POLICY),
+        "workers": _pipeline_worker_snapshot(),
+    }
+
+
+def _pipeline_product_root_for_job(job: Mapping[str, Any], raw_root: object) -> Path:
+    """Resolve a worker product folder inside the job's canonical shop root."""
+
+    shop_id = str(job.get("shop_id") or "").strip()
+    raw = str(raw_root or "").strip()
+    if not raw:
+        raise HTTPException(400, "product_root là bắt buộc để ghi manifest")
+    candidate = Path(raw).expanduser()
+    if not candidate.is_absolute():
+        candidate = BASE_DIR / candidate
+    if candidate.is_symlink():
+        raise HTTPException(400, "product_root không được là symlink")
+    try:
+        root = candidate.resolve()
+        shop_root = (BASE_DIR / "shops" / shop_id).resolve()
+        root.relative_to(shop_root)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(400, "product_root phải nằm trong shop canonical của pipeline") from exc
+    if root == shop_root or root.is_symlink() or not root.is_dir():
+        raise HTTPException(400, "product_root không phải product folder an toàn")
+    if not re.fullmatch(r"product-\d+", root.name):
+        raise HTTPException(400, "product_root phải có tên product-N")
+    return root
+
+
+@app.get("/api/pipeline/health")
+async def pipeline_health():
+    return _pipeline_health_payload()
+
+
+@app.get("/api/pipeline/quota")
+async def pipeline_quota():
+    return _get_job_store().pipeline_quota_snapshot(shop_ids=PIPELINE_SHOP_IDS, policy=PIPELINE_POLICY)
+
+
+@app.get("/api/pipeline/jobs")
+async def pipeline_jobs(
+    campaign_id: str | None = None,
+    shop_id: str | None = None,
+    status: str | None = None,
+    stage: str | None = None,
+    limit: int = 100,
+):
+    if shop_id:
+        _pipeline_shop_id(shop_id)
+    if stage and str(stage).strip().lower() not in PIPELINE_ALLOWED_STAGES:
+        raise HTTPException(400, f"Pipeline stage không hợp lệ: {stage}")
+    statuses: str | list[str] | None = None
+    if status:
+        statuses = [item.strip().lower() for item in str(status).split(",") if item.strip()]
+        invalid = [item for item in statuses if item not in PIPELINE_ALLOWED_STATUSES]
+        if invalid:
+            raise HTTPException(400, f"Pipeline status không hợp lệ: {', '.join(invalid)}")
+    return {
+        "ok": True,
+        "jobs": _get_job_store().list_pipeline_jobs(
+            campaign_id=campaign_id,
+            shop_id=shop_id,
+            status=statuses,
+            stage=stage,
+            limit=limit,
+        ),
+    }
+
+
+@app.get("/api/pipeline/jobs/{job_id}")
+async def pipeline_job(job_id: str):
+    record = _get_job_store().get_pipeline_job(job_id)
+    if record is None:
+        raise HTTPException(404, "Không tìm thấy pipeline job")
+    return {"ok": True, "job": record}
+
+
+@app.post("/api/pipeline/jobs")
+async def create_pipeline_job(request: Request):
+    data = await _read_optional_json_payload(request)
+    payload = data or {}
+    shop_id = _pipeline_shop_id(payload.get("shop_id"))
+    stage = str(payload.get("stage") or PipelineStage.RESEARCH.value).strip().lower()
+    if stage not in PIPELINE_ALLOWED_STAGES:
+        raise HTTPException(400, f"Pipeline stage không hợp lệ: {stage}")
+    listing_type = str(payload.get("listing_type") or "digital").strip().lower()
+    if listing_type != "digital":
+        raise HTTPException(400, "Pipeline Etsy v1 chỉ nhận listing_type=digital")
+    campaign_id = str(payload.get("campaign_id") or f"etsy-{datetime.now().strftime('%Y%m%d')}").strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", campaign_id):
+        raise HTTPException(400, "campaign_id không hợp lệ")
+    candidate_id = str(payload.get("candidate_id") or "").strip()
+    if candidate_id and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", candidate_id):
+        raise HTTPException(400, "candidate_id không hợp lệ")
+    product_id = str(payload.get("product_id") or "").strip()
+    if product_id and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", product_id):
+        raise HTTPException(400, "product_id không hợp lệ")
+    # A UI-created research request has no candidate UUID yet.  Derive one
+    # from the normalized brief so a double-click/retry maps to the same
+    # durable candidate within the campaign instead of creating duplicates.
+    raw_pipeline_payload = payload.get("payload")
+    if not candidate_id and not product_id and stage == PipelineStage.RESEARCH.value and isinstance(raw_pipeline_payload, dict):
+        brief = " ".join(str(raw_pipeline_payload.get("brief") or "").split()).strip().lower()
+        if brief:
+            seed = json.dumps(
+                {"campaign_id": campaign_id, "shop_id": shop_id, "stage": stage, "brief": brief},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            candidate_id = f"candidate-research-{hashlib.sha256(seed.encode('utf-8')).hexdigest()[:24]}"
+    side_effect_boundary = str(payload.get("side_effect_boundary") or "none").strip().lower()
+    if side_effect_boundary not in {"none", "etsy", "etsy_write", "external_write"}:
+        raise HTTPException(400, "side_effect_boundary không hợp lệ")
+    if stage == PIPELINE_DRAFT_STAGE:
+        if not product_id:
+            raise HTTPException(400, "create-verified-draft cần product_id")
+        if side_effect_boundary != "etsy_write":
+            raise HTTPException(400, "create-verified-draft cần side_effect_boundary=etsy_write")
+    elif side_effect_boundary in {"etsy", "etsy_write", "external_write"}:
+        raise HTTPException(400, "Chỉ poster local ở stage create-verified-draft được ghi Etsy")
+    source_checksum = str(payload.get("source_fingerprint") or payload.get("source_checksum") or "").strip()
+    input_version = str(payload.get("input_version") or "1").strip()
+    if not input_version:
+        raise HTTPException(400, "input_version không được rỗng")
+    context = build_pipeline_operation_context(
+        campaign_id=campaign_id,
+        shop_id=shop_id,
+        stage=stage,
+        candidate_id=candidate_id or None,
+        product_id=product_id or None,
+        input_version=input_version,
+        source_checksum=source_checksum,
+        contract_version=str(payload.get("contract_version") or PIPELINE_CONTRACT_VERSION),
+        side_effect_boundary=side_effect_boundary,
+    )
+    metadata = _pipeline_json_payload(payload.get("payload"))
+    metadata["listing_type"] = "digital"
+    metadata.setdefault("source_policy", {"source_assets_separate": True, "customer_files_only": True})
+    anna_task_id = str(payload.get("anna_task_id") or metadata.get("anna_task_id") or "").strip()
+    if anna_task_id:
+        if not re.fullmatch(r"[0-9a-fA-F-]{36}", anna_task_id):
+            raise HTTPException(400, "anna_task_id không hợp lệ")
+        metadata["anna_task_id"] = anna_task_id
+    store = _get_job_store()
+    try:
+        job, created = store.create_pipeline_job(
+            campaign_id=context.campaign_id,
+            shop_id=context.shop_id,
+            stage=context.stage.value,
+            product_id=context.product_id,
+            candidate_id=context.candidate_id,
+            input_version=context.input_version,
+            source_fingerprint=context.source_checksum,
+            payload=metadata,
+            idempotency_key=str(payload.get("idempotency_key") or context.idempotency_key),
+            contract_version=context.contract_version,
+            side_effect_boundary=context.side_effect_boundary,
+            max_inflight_jobs=PIPELINE_POLICY.max_inflight_jobs,
+        )
+    except JobStoreError as exc:
+        message = str(exc)
+        if "inflight" in message:
+            raise HTTPException(429, "Đã đạt giới hạn 10 sản phẩm đang xử lý") from exc
+        raise HTTPException(400, message) from exc
+    event = store.enqueue_pipeline_event(
+        job_id=str(job["job_id"]),
+        event_type="pipeline.job.created",
+        payload={"job_id": job["job_id"], "campaign_id": context.campaign_id, "shop_id": shop_id, "stage": stage},
+        idempotency_key=f"pipeline.job.created:{job['job_id']}",
+    )
+    if created:
+        broadcast(f"[PIPELINE] 🧭 Tạo job {job['job_id']} · {shop_id} · {stage}")
+    return JSONResponse(
+        status_code=201 if created else 200,
+        content={"ok": True, "created": created, "job": job, "event": event, "policy": PIPELINE_POLICY.to_dict()},
+    )
+
+
+@app.post("/api/pipeline/jobs/{job_id}/manifest")
+async def bind_pipeline_product_manifest(job_id: str, request: Request):
+    """Bind a generated product's final files to its durable pipeline job.
+
+    Product workers create the final PDF/SVG/DXF (and any buyer ZIP) inside
+    the canonical shop folder, then call this local endpoint before handing
+    the job to verification.  The worker must hold the current lease/fence;
+    the manifest writer performs the source/customer allowlist and technical
+    checks before atomically replacing ``.pipeline-product.json``.
+    """
+
+    data = await _read_optional_json_payload(request) or {}
+    store = _get_job_store()
+    job = store.get_pipeline_job(job_id)
+    if job is None:
+        raise HTTPException(404, "Không tìm thấy pipeline job")
+    stage = str(job.get("stage") or "").strip().lower()
+    create_stages = {PipelineStage.CREATE.value, PipelineStage.CREATE_PRODUCT.value}
+    if stage not in create_stages and stage != PIPELINE_DRAFT_STAGE:
+        raise HTTPException(409, "Chỉ stage create/create-product hoặc create-verified-draft được ghi manifest")
+    source_job_id = str(data.get("source_job_id") or "").strip()
+    if stage == PIPELINE_DRAFT_STAGE and not source_job_id:
+        raise HTTPException(400, "Draft manifest adoption cần source_job_id của create-product job")
+    if stage in create_stages and source_job_id:
+        raise HTTPException(400, "source_job_id chỉ dùng khi draft job adopt manifest")
+
+    worker_id = str(data.get("worker_id") or "").strip()
+    fence = _coerce_int(data.get("fence"), 0)
+    if not worker_id or fence < 1:
+        raise HTTPException(400, "worker_id và fence hợp lệ là bắt buộc để ghi manifest")
+
+    # Renew and prove the lease immediately before touching product files. A
+    # stale worker may not publish a manifest that a newer attempt could later
+    # mistake for its own output.
+    if not store.heartbeat_pipeline_job(
+        job_id,
+        worker_id=worker_id,
+        fence=fence,
+        lease_seconds=_coerce_int(data.get("lease_seconds"), 900),
+    ):
+        raise HTTPException(409, "Lease đã hết hạn hoặc fence không còn hợp lệ")
+
+    root = _pipeline_product_root_for_job(job, data.get("product_root"))
+    # A retry with the same job must not rewrite a previously accepted
+    # manifest. The immutable hash/evidence in JobStore is the source of truth
+    # for idempotent worker retries and for draft-adoption retries.
+    existing_digest = str(job.get("manifest_sha256") or "").strip().lower()
+    if existing_digest:
+        try:
+            existing_manifest = read_pipeline_product_manifest(root)
+            actual_digest = hashlib.sha256((root / ".pipeline-product.json").read_bytes()).hexdigest()
+        except (PipelineContractError, OSError, ValueError) as exc:
+            raise HTTPException(409, f"Manifest đã bind nhưng không đọc lại được: {exc}") from exc
+        if actual_digest != existing_digest:
+            raise HTTPException(409, "Manifest trên đĩa không khớp evidence đã bind")
+        expected_source = str(job.get("manifest_source_job_id") or "").strip()
+        if source_job_id and expected_source != source_job_id:
+            raise HTTPException(409, "Manifest đã adopt từ source_job_id khác")
+        return {
+            "ok": True,
+            "adopted": bool(source_job_id),
+            "manifest": existing_manifest,
+            "manifest_path": str(root / ".pipeline-product.json"),
+            "manifest_sha256": actual_digest,
+            "job": store.get_pipeline_job(job_id),
+        }
+    customer_files = data.get("customer_files")
+    image_files = data.get("image_files", [])
+    source_assets = data.get("source_assets", [])
+    source_provenance = data.get("source_provenance", [])
+    source_manifest: dict[str, Any] | None = None
+    manifest_recovery = False
+    if stage == PIPELINE_DRAFT_STAGE:
+        source_job = store.get_pipeline_job(source_job_id)
+        if source_job is None:
+            raise HTTPException(404, "Không tìm thấy source create-product job")
+        if str(source_job.get("stage") or "") not in create_stages:
+            raise HTTPException(409, "source_job_id phải trỏ tới create/create-product")
+        source_digest = str(source_job.get("manifest_sha256") or "").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", source_digest):
+            raise HTTPException(409, "Source job chưa có manifest evidence được Dashboard chấp nhận")
+        try:
+            source_manifest = read_pipeline_product_manifest(root)
+            current_digest = hashlib.sha256((root / ".pipeline-product.json").read_bytes()).hexdigest()
+        except (PipelineContractError, OSError, ValueError) as exc:
+            raise HTTPException(409, f"Không đọc được source manifest để adopt: {exc}") from exc
+        if current_digest == source_digest and str(source_manifest.get("pipeline_job_id") or "") == source_job_id:
+            # First adoption attempt: the product file is still the immutable
+            # source manifest accepted for the create-product job.
+            for key in ("campaign_id", "candidate_id", "product_id", "shop_id", "contract_version"):
+                if str(source_manifest.get(key) or "") != str(source_job.get(key) or ""):
+                    raise HTTPException(409, f"Source manifest {key} không khớp source job")
+                if str(source_manifest.get(key) or "") != str(job.get(key) or ""):
+                    raise HTTPException(409, f"Source manifest {key} không khớp draft job")
+        elif str(source_manifest.get("pipeline_job_id") or "") == str(job.get("job_id") or ""):
+            # Crash window recovery: write_pipeline_product_manifest replaces
+            # the source file atomically, then the process may die before
+            # record_pipeline_manifest commits the target row.  The source
+            # file's old digest is intentionally immutable in JobStore, so a
+            # retry must validate the target-bound disk manifest against the
+            # source row's immutable artifact snapshot instead of rejecting
+            # the perfectly recoverable handoff as a source hash mismatch.
+            for key in ("campaign_id", "candidate_id", "product_id", "shop_id", "contract_version"):
+                if str(source_manifest.get(key) or "") != str(job.get(key) or ""):
+                    raise HTTPException(409, f"Recovery manifest {key} không khớp draft job")
+            source_evidence = source_job.get("manifest_evidence")
+            if not isinstance(source_evidence, Mapping):
+                raise HTTPException(409, "Source job thiếu immutable manifest evidence để recovery")
+
+            def _artifact_projection(value: Mapping[str, Any]) -> dict[str, Any]:
+                return {
+                    "customer_files": value.get("customer_files", []),
+                    "customer_file_evidence": value.get("customer_file_evidence", []),
+                    "source_assets": value.get("source_assets", []),
+                    "source_provenance": value.get("source_provenance", []),
+                }
+
+            if json.dumps(
+                _artifact_projection(source_manifest),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ) != json.dumps(
+                _artifact_projection(source_evidence),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ):
+                raise HTTPException(409, "Recovery manifest không khớp immutable source evidence")
+            manifest_recovery = True
+        else:
+            raise HTTPException(409, "Source manifest không khớp evidence của source job")
+        customer_files = source_manifest.get("customer_files")
+        source_assets = [
+            str(item.get("path") or "")
+            for item in (source_manifest.get("source_assets") or [])
+            if isinstance(item, Mapping)
+        ]
+        source_provenance = source_manifest.get("source_provenance", [])
+        if manifest_recovery:
+            # Recovery uses the already written target manifest, including its
+            # ten validated image paths/evidence.  The retry payload cannot
+            # substitute a different gallery after the crash window.
+            image_files = source_manifest.get("image_files", [])
+    if not isinstance(customer_files, (list, tuple)) or not customer_files:
+        raise HTTPException(400, "customer_files phải là danh sách file giao khách không rỗng")
+    if not isinstance(image_files, (list, tuple)):
+        raise HTTPException(400, "image_files phải là danh sách")
+    if stage == PIPELINE_DRAFT_STAGE and len(image_files) != PIPELINE_POLICY.image_count:
+        raise HTTPException(400, "Draft manifest cần đúng 10 image_files đã tạo và kiểm tra")
+    if not isinstance(source_assets, (list, tuple)):
+        raise HTTPException(400, "source_assets phải là danh sách")
+    if not isinstance(source_provenance, (list, tuple)):
+        raise HTTPException(400, "source_provenance phải là danh sách")
+
+    if manifest_recovery:
+        # The prior request already atomically wrote and fully validated this
+        # target-bound manifest.  Do not rewrite it during recovery: preserving
+        # its bytes keeps the digest deterministic and prevents a retry from
+        # widening the accepted asset set.
+        assert source_manifest is not None
+        manifest = source_manifest
+    else:
+        try:
+            manifest = write_pipeline_product_manifest(
+                root,
+                campaign_id=str(job["campaign_id"]),
+                candidate_id=str(job.get("candidate_id") or ""),
+                product_id=str(job.get("product_id") or ""),
+                pipeline_job_id=str(job["job_id"]),
+                shop_id=str(job["shop_id"]),
+                worker_id=worker_id,
+                customer_files=customer_files,
+                source_assets=source_assets,
+                source_provenance=source_provenance,
+                contract_version=str(job.get("contract_version") or PIPELINE_CONTRACT_VERSION),
+                image_files=image_files,
+            )
+        except (PipelineContractError, OSError, ValueError) as exc:
+            raise HTTPException(400, f"Không ghi được pipeline manifest: {exc}") from exc
+
+    manifest_path = root / ".pipeline-product.json"
+    try:
+        manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise HTTPException(500, "Manifest vừa ghi nhưng không đọc lại được") from exc
+    try:
+        accepted_job = store.record_pipeline_manifest(
+            job_id,
+            worker_id=worker_id,
+            fence=fence,
+            manifest_sha256=manifest_sha256,
+            manifest=manifest,
+            source_job_id=source_job_id or None,
+        )
+    except JobStoreError as exc:
+        raise HTTPException(409, f"Manifest đã ghi nhưng không được bind vào JobStore: {exc}") from exc
+    return {
+        "ok": True,
+        "adopted": bool(source_job_id),
+        "manifest": manifest,
+        "manifest_path": str(manifest_path),
+        "manifest_sha256": manifest_sha256,
+        "job": accepted_job,
+    }
+
+
+@app.post("/api/pipeline/jobs/{job_id}/claim")
+async def claim_pipeline_job(job_id: str, request: Request):
+    data = await _read_optional_json_payload(request) or {}
+    worker_id = str(data.get("worker_id") or "").strip()
+    if not worker_id or len(worker_id) > 120:
+        raise HTTPException(400, "worker_id bắt buộc")
+    claimed = _get_job_store().claim_pipeline_job(
+        job_id,
+        worker_id=worker_id,
+        lease_seconds=_coerce_int(data.get("lease_seconds"), 900),
+    )
+    if claimed is None:
+        current = _get_job_store().get_pipeline_job(job_id)
+        if current is None:
+            raise HTTPException(404, "Không tìm thấy pipeline job")
+        raise HTTPException(409, "Job không thể claim (đã có lease, terminal hoặc đang cần đối soát)")
+    return {"ok": True, "job": claimed, "fence": claimed.get("fence")}
+
+
+@app.post("/api/pipeline/jobs/{job_id}/heartbeat")
+async def heartbeat_pipeline_job(job_id: str, request: Request):
+    data = await _read_optional_json_payload(request) or {}
+    worker_id = str(data.get("worker_id") or "").strip()
+    fence = _coerce_int(data.get("fence"), 0)
+    if not worker_id or fence < 1:
+        raise HTTPException(400, "worker_id và fence hợp lệ là bắt buộc")
+    ok = _get_job_store().heartbeat_pipeline_job(
+        job_id,
+        worker_id=worker_id,
+        fence=fence,
+        lease_seconds=_coerce_int(data.get("lease_seconds"), 900),
+    )
+    if not ok:
+        raise HTTPException(409, "Lease đã hết hạn hoặc fence không còn hợp lệ")
+    return {"ok": True, "job_id": job_id, "fence": fence}
+
+
+@app.post("/api/pipeline/jobs/{job_id}/transition")
+async def transition_pipeline_job(job_id: str, request: Request):
+    data = await _read_optional_json_payload(request) or {}
+    status = str(data.get("status") or "").strip().lower()
+    if status not in PIPELINE_ALLOWED_STATUSES:
+        raise HTTPException(400, f"Pipeline status không hợp lệ: {status}")
+    store = _get_job_store()
+    current = store.get_pipeline_job(job_id)
+    if current is None:
+        raise HTTPException(404, "Không tìm thấy pipeline job")
+    receipt = data.get("receipt") if isinstance(data.get("receipt"), dict) else None
+    worker_id = data.get("worker_id")
+    fence = data.get("fence")
+    if worker_id is not None:
+        worker_id = str(worker_id).strip()
+    if fence is not None:
+        fence = _coerce_int(fence, 0)
+    if status == PIPELINE_STATUS_VERIFIED:
+        if receipt is None:
+            raise HTTPException(409, "verified cần receipt do poster local tạo")
+        try:
+            completed = store.complete_verified(
+                job_id,
+                worker_id=worker_id,
+                fence=fence,
+                receipt=receipt,
+                result=data.get("result") if isinstance(data.get("result"), dict) else None,
+                policy=PIPELINE_POLICY,
+            )
+        except JobStoreError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return {"ok": True, **completed}
+
+    try:
+        ok = store.transition_pipeline_job(
+            job_id,
+            status,
+            worker_id=worker_id,
+            fence=fence,
+            result=data.get("result") if isinstance(data.get("result"), dict) else None,
+            receipt=receipt,
+            error_code=str(data.get("error_code") or "").strip() or None,
+            error_message=str(data.get("error_message") or "").strip() or None,
+            side_effect_boundary=str(data.get("side_effect_boundary") or "").strip() or None,
+        )
+    except JobStoreError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not ok:
+        raise HTTPException(409, "State transition bị từ chối (cần lease/fence hiện hành hoặc terminal)")
+    # JobStore owns the transactional outbox (and releases a held quota on a
+    # terminal failure) as part of the state transition.  Read back that
+    # single event instead of enqueueing a second, partially populated copy
+    # from the HTTP layer.
+    event = store.get_pipeline_event(
+        f"pipeline.job.{status}:{job_id}:{_coerce_int(current.get('attempt_count'), 0)}"
+    )
+    return {"ok": True, "job": store.get_pipeline_job(job_id), "event": event}
+
+
+@app.post("/api/pipeline/jobs/{job_id}/reserve-quota")
+async def reserve_pipeline_quota(job_id: str, request: Request):
+    data = await _read_optional_json_payload(request) or {}
+    current = _get_job_store().get_pipeline_job(job_id)
+    if current is None:
+        raise HTTPException(404, "Không tìm thấy pipeline job")
+    shop_id = _pipeline_shop_id(data.get("shop_id") or current.get("shop_id"))
+    if shop_id != current.get("shop_id"):
+        raise HTTPException(409, "Quota shop không khớp job")
+    worker_id = str(data.get("worker_id") or "").strip()
+    fence = _coerce_int(data.get("fence"), 0)
+    if not worker_id or fence < 1:
+        raise HTTPException(400, "worker_id và fence hợp lệ là bắt buộc để giữ quota")
+    try:
+        reservation = _get_job_store().reserve_pipeline_quota(
+            job_id,
+            shop_id=shop_id,
+            quota_date=str(data.get("quota_date") or "").strip() or None,
+            policy=PIPELINE_POLICY,
+            worker_id=worker_id,
+            fence=fence,
+        )
+    except JobStoreError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if not reservation.get("reserved"):
+        raise HTTPException(429, reservation)
+    return {"ok": True, "reservation": reservation, "quota": _get_job_store().pipeline_quota_snapshot(policy=PIPELINE_POLICY)}
+
+
+@app.post("/api/pipeline/jobs/{job_id}/reconcile")
+async def reconcile_pipeline_job(job_id: str, request: Request):
+    data = await _read_optional_json_payload(request) or {}
+    store = _get_job_store()
+    current = store.get_pipeline_job(job_id)
+    if current is None:
+        raise HTTPException(404, "Không tìm thấy pipeline job")
+    if str(current.get("status")) != PIPELINE_STATUS_UNKNOWN:
+        raise HTTPException(409, "Chỉ job UNKNOWN mới được đưa vào RECONCILING")
+    # Reconciliation is intentionally a two-step handshake.  This endpoint
+    # only changes UNKNOWN -> RECONCILING; the caller must then claim the job
+    # to receive a fresh fence and submit the readback receipt through the
+    # normal verified transition.  Validate that shape before mutating so an
+    # incomplete one-call request cannot strand a job in RECONCILING.
+    if any(key in data for key in ("receipt", "worker_id", "fence")):
+        raise HTTPException(
+            400,
+            "Reconciliation gồm hai bước: reconcile rồi claim, sau đó transition verified",
+        )
+    ok = store.begin_pipeline_reconciliation(
+        job_id,
+        reason=str(data.get("reason") or "operator_requested_reconciliation"),
+    )
+    if not ok:
+        raise HTTPException(409, "Không thể bắt đầu đối soát")
+    return {"ok": True, "job": store.get_pipeline_job(job_id)}
+
+
+@app.post("/api/pipeline/jobs/{job_id}/reconcile/complete")
+async def complete_pipeline_reconciliation(job_id: str, request: Request):
+    """Complete a claimed reconciliation attempt with a verified receipt.
+
+    This is a convenience alias for the fenced ``transition verified``
+    command.  It never claims a job or changes UNKNOWN/RECONCILING itself, so
+    malformed receipts cannot create a new fence or leave a half-mutated
+    reconciliation state behind.
+    """
+
+    data = await _read_optional_json_payload(request) or {}
+    worker_id = str(data.get("worker_id") or "").strip()
+    fence = _coerce_int(data.get("fence"), 0)
+    receipt = data.get("receipt")
+    if not worker_id or fence < 1 or not isinstance(receipt, dict):
+        raise HTTPException(400, "reconcile/complete cần worker_id, fence và receipt")
+    store = _get_job_store()
+    current = store.get_pipeline_job(job_id)
+    if current is None:
+        raise HTTPException(404, "Không tìm thấy pipeline job")
+    if str(current.get("status")) != PIPELINE_STATUS_RUNNING:
+        raise HTTPException(409, "Cần claim reconciliation trước khi gửi receipt")
+    try:
+        completed = store.complete_verified(
+            job_id,
+            worker_id=worker_id,
+            fence=fence,
+            receipt=receipt,
+            result=data.get("result") if isinstance(data.get("result"), dict) else None,
+            policy=PIPELINE_POLICY,
+        )
+    except JobStoreError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"ok": True, **completed}
+
+
+@app.get("/api/pipeline/outbox")
+async def pipeline_outbox(request: Request, limit: int = 100):
+    """Authenticated pull for ANNA's durable progress projection.
+
+    ANNA may be offline; pending events remain in SQLite until its bridge
+    acknowledges them. The endpoint never exposes credentials or browser
+    state and is disabled until ``ETSY_ANNA_BRIDGE_TOKEN`` is configured.
+    """
+    if not _anna_bridge_token_matches(request):
+        raise HTTPException(401, "ANNA bridge authentication required")
+    return {"ok": True, "events": _get_job_store().list_pipeline_outbox(pending_only=True, limit=limit)}
+
+
+@app.post("/api/pipeline/outbox/{event_id}/ack")
+async def acknowledge_pipeline_outbox(event_id: str, request: Request):
+    if not _anna_bridge_token_matches(request):
+        raise HTTPException(401, "ANNA bridge authentication required")
+    data = await _read_optional_json_payload(request) or {}
+    error = str(data.get("error") or "").strip() or None
+    if error and len(error) > 500:
+        raise HTTPException(400, "outbox error is too long")
+    ok = _get_job_store().mark_pipeline_event_delivered(event_id, error=error)
+    if not ok:
+        raise HTTPException(404, "Không tìm thấy pipeline outbox event")
+    return {"ok": True, "event_id": event_id, "delivered": error is None}
 
 
 def _build_cloud_asset_store(config) -> CloudAssetStore:
@@ -851,8 +1886,7 @@ async def _runtime_prefetch_import_check(python_bin: str, label: str, modules: t
             _build_runtime_prefetch_code(modules),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
-            cwd=str(BASE_DIR),
-        )
+            cwd=str(BASE_DIR), env=_together_child_env())
         try:
             stdout, _ = await asyncio.wait_for(process.communicate(), timeout=_RUNTIME_PRECHECK_TIMEOUT)
         except asyncio.TimeoutError:
@@ -872,7 +1906,56 @@ async def _runtime_prefetch_import_check(python_bin: str, label: str, modules: t
 # ── Excel helpers ────────────────────────────────────────────────────────────────
 IMG_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 
-def _renderable_image_url(folder: str, image_path: Path) -> dict | None:
+
+def _shop_file_url(
+    folder: str,
+    subfolder: str,
+    filename: str,
+    *,
+    shop_id: str | None = None,
+    stat_result: os.stat_result | None = None,
+) -> str:
+    """Build a cache-safe URL for one file owned by a specific shop.
+
+    Product folder names are reused across shops (for example ``product-166``),
+    so the historical ``/files/product-166/...`` URL was not a stable resource
+    identity. Browsers could therefore reuse a planner thumbnail cached while
+    viewing one shop after the operator switched to a furniture shop. Keep the
+    legacy path for compatibility, but bind its cache key to the shop and file
+    revision through query parameters.
+    """
+
+    encoded_folder = urllib.parse.quote(str(folder), safe="")
+    encoded_subfolder = urllib.parse.quote(str(subfolder), safe="")
+    normalized_filename = str(filename).replace("\\", "/").lstrip("/")
+    encoded_filename = urllib.parse.quote(normalized_filename, safe="/")
+    url = f"/files/{encoded_folder}/{encoded_subfolder}/{encoded_filename}"
+
+    query: dict[str, str] = {}
+    resolved_shop_id = str(
+        shop_id if shop_id is not None else (_active_shop_id or "")
+    ).strip()
+    if resolved_shop_id:
+        query["shop_id"] = resolved_shop_id
+    if stat_result is not None:
+        mtime_ns = int(
+            getattr(
+                stat_result,
+                "st_mtime_ns",
+                int(float(getattr(stat_result, "st_mtime", 0.0)) * 1_000_000_000),
+            )
+        )
+        query["v"] = f"{mtime_ns:x}-{int(stat_result.st_size):x}"
+
+    return f"{url}?{urllib.parse.urlencode(query)}" if query else url
+
+
+def _renderable_image_url(
+    folder: str,
+    image_path: Path,
+    *,
+    shop_id: str | None = None,
+) -> dict | None:
     """Resolve an image without opening content or hydrating an iCloud placeholder."""
     try:
         original_stat = image_path.stat()
@@ -880,9 +1963,13 @@ def _renderable_image_url(folder: str, image_path: Path) -> dict | None:
         return None
 
     original_has_blocks = getattr(original_stat, "st_blocks", 1) > 0
-    encoded_folder = urllib.parse.quote(str(folder), safe="")
-    encoded_name = urllib.parse.quote(image_path.name, safe="")
-    original_url = f"/files/{encoded_folder}/images/{encoded_name}"
+    original_url = _shop_file_url(
+        folder,
+        "images",
+        image_path.name,
+        shop_id=shop_id,
+        stat_result=original_stat,
+    )
 
     # Real hydrated image (has backing blocks) is preferred and can be treated as
     # fully renderable.
@@ -905,7 +1992,13 @@ def _renderable_image_url(folder: str, image_path: Path) -> dict | None:
     except OSError:
         cache_ready = False
     if cache_ready:
-        cache_url = f"/files/{encoded_folder}/images/.thumbcache/{urllib.parse.quote(cache_name, safe='')}"
+        cache_url = _shop_file_url(
+            folder,
+            "images",
+            f".thumbcache/{cache_name}",
+            shop_id=shop_id,
+            stat_result=cache_stat,
+        )
         return {
             "url": cache_url,
             "full_url": original_url,
@@ -1023,7 +2116,7 @@ def _asset_file_is_usable(path: Path) -> bool:
     return stat.st_size > 0 and getattr(stat, "st_blocks", 1) > 0
 
 def _folder_has_usable_assets(folder_path: Path) -> bool:
-    for subfolder in ("images", "files"):
+    for subfolder in ("images", "files", "customer_files"):
         asset_dir = folder_path / subfolder
         if not asset_dir.is_dir():
             continue
@@ -1034,8 +2127,71 @@ def _folder_has_usable_assets(folder_path: Path) -> bool:
             continue
     return False
 
+
+def _local_product_asset_summary(folder_path: Path) -> dict[str, Any]:
+    """Return the logical byte total for materialized product assets.
+
+    The dashboard card represents the product payload, so count every regular
+    file below ``images/`` and ``files/`` (including supported split archives
+    and nested files), while excluding Finder metadata.  A read error makes
+    the total unavailable instead of presenting a fabricated partial number.
+    """
+
+    total_bytes = 0
+    file_count = 0
+    local_file_bytes = 0
+    local_file_count = 0
+    errors: list[str] = []
+    for subfolder in ("images", "files", "customer_files"):
+        asset_dir = folder_path / subfolder
+        try:
+            if not asset_dir.exists():
+                continue
+            if asset_dir.is_symlink() or not asset_dir.is_dir():
+                errors.append(f"{subfolder}/ không phải thư mục local hợp lệ")
+                continue
+            for current, dirnames, filenames in os.walk(asset_dir, topdown=True, followlinks=False):
+                current_path = Path(current)
+                safe_dirnames: list[str] = []
+                for name in sorted(dirnames):
+                    if name.startswith("."):
+                        continue
+                    child = current_path / name
+                    if child.is_symlink():
+                        errors.append(f"{child.relative_to(folder_path)} là symlink")
+                    else:
+                        safe_dirnames.append(name)
+                dirnames[:] = safe_dirnames
+                for name in sorted(filenames):
+                    if name.startswith("."):
+                        continue
+                    path = current_path / name
+                    try:
+                        if path.is_symlink() or not path.is_file():
+                            errors.append(f"{path.relative_to(folder_path)} không phải file regular")
+                            continue
+                        size = int(path.stat().st_size)
+                        total_bytes += size
+                        file_count += 1
+                        if subfolder in {"files", "customer_files"}:
+                            local_file_bytes += size
+                            local_file_count += 1
+                    except (OSError, ValueError) as exc:
+                        errors.append(f"{path.relative_to(folder_path)}: {exc}")
+        except (OSError, ValueError) as exc:
+            errors.append(f"{subfolder}/: {exc}")
+
+    return {
+        "total_bytes": None if errors else total_bytes,
+        "file_count": file_count,
+        "local_file_bytes": None if errors else local_file_bytes,
+        "local_file_count": local_file_count,
+        "error": "; ".join(errors) if errors else None,
+    }
+
+
 def _clear_product_asset_folder(folder_path: Path):
-    for subfolder in ("images", "files"):
+    for subfolder in ("images", "files", "source_assets", "customer_files"):
         asset_dir = folder_path / subfolder
         if asset_dir.exists():
             shutil.rmtree(asset_dir)
@@ -1739,6 +2895,22 @@ def _set_selected_rows_pending(excel_path: Path, selected_rows: list[int]) -> No
         raise HTTPException(500, "Đặt trạng thái Chờ đăng thất bại, đã rollback workbook") from error
 
 
+def _load_pipeline_product_metadata(folder_path: Path) -> dict[str, Any]:
+    """Read optional pipeline metadata without treating it as an asset."""
+
+    for name in (".pipeline-product.json", "pipeline-product.json", ".pipeline-manifest.json"):
+        path = folder_path / name
+        if path.is_symlink() or not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            continue
+        if isinstance(data, dict):
+            return data
+    return {}
+
+
 def products_from_excel() -> list[dict]:
     wb = openpyxl.load_workbook(EXCEL_FILE(), data_only=True)
     ws = wb["Listings"]
@@ -1767,16 +2939,28 @@ def products_from_excel() -> list[dict]:
 
         folder_path = shop_dir / str(folder)
 
+        pipeline_meta = _load_pipeline_product_metadata(folder_path)
+
         img_dir  = folder_path / "images"
         file_dir = folder_path / "files"
 
         images = sorted([f.name for f in img_dir.iterdir()
                          if f.suffix.lower() in IMG_EXTS]) if img_dir.exists() else []
-        dig_files = sorted([f.name for f in file_dir.iterdir()
-                            if f.suffix.lower() in DIGITAL_EXTS]) if file_dir.exists() else []
-        planner_files = ([f.name for f in file_dir.iterdir()
+        # ``files/`` is always the buyer-deliverable directory.  Pipeline
+        # metadata can narrow it to an allowlist, while Creative Fabrica
+        # originals live in the separate source_assets/ directory.
+        deliverable_dir = file_dir
+        allowed_customer_names = pipeline_meta.get("customer_files")
+        if isinstance(allowed_customer_names, list):
+            allowed_customer_names = {Path(str(item)).name for item in allowed_customer_names}
+        else:
+            allowed_customer_names = None
+        dig_files = sorted([f.name for f in deliverable_dir.iterdir()
+                            if f.suffix.lower() in DIGITAL_EXTS
+                            and (allowed_customer_names is None or f.name in allowed_customer_names)]) if deliverable_dir.exists() else []
+        planner_files = ([f.name for f in deliverable_dir.iterdir()
                           if f.suffix.lower() in IMG_EXTS | {".pdf", ".zip"}]
-                         if file_dir.exists() else [])
+                         if deliverable_dir.exists() else [])
 
         # Check what fields are missing for SEO
         missing_fields = []
@@ -1813,8 +2997,17 @@ def products_from_excel() -> list[dict]:
         if not sku_val or not sku_val.strip():
             sku_val = generate_sku(_active_shop_id, str(folder))
 
-        renderable_images = [resolved for img in images
-                             if (resolved := _renderable_image_url(str(folder), img_dir / img))]
+        renderable_images = [
+            resolved
+            for img in images
+            if (
+                resolved := _renderable_image_url(
+                    str(folder),
+                    img_dir / img,
+                    shop_id=_active_shop_id,
+                )
+            )
+        ]
         cloud_manifest = None
         cloud_state_path = folder_path / ".cloud-assets.json"
         if cloud_state_path.is_file() and not cloud_state_path.is_symlink():
@@ -1830,6 +3023,14 @@ def products_from_excel() -> list[dict]:
         gallery_images = renderable_images
         if thumb_image is None and cloud_preview:
             gallery_images = [cloud_preview, *renderable_images]
+        local_asset_summary = _local_product_asset_summary(folder_path)
+        explicit_listing_type = str(pipeline_meta.get("listing_type") or "").strip().lower()
+        if explicit_listing_type not in {"digital", "physical"}:
+            # Furniture is a physical catalog section for PivotAndPage and
+            # Bubble By Julie. Do not infer digital merely from an old PDF/ZIP
+            # mirror in ``files/``.
+            category_text = f"{row[5] or ''} {row[14] or ''}".casefold()
+            explicit_listing_type = "physical" if "furniture" in category_text else ""
         products.append({
             "row":         row_num,
             "folder":      str(folder),
@@ -1855,6 +3056,11 @@ def products_from_excel() -> list[dict]:
             "cloud_preview": cloud_preview,
             "pdf_count":   len(dig_files),
             "has_planner": len(planner_files) > 0,
+            "local_asset_bytes": local_asset_summary["total_bytes"],
+            "local_asset_file_count": local_asset_summary["file_count"],
+            "local_file_bytes": local_asset_summary["local_file_bytes"],
+            "local_file_count": local_asset_summary["local_file_count"],
+            "local_asset_size_error": local_asset_summary["error"],
             "needs_seo":   not bool(title),
             "missing_fields": missing_fields,
             "etsy_url":    str(row[15] or "") if len(row) > 15 else "",
@@ -1865,6 +3071,12 @@ def products_from_excel() -> list[dict]:
                 if isinstance(social_products.get(str(folder)), dict)
                 else {}
             ),
+            "listing_type": explicit_listing_type or None,
+            "pipeline_job_id": str(pipeline_meta.get("pipeline_job_id") or "").strip() or None,
+            "pipeline_contract_version": str(pipeline_meta.get("contract_version") or "").strip() or None,
+            "customer_files": [str(path) for path in sorted(deliverable_dir.glob("*"))
+                               if path.is_file() and path.suffix.lower() in DIGITAL_EXTS
+                               and (allowed_customer_names is None or path.name in allowed_customer_names)]
         })
 
     # Sắp xếp theo số thứ tự của folder (VD: product-01 -> 1)
@@ -3696,6 +4908,83 @@ def _snapshot_too_old(snapshot: dict, *, max_age_hours: int = 24) -> bool:
     return datetime.now() - ts > timedelta(hours=max_age_hours)
 
 
+_ETSY_POSTED_AT_FIELDS = (
+    "formatted_state_date",
+    "formattedStateDate",
+    "state_date",
+    "stateDate",
+    "posted_at",
+    "postedAt",
+    "published_at",
+    "publishedAt",
+    "listed_at",
+    "listedAt",
+    "date_listed",
+    "dateListed",
+    "creation_tsz",
+    "creationTsz",
+    "creation_timestamp",
+    "creationTimestamp",
+    "created_at",
+    "createdAt",
+)
+
+
+def _normalize_etsy_posted_at(value: object) -> str | None:
+    """Normalize an authoritative Etsy listing timestamp for the UI.
+
+    Etsy integrations may expose either an ISO timestamp or a Unix epoch.  Do
+    not fall back to snapshot/crawl time: that is when the dashboard observed
+    Etsy, not when Etsy created the listing.
+    """
+
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        timestamp = float(value)
+        if not timestamp:
+            return None
+        if abs(timestamp) >= 10**11:
+            timestamp /= 1000.0
+        if not (-62135596800 < timestamp < 253402300800):
+            return None
+        try:
+            return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat(timespec="seconds").replace(
+                "+00:00", "Z"
+            )
+        except (OverflowError, OSError, ValueError):
+            return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+    if re.fullmatch(r"[-+]?\d+(?:\.\d+)?", text):
+        try:
+            return _normalize_etsy_posted_at(float(text))
+        except ValueError:
+            return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        # Preserve an authoritative non-ISO display value rather than
+        # inventing a parsed date.  The frontend will render it as supplied.
+        return text
+    if parsed.tzinfo is None:
+        return parsed.isoformat(timespec="seconds")
+    return parsed.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _etsy_listing_posted_at(listing: Mapping[str, Any] | None) -> str | None:
+    if not isinstance(listing, Mapping):
+        return None
+    for field in _ETSY_POSTED_AT_FIELDS:
+        value = listing.get(field)
+        normalized = _normalize_etsy_posted_at(value)
+        if normalized:
+            return normalized
+    return None
+
+
 def enrich_products_with_etsy_manager(products: list[dict], snapshot: dict) -> list[dict]:
     """Add status-aware Etsy links without changing the workbook mapping field.
 
@@ -3789,6 +5078,10 @@ def enrich_products_with_etsy_manager(products: list[dict], snapshot: dict) -> l
             "etsy_snapshot_at": freshness.get("snapshotAt"),
             "etsy_snapshot_source": freshness.get("source"),
             "etsy_snapshot_stale": bool(freshness.get("stale", True)),
+            # This is intentionally None when the listing record does not
+            # carry its own Etsy creation/listed timestamp.  snapshotAt is the
+            # crawl time and must never be presented as the posted time.
+            "etsy_posted_at": _etsy_listing_posted_at(listing),
         })
         enriched.append(item)
     return enriched
@@ -3856,8 +5149,7 @@ async def _delete_selected_etsy_drafts_unlocked(req: Request):
     for listing_id in listing_ids:
         command.extend(["--listing-id", listing_id])
     process = await asyncio.create_subprocess_exec(
-        *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
-    )
+        *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, env=_together_child_env())
     stdout, _ = await process.communicate()
     output = stdout.decode("utf-8", errors="replace")
     if process.returncode != 0:
@@ -3917,15 +5209,293 @@ async def get_shops():
         "active": _active_shop_id
     }
 
+
+def _financial_shop_id(shop_id: str) -> str:
+    """Require a known, currently selected shop for financial mutations/reads."""
+    normalized = str(shop_id or "").strip()
+    if normalized not in SHOPS:
+        raise HTTPException(404, "Shop không tồn tại")
+    try:
+        _assert_shop_identity(normalized)
+    except RuntimeError as error:
+        raise HTTPException(409, str(error)) from error
+    return normalized
+
+
+def _financial_store_error(error: Exception) -> HTTPException:
+    if isinstance(error, financial_store.FinancialConflict):
+        return HTTPException(409, str(error))
+    if isinstance(error, financial_store.FinancialStoreError):
+        return HTTPException(400, str(error))
+    return HTTPException(500, "Không thể đọc/lưu dữ liệu tài chính an toàn")
+
+
+def _financial_sheet_last_row(ws) -> int:
+    """Resolve workbook dimensions when a read-only worksheet omits them."""
+    if ws.max_row is None:
+        ws.calculate_dimension(force=True)
+    return int(ws.max_row or 0)
+
+
+def _financial_price_for_folder(shop_id: str, folder: str) -> str | None:
+    """Read the product's current price directly from its shop workbook."""
+    workbook = catalog_workbook_path(BASE_DIR, shop_id)
+    if not workbook.is_file():
+        return None
+    try:
+        wb = openpyxl.load_workbook(workbook, data_only=True, read_only=True)
+        try:
+            ws = wb["Listings"]
+            for row in range(4, _financial_sheet_last_row(ws) + 1):
+                if str(ws.cell(row=row, column=2).value or "").strip() == folder:
+                    value = ws.cell(row=row, column=5).value
+                    return None if value in (None, "") else str(value)
+        finally:
+            wb.close()
+    except (OSError, KeyError, ValueError):
+        return None
+    return None
+
+
+def _financial_prices_for_shop(shop_id: str) -> dict[str, str]:
+    """Read all folder prices with one workbook open for the summary endpoint."""
+    workbook = catalog_workbook_path(BASE_DIR, shop_id)
+    if not workbook.is_file():
+        return {}
+    try:
+        wb = openpyxl.load_workbook(workbook, data_only=True, read_only=True)
+        try:
+            ws = wb["Listings"]
+            prices = {}
+            for row in range(4, _financial_sheet_last_row(ws) + 1):
+                folder = str(ws.cell(row=row, column=2).value or "").strip()
+                price = ws.cell(row=row, column=5).value
+                if folder and price not in (None, ""):
+                    prices[folder] = str(price)
+            return prices
+        finally:
+            wb.close()
+    except (OSError, KeyError, ValueError):
+        return {}
+
+
+def _financial_folder(folder: str) -> str:
+    normalized = str(folder or "").strip()
+    if not re.fullmatch(r"product-[A-Za-z0-9_-]+", normalized):
+        raise HTTPException(400, "Tên folder sản phẩm không hợp lệ")
+    return normalized
+
+
+def _require_local_financial_product(shop_id: str, folder: str) -> None:
+    shop_dir = (BASE_DIR / "shops" / shop_id).resolve()
+    product_dir = shop_dir / folder
+    try:
+        if product_dir.resolve().parent != shop_dir or not product_dir.is_dir():
+            raise HTTPException(404, "Cần ghép listing Etsy với folder sản phẩm local trước khi lưu chi phí")
+    except OSError as error:
+        raise HTTPException(404, "Không tìm thấy folder sản phẩm local") from error
+    if folder not in _financial_prices_for_shop(shop_id):
+        raise HTTPException(404, "Sản phẩm chưa có trong catalog local của shop")
+
+
+@app.get("/api/shops/{shop_id}/financial-settings")
+async def get_financial_settings(shop_id: str):
+    shop_id = _financial_shop_id(shop_id)
+    try:
+        store = financial_store.read_store(BASE_DIR, shop_id)
+    except financial_store.FinancialStoreError as error:
+        raise _financial_store_error(error) from error
+    return {"ok": True, "version": store["version"], "settings": store["settings"]}
+
+
+@app.put("/api/shops/{shop_id}/financial-settings")
+async def put_financial_settings(shop_id: str, request: Request):
+    shop_id = _financial_shop_id(shop_id)
+    if not _mutation_token_matches(request):
+        raise HTTPException(403, "missing or invalid mutation token")
+    data = await request.json()
+    if not isinstance(data, dict):
+        raise HTTPException(400, "Body phải là JSON object")
+    try:
+        store = financial_store.save_settings(
+            BASE_DIR, shop_id, data.get("settings"), data.get("expected_version")
+        )
+    except financial_store.FinancialStoreError as error:
+        raise _financial_store_error(error) from error
+    return {"ok": True, "version": store["version"], "settings": store["settings"]}
+
+
+@app.get("/api/shops/{shop_id}/products/{folder}/financials")
+async def get_product_financials(shop_id: str, folder: str):
+    shop_id, folder = _financial_shop_id(shop_id), _financial_folder(folder)
+    _require_local_financial_product(shop_id, folder)
+    try:
+        store = financial_store.read_store(BASE_DIR, shop_id)
+    except financial_store.FinancialStoreError as error:
+        raise _financial_store_error(error) from error
+    item = store["products"].get(folder, {})
+    price = _financial_price_for_folder(shop_id, folder)
+    calculation = financial_store.calculate(item, store["settings"], price)
+    return {"ok": True, "version": store["version"], "financials": item,
+            "price": price, "calculation": calculation}
+
+
+@app.put("/api/shops/{shop_id}/products/{folder}/financials")
+async def put_product_financials(shop_id: str, folder: str, request: Request):
+    shop_id, folder = _financial_shop_id(shop_id), _financial_folder(folder)
+    if not _mutation_token_matches(request):
+        raise HTTPException(403, "missing or invalid mutation token")
+    data = await request.json()
+    if not isinstance(data, dict):
+        raise HTTPException(400, "Body phải là JSON object")
+    _require_local_financial_product(shop_id, folder)
+    try:
+        store = financial_store.save_product(
+            BASE_DIR, shop_id, folder, data.get("financials"), data.get("expected_version")
+        )
+    except financial_store.FinancialStoreError as error:
+        raise _financial_store_error(error) from error
+    price = _financial_price_for_folder(shop_id, folder)
+    calculation = financial_store.calculate(store["products"][folder], store["settings"], price)
+    return {"ok": True, "version": store["version"],
+            "financials": store["products"][folder], "calculation": calculation}
+
+
+@app.post("/api/shops/{shop_id}/products/{folder}/financials/calculate")
+async def post_product_financial_calculation(shop_id: str, folder: str, request: Request):
+    shop_id, folder = _financial_shop_id(shop_id), _financial_folder(folder)
+    data = await request.json()
+    if not isinstance(data, dict):
+        raise HTTPException(400, "Body phải là JSON object")
+    if not isinstance(data.get("financials"), dict):
+        raise HTTPException(400, "Thiếu financials object")
+    try:
+        store = financial_store.read_store(BASE_DIR, shop_id)
+        settings = data.get("settings") if isinstance(data.get("settings"), dict) else store["settings"]
+        calculation = financial_store.calculate(data["financials"], settings, data.get("price"))
+    except financial_store.FinancialStoreError as error:
+        raise _financial_store_error(error) from error
+    return {"ok": True, "version": store["version"], "calculation": calculation}
+
+
+@app.get("/api/shops/{shop_id}/financial-summaries")
+async def get_financial_summaries(shop_id: str):
+    shop_id = _financial_shop_id(shop_id)
+    try:
+        store = financial_store.read_store(BASE_DIR, shop_id)
+    except financial_store.FinancialStoreError as error:
+        raise _financial_store_error(error) from error
+    summaries = {}
+    prices = _financial_prices_for_shop(shop_id)
+    local_shop_dir = (BASE_DIR / "shops" / shop_id).resolve()
+    for folder, price in prices.items():
+        if not re.fullmatch(r"product-[A-Za-z0-9_-]+", folder):
+            continue
+        product_dir = local_shop_dir / folder
+        if product_dir.resolve().parent != local_shop_dir or not product_dir.is_dir():
+            continue
+        item = store["products"].get(folder, {})
+        calculation = financial_store.calculate(item, store["settings"], price)
+        representative = next((row for row in calculation.get("scenarios", [])
+                               if row.get("id") == item.get("representative_id")), None)
+        if representative is None and calculation.get("scenarios"):
+            representative = calculation["scenarios"][0]
+        summaries[folder] = {"status": (representative or {}).get("status", "incomplete"),
+                             "representative_id": (representative or {}).get("id"),
+                             "scenario": representative,
+                             "currency": calculation.get("currency"),
+                             "fx_date": calculation.get("fx_date"),
+                             "missing": (representative or {}).get("missing", calculation.get("missing", []))}
+    return {"ok": True, "version": store["version"], "summaries": summaries}
+
+
+@app.get("/api/together/settings")
+@app.get("/api/together-config")
+async def get_together_config():
+    return JSONResponse(_together_public_config(), headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/together/settings")
+@app.post("/api/together-config")
+async def update_together_config(request: Request):
+    # The middleware enforces this for normal ASGI requests; keep the route
+    # guarded as well for direct invocation in tests and future integrations.
+    if not _mutation_token_matches(request):
+        return JSONResponse({"detail": "missing or invalid mutation token"}, status_code=403)
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"detail": "Body JSON không hợp lệ"}, status_code=400)
+    if not isinstance(data, dict):
+        return JSONResponse({"detail": "Body phải là object JSON"}, status_code=400)
+
+    raw_key = data.get("api_key", "")
+    if raw_key is None:
+        raw_key = ""
+    if not isinstance(raw_key, str):
+        return JSONResponse({"detail": "Together API key phải là chuỗi"}, status_code=400)
+    new_key = raw_key.strip()
+
+    clear_key = data.get("clear_key", False)
+    if not isinstance(clear_key, bool):
+        return JSONResponse({"detail": "clear_key phải là boolean"}, status_code=400)
+    if clear_key and new_key:
+        return JSONResponse({"detail": "Không thể vừa xoá vừa cập nhật API key"}, status_code=400)
+    persist = data.get("persist", False)
+    if not isinstance(persist, bool):
+        return JSONResponse({"detail": "persist phải là boolean"}, status_code=400)
+    if len(new_key) > 8192:
+        return JSONResponse({"detail": "API key vượt giới hạn độ dài"}, status_code=400)
+
+    base_candidate = data.get("base_url", _together_env_base_url())
+    if base_candidate is None or (isinstance(base_candidate, str) and not base_candidate.strip()):
+        base_candidate = _TOGETHER_DEFAULT_API_BASE_URL
+    try:
+        base_url = _validate_together_base_url(base_candidate)
+        model = _validate_together_model(data.get("model", _together_env_model()))
+    except ValueError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+
+    try:
+        payload = await asyncio.to_thread(
+            _apply_together_config, new_key, base_url, model,
+            clear_key=clear_key, persist=persist,
+        )
+    except ai_credentials.CredentialStoreError as exc:
+        _invalidate_together_readiness()
+        return JSONResponse({"detail": str(exc)}, status_code=503, headers={"Cache-Control": "no-store"})
+    except ValueError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+    _invalidate_together_readiness()
+    return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+
 @app.post("/api/set-shop")
 async def set_shop(request: Request):
     global _active_shop_id
-    data = await request.json()
+    try:
+        data = await request.json()
+    except Exception as exc:
+        raise HTTPException(400, "Body JSON không hợp lệ") from exc
+    if not isinstance(data, dict):
+        raise HTTPException(400, "Body phải là object JSON")
     new_id = data.get("shop_id")
-    if new_id in SHOPS:
-        _active_shop_id = new_id
-        ACTIVE_SHOP_FILE.write_text(new_id, encoding="utf-8")
-    return {"ok": True, "active": _active_shop_id}
+    if not isinstance(new_id, str) or not new_id.strip():
+        raise HTTPException(400, "Thiếu shop_id")
+    new_id = new_id.strip()
+    if new_id not in SHOPS:
+        raise HTTPException(400, f"Shop không tồn tại: {new_id}")
+    _active_shop_id = new_id
+    ACTIVE_SHOP_FILE.write_text(new_id, encoding="utf-8")
+    active_shop = SHOPS[new_id]
+    return {
+        "ok": True,
+        "active": new_id,
+        "shop": {
+            "id": new_id,
+            "name": active_shop.get("name", ""),
+            "emoji": active_shop.get("emoji", ""),
+        },
+    }
 
 @app.post("/api/shops/update")
 async def update_shop(request: Request):
@@ -3951,6 +5521,171 @@ _CLOUD_SAFE_SHOP_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _CLOUD_SECRET_RE = re.compile(
     r"(?i)(access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization)\s*[=:]\s*[^\s,;]+"
 )
+
+_CLOUD_AUTO_LEDGER_LOCK = threading.Lock()
+
+
+def _is_canonical_successful_posted_status(status: object) -> bool:
+    """Return whether *status* is one of the exact successful post variants."""
+
+    return bool(_CANONICAL_POSTED_STATUS_RE.fullmatch(str(status or "").strip()))
+
+
+def _cloud_auto_ledger_path() -> Path:
+    """Return the small restart-persistent automatic cloud eligibility ledger."""
+
+    return _DIAGNOSTICS_DIR / _CLOUD_AUTO_LEDGER_FILE_NAME
+
+
+def _load_cloud_auto_ledger() -> dict[str, Any]:
+    path = _cloud_auto_ledger_path()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    entries = payload.get("entries")
+    if not isinstance(entries, dict):
+        entries = {}
+    return {"version": 1, "entries": entries}
+
+
+def _save_cloud_auto_ledger(ledger: Mapping[str, Any]) -> None:
+    """Atomically persist eligibility metadata without touching product files."""
+
+    path = _cloud_auto_ledger_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": 1,
+        "entries": dict(ledger.get("entries") or {}),
+    }
+    temporary: Path | None = None
+    with _CLOUD_AUTO_LEDGER_LOCK:
+        try:
+            fd, temporary_name = tempfile.mkstemp(
+                prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+            )
+            temporary = Path(temporary_name)
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                json.dump(payload, stream, ensure_ascii=False, sort_keys=True, indent=2)
+                stream.write("\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
+            temporary = None
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+
+
+def _shop_catalog_statuses(shop_id: str) -> dict[str, str] | None:
+    """Read folder/status pairs for one shop without changing active shop state.
+
+    ``None`` means the catalog could not be read.  Reconciliation must preserve
+    existing eligibility in that case rather than interpreting an I/O problem
+    as a pending transition and cancelling work.
+    """
+
+    workbook = catalog_workbook_path(BASE_DIR, shop_id)
+    if not workbook.is_file():
+        return None
+    try:
+        book = openpyxl.load_workbook(workbook, data_only=True, read_only=True)
+        try:
+            sheet = book["Listings"]
+            statuses: dict[str, str] = {}
+            for row in sheet.iter_rows(min_row=4, values_only=True):
+                folder = str(row[1] or "").strip() if len(row) > 1 else ""
+                if not folder or not re.fullmatch(r"product-\d+", folder):
+                    continue
+                status = str(row[13] or "⏳ Chờ đăng").strip() if len(row) > 13 else "⏳ Chờ đăng"
+                statuses[folder] = status
+            return statuses
+        finally:
+            book.close()
+    except (OSError, ValueError, TypeError, KeyError, zipfile.BadZipFile):
+        return None
+
+
+def _shop_catalog_folder_for_row(shop_id: str, row_number: int) -> str:
+    statuses = _shop_catalog_statuses(shop_id)
+    if statuses is None:
+        return ""
+    workbook = catalog_workbook_path(BASE_DIR, shop_id)
+    try:
+        book = openpyxl.load_workbook(workbook, data_only=True, read_only=True)
+        try:
+            values = next(book["Listings"].iter_rows(min_row=row_number, max_row=row_number, values_only=True), ())
+            return str(values[1] or "").strip() if len(values) > 1 else ""
+        finally:
+            book.close()
+    except (OSError, ValueError, TypeError, KeyError, zipfile.BadZipFile):
+        return ""
+
+
+def _record_cloud_auto_post_observation(
+    shop_id: str,
+    folder: str,
+    *,
+    status: object = "✅ Đã đăng",
+    now: float | None = None,
+) -> dict[str, Any] | None:
+    """Record first successful observation; never enqueue before the 24h mark."""
+
+    if not shop_id or not _is_canonical_successful_posted_status(status):
+        return None
+    if not re.fullmatch(r"product-\d+", str(folder or "").strip()):
+        return None
+    timestamp = float(time.time() if now is None else now)
+    key = f"shops/{shop_id}/{str(folder).strip()}"
+    ledger = _load_cloud_auto_ledger()
+    entries = ledger["entries"]
+    existing = entries.get(key)
+    if not isinstance(existing, dict):
+        existing = {
+            "shop_id": str(shop_id),
+            "folder": str(folder).strip(),
+            "observed_status": str(status).strip(),
+            "observed_at": timestamp,
+            "eligible_at": timestamp + _AUTO_CLOUD_DELAY_SECONDS,
+            "state": "eligible_waiting",
+        }
+        entries[key] = existing
+        _save_cloud_auto_ledger(ledger)
+    return dict(existing)
+
+
+def _cloud_upload_data_for_shop_product(shop_id: str, folder: str) -> dict[str, Any]:
+    # The scheduler intentionally does not consult ``_active_shop_id``: it
+    # reconciles every configured shop and must retain each product's own
+    # identity while another shop is selected in the UI.
+    normalized_shop = str(shop_id or "").strip()
+    if not _CLOUD_SAFE_SHOP_RE.fullmatch(normalized_shop) or normalized_shop not in SHOPS:
+        raise HTTPException(409, f"Shop không hợp lệ hoặc chưa được cấu hình: {normalized_shop}")
+    normalized_folder = str(folder or "").strip()
+    if not re.fullmatch(r"product-\d+", normalized_folder):
+        raise HTTPException(400, "folder phải là chuỗi product-N")
+    target = BASE_DIR / "shops" / normalized_shop / normalized_folder
+    if target.is_symlink() or not target.is_dir():
+        raise HTTPException(404, f"Không tìm thấy product folder: {normalized_folder}")
+    try:
+        target, resolved_identity = resolve_product(BASE_DIR, target)
+    except (AssetValidationError, OSError, ValueError) as exc:
+        raise HTTPException(400, "product folder không hợp lệ") from exc
+    if resolved_identity.key != f"shops/{normalized_shop}/{normalized_folder}":
+        raise HTTPException(400, "product folder không thuộc shop yêu cầu")
+    identity = _cloud_product_identity("shop", normalized_shop, normalized_folder)
+    return {
+        "shop_id": normalized_shop,
+        "scope": "shop",
+        "folder": normalized_folder,
+        "target": target,
+        "product_identity": identity,
+        "product_key": identity["key"],
+        "delete_local": True,
+        "confirmed_product_key": identity["key"],
+    }
 
 
 def _normalize_cloud_scope(value: object, *, allow_empty: bool = False) -> str:
@@ -4477,6 +6212,10 @@ async def _schedule_cloud_upload_and_verify(data: dict) -> tuple[dict, bool]:
                 return
             current.update({"status": "running", "wait_reason": "", "updated_at": time.time()})
         try:
+            # Re-read the authoritative catalog status at execution time. A
+            # product may have been admitted while posted, then moved back to
+            # pending while waiting behind another FIFO command.
+            _cloud_upload_status_guard(data)
             upload_result = await _perform_cloud_asset_mutation(data, "upload")
             if not bool(upload_result.get("ok", True)):
                 raise RuntimeError(upload_result.get("error") or "upload cloud không thành công")
@@ -4582,6 +6321,10 @@ async def _schedule_cloud_upload_verify_offload(data: dict) -> tuple[dict, bool]
                 return
             current.update({"status": "running", "wait_reason": "", "updated_at": time.time()})
         try:
+            # This is deliberately before destructive_started and before the
+            # first store mutation so a posted->pending transition fails
+            # closed without upload or local deletion.
+            _cloud_upload_status_guard(data)
             if command_id_ref["value"]:
                 await _operation_queue_update(command_id_ref["value"], destructive_started=True)
             try:
@@ -4631,8 +6374,171 @@ async def _schedule_cloud_upload_verify_offload(data: dict) -> tuple[dict, bool]
     return scheduled, created
 
 
+def _cloud_upload_status_guard(data: Mapping[str, Any]) -> None:
+    """Fail closed for shop uploads unless the catalog proves a posted state."""
+
+    if str(data.get("scope") or "").strip().lower() != "shop":
+        # Master products do not have a shop catalog status.  They retain the
+        # existing explicit asset preflight/identity/verification gates.
+        return
+    shop_id = str(data.get("shop_id") or "").strip()
+    folder = str(data.get("folder") or "").strip()
+    statuses = _shop_catalog_statuses(shop_id)
+    status = statuses.get(folder) if statuses is not None else None
+    if status is None or not _is_canonical_successful_posted_status(status):
+        raise HTTPException(
+            409,
+            (
+                f"⚠️ Không thể upload cloud {folder}: sản phẩm shop {shop_id} chưa ở trạng thái "
+                "✅ Đã đăng (hoặc ✅ Đã đăng draft) hợp lệ. Hãy đưa sản phẩm lên Đã đăng trước; "
+                "local vẫn được giữ nguyên cho đến khi upload + verify manifest/hash cloud hoàn tất."
+            ),
+        )
+
+
+async def _reconcile_cloud_auto_eligibility(now: float | None = None) -> dict[str, Any]:
+    """Reconcile successful catalog states and enqueue only due entries.
+
+    This function is called by the server startup/periodic task, never at
+    module import.  A catalog read failure leaves that shop's prior ledger
+    entries untouched, preventing a transient I/O problem from cancelling an
+    otherwise valid future upload.
+    """
+
+    timestamp = float(time.time() if now is None else now)
+    ledger = _load_cloud_auto_ledger()
+    entries = ledger["entries"]
+    observed_keys: set[str] = set()
+    for shop_id in tuple(SHOPS.keys()):
+        statuses = _shop_catalog_statuses(str(shop_id))
+        if statuses is None:
+            continue
+        for folder, status in statuses.items():
+            key = f"shops/{shop_id}/{folder}"
+            if not _is_canonical_successful_posted_status(status):
+                # A pending/error transition cancels future automatic work.
+                entries.pop(key, None)
+                continue
+            observed_keys.add(key)
+            entry = entries.get(key)
+            if not isinstance(entry, dict):
+                entry = _record_cloud_auto_post_observation(
+                    str(shop_id), folder, status=status, now=timestamp
+                ) or {}
+                # _record_* persists independently; retain its returned entry
+                # in this in-memory reconciliation pass as well.
+                entries[key] = entry
+            if not entry:
+                continue
+            eligible_at = float(entry.get("eligible_at") or (timestamp + _AUTO_CLOUD_DELAY_SECONDS))
+            entry["eligible_at"] = eligible_at
+            entry["observed_status"] = str(status)
+            entry["last_observed_at"] = timestamp
+
+            async with _CLOUD_ASSET_UPLOAD_QUEUE_GUARD:
+                active_schedule = _CLOUD_ASSET_UPLOAD_SCHEDULES.get(key)
+                active = active_schedule and active_schedule.get("status") in {"queued", "running"}
+            if active:
+                entry["state"] = "scheduled"
+                continue
+            if active_schedule and active_schedule.get("status") == "error":
+                entry["state"] = "due_error"
+            # A previously accepted schedule is persisted across a dashboard
+            # restart.  An in-memory schedule still dedupes above, but after a
+            # restart its command is gone.  At the due point, re-admit the
+            # idempotent workflow unless local state already proves CLOUD_ONLY.
+            if str(entry.get("state") or "") == "scheduled":
+                try:
+                    data = _cloud_upload_data_for_shop_product(str(shop_id), folder)
+                    local_state = load_local_state(data["target"])
+                    if str(local_state.get("state") or "").upper() == "CLOUD_ONLY":
+                        entry["state"] = "cloud_only"
+                        continue
+                except (HTTPException, AssetValidationError, CloudAssetError, OSError, ValueError, TypeError, KeyError):
+                    entry["state"] = "due_error"
+                if timestamp < eligible_at:
+                    # A malformed/manual ledger entry must never cause an
+                    # early upload before its persisted eligibility timestamp.
+                    continue
+            if timestamp < eligible_at:
+                entry["state"] = "eligible_waiting"
+                continue
+
+            # At the due point, inspect the local state without contacting the
+            # remote. CLOUD_ONLY and active schedules are safe dedupe exits;
+            # the upload routine itself still performs all remote verification.
+            try:
+                data = _cloud_upload_data_for_shop_product(str(shop_id), folder)
+                local_state = load_local_state(data["target"])
+                if str(local_state.get("state") or "").upper() == "CLOUD_ONLY":
+                    entry["state"] = "cloud_only"
+                    continue
+                scheduled, _created = await _schedule_cloud_upload_verify_offload(data)
+            except (HTTPException, AssetValidationError, CloudAssetError, OSError, ValueError, TypeError, KeyError) as exc:
+                # Keep due eligibility for a later retry; expose the reason in
+                # the diagnostics ledger without turning a transient failure
+                # into an early or duplicate queue item.
+                entry["state"] = "due_error"
+                entry["last_error"] = _cloud_error_text(exc)
+                continue
+            entry["state"] = "scheduled"
+            entry["scheduled_at"] = timestamp
+            entry["command_id"] = scheduled.get("command_id")
+
+    # Remove orphaned entries only when the corresponding shop catalog was
+    # successfully read and no longer reports the product as posted.
+    for key in list(entries):
+        if key.startswith("shops/") and key not in observed_keys:
+            shop_parts = key.split("/")
+            if len(shop_parts) == 3 and shop_parts[1] in SHOPS:
+                statuses = _shop_catalog_statuses(shop_parts[1])
+                if statuses is not None:
+                    entries.pop(key, None)
+    _save_cloud_auto_ledger(ledger)
+    return ledger
+
+
+async def _cloud_auto_scheduler_loop() -> None:
+    while True:
+        try:
+            await _reconcile_cloud_auto_eligibility()
+        except asyncio.CancelledError:
+            raise
+        except (
+            HTTPException,
+            AssetValidationError,
+            CloudAssetError,
+            CatalogRepositoryError,
+            OSError,
+            ValueError,
+            TypeError,
+            KeyError,
+            RuntimeError,
+        ) as exc:  # scheduler must not take down the dashboard
+            logger.warning("cloud auto-reconcile failed: %s", _cloud_error_text(exc))
+        await asyncio.sleep(_AUTO_CLOUD_RECONCILE_INTERVAL_SECONDS)
+
+
+async def _start_cloud_auto_scheduler() -> None:
+    global _cloud_auto_scheduler_task
+    if _cloud_auto_scheduler_task is None or _cloud_auto_scheduler_task.done():
+        await _reconcile_cloud_auto_eligibility()
+        _cloud_auto_scheduler_task = asyncio.create_task(_cloud_auto_scheduler_loop())
+
+
+async def _stop_cloud_auto_scheduler() -> None:
+    global _cloud_auto_scheduler_task
+    task = _cloud_auto_scheduler_task
+    _cloud_auto_scheduler_task = None
+    if task is not None:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
 async def _run_cloud_asset_mutation(request: Request, operation: str):
     data = await _read_cloud_asset_request(request)
+    if operation in {"upload", "upload-verify-offload"}:
+        _cloud_upload_status_guard(data)
     identity = data["product_identity"]
     try:
         result = await _perform_cloud_asset_mutation(data, operation)
@@ -4662,6 +6568,7 @@ async def cloud_assets_upload(request: Request):
 @app.post("/api/cloud-assets/schedule-upload-verify")
 async def cloud_assets_schedule_upload_verify(request: Request):
     data = await _read_cloud_asset_request(request)
+    _cloud_upload_status_guard(data)
     scheduled, created = await _schedule_cloud_upload_and_verify(data)
     return JSONResponse(
         status_code=202 if created else 200,
@@ -4678,6 +6585,7 @@ async def cloud_assets_schedule_upload_verify(request: Request):
 @app.post("/api/cloud-assets/schedule-upload-verify-offload")
 async def cloud_assets_schedule_upload_verify_offload(request: Request):
     data = await _read_cloud_asset_request(request)
+    _cloud_upload_status_guard(data)
     identity = data["product_identity"]
     if data.get("delete_local") is not True:
         raise HTTPException(
@@ -4783,15 +6691,33 @@ def get_products(
     sort: str = "row",
 ):
     try:
+        captured_shop_id = str(_active_shop_id or "").strip()
+        captured_shop_name = str(SHOPS.get(captured_shop_id, {}).get("name", "")).strip()
+
+        def ensure_shop_context() -> None:
+            current_shop_id = str(_active_shop_id or "").strip()
+            if current_shop_id != captured_shop_id:
+                raise HTTPException(
+                    409,
+                    (
+                        "Shop context changed while building products: "
+                        f"captured={captured_shop_id!r}, current={current_shop_id!r}"
+                    ),
+                )
+
         products = products_from_excel()
         snapshot = latest_etsy_manager_snapshot()
         products = enrich_products_with_etsy_manager(products, snapshot)
         if page_size is None:
+            manager_payload = attach_local_products_to_etsy_snapshot(snapshot, products)
+            ensure_shop_context()
             return JSONResponse({
                 "products": products,
-                "etsy_manager": attach_local_products_to_etsy_snapshot(
-                    snapshot, products
-                ),
+                "etsy_manager": manager_payload,
+                "active_shop": {
+                    "id": captured_shop_id,
+                    "name": captured_shop_name,
+                },
             })
 
         if page < 1 or page_size < 1 or page_size > 200:
@@ -4830,9 +6756,15 @@ def get_products(
         total = len(filtered)
         start = (page - 1) * page_size
         page_products = filtered[start:start + page_size]
+        manager_payload = attach_local_products_to_etsy_snapshot(snapshot, page_products)
+        ensure_shop_context()
         return JSONResponse({
             "products": page_products,
-            "etsy_manager": attach_local_products_to_etsy_snapshot(snapshot, page_products),
+            "etsy_manager": manager_payload,
+            "active_shop": {
+                "id": captured_shop_id,
+                "name": captured_shop_name,
+            },
             "pagination": {
                 "page": page,
                 "page_size": page_size,
@@ -5471,6 +7403,18 @@ async def update_product(row: int, request: Request):
         raise HTTPException(409, "Catalog changed; refresh before retrying") from error
     except CatalogRepositoryError as error:
         raise HTTPException(500, "Catalog update failed safely") from error
+    if "status" in updates:
+        folder = _shop_catalog_folder_for_row(_active_shop_id, row)
+        ledger = _load_cloud_auto_ledger()
+        key = f"shops/{_active_shop_id}/{folder}" if folder else ""
+        if _is_canonical_successful_posted_status(updates.get("status")):
+            _record_cloud_auto_post_observation(
+                _active_shop_id, folder, status=updates.get("status")
+            )
+        elif key:
+            # A deliberate pending/error transition cancels future eligibility.
+            if ledger["entries"].pop(key, None) is not None:
+                _save_cloud_auto_ledger(ledger)
     return {"ok": True}
 
 @app.post("/api/products/{row}/reset-status")
@@ -5802,18 +7746,70 @@ async def open_folder(row: int, request: Request):
     subfolder = data.get("type", "files")   # 'files' or 'images'
     folder_path = SHOP_DIR() / p["folder"] / subfolder
     folder_path.mkdir(parents=True, exist_ok=True)
-    subprocess.Popen(["open", "-R", str(folder_path)])
+    subprocess.Popen(["open", "-R", str(folder_path)], env=_together_child_env())
     return {"ok": True, "path": str(folder_path)}
 
 
 # ── File serving ─────────────────────────────────────────────────────────────────
 @app.get("/files/{folder}/{subfolder}/{filename:path}")
-def serve_file(folder: str, subfolder: str, filename: str):
-    decoded_filename = urllib.parse.unquote(filename)
-    path = SHOP_DIR() / folder / subfolder / decoded_filename
-    if not path.exists():
+def serve_file(
+    folder: str,
+    subfolder: str,
+    filename: str,
+    shop_id: str = "",
+    v: str = "",
+):
+    """Serve a shop-scoped product asset without cross-shop cache aliasing."""
+
+    requested_shop = _validate_cloud_shop_id(shop_id, required=False)
+    normalized_folder = _validate_product_numbered_folder_name(folder)
+    normalized_subfolder = str(subfolder or "").strip()
+    if normalized_subfolder not in {"images", "files"}:
+        raise HTTPException(400, "subfolder phải là images hoặc files")
+
+    decoded_filename = (
+        urllib.parse.unquote(str(filename or ""))
+        .replace("\\", "/")
+        .strip("/")
+    )
+    filename_parts = decoded_filename.split("/")
+    if not decoded_filename or any(
+        part in {"", ".", ".."} for part in filename_parts
+    ):
+        raise HTTPException(400, "filename không hợp lệ")
+
+    try:
+        shop_dir = _sync_safe_shop_dir(requested_shop, "file serving")
+        product_path = _sync_shop_product_path(
+            shop_dir,
+            normalized_folder,
+            "file serving",
+        )
+    except AssetValidationError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    asset_root = product_path / normalized_subfolder
+    if asset_root.is_symlink() or not asset_root.is_dir():
         raise HTTPException(404)
-    return FileResponse(path)
+
+    path = asset_root
+    for part in filename_parts:
+        path = path / part
+        if path.is_symlink():
+            raise HTTPException(400, "asset path không được chứa symlink")
+    try:
+        path.resolve(strict=False).relative_to(asset_root.resolve(strict=True))
+    except (OSError, ValueError) as exc:
+        raise HTTPException(400, "asset path nằm ngoài product folder") from exc
+    if not path.is_file():
+        raise HTTPException(404)
+
+    cache_control = (
+        "private, max-age=31536000, immutable"
+        if str(v or "").strip()
+        else "private, no-cache"
+    )
+    return FileResponse(path, headers={"Cache-Control": cache_control})
 
 # ── API: SSE Logs ────────────────────────────────────────────────────────────────
 @app.get("/api/logs")
@@ -5843,8 +7839,7 @@ async def _check_watcher_async() -> bool:
         proc = await asyncio.create_subprocess_exec(
             "pgrep", "-f", "planner_watcher.py",
             stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL
-        )
+            stderr=asyncio.subprocess.DEVNULL, env=_together_child_env())
         await proc.wait()
         return proc.returncode == 0
     except:
@@ -5862,6 +7857,18 @@ def _normalize_http_url(base_url: str) -> str:
     return base_url[:-1] if base_url.endswith("/") else base_url
 
 
+def _get_httpx():
+    """Load httpx lazily so dashboard startup stays independent of SSL init."""
+    global httpx
+    if httpx is None:
+        try:
+            import httpx as _httpx
+        except Exception:
+            return None
+        httpx = _httpx
+    return httpx
+
+
 async def _check_http_json_identity(
     base_url: str,
     path: str,
@@ -5870,9 +7877,8 @@ async def _check_http_json_identity(
     response_validator: Callable[[Any], bool] | None = None,
     timeout_seconds: float = _RUNTIME_SERVICE_CHECK_TIMEOUT_SECONDS,
 ) -> bool:
-    try:
-        import httpx as _httpx
-    except Exception:
+    _httpx = _get_httpx()
+    if _httpx is None:
         return False
 
     url = f"{_normalize_http_url(base_url)}{path}"
@@ -5918,7 +7924,127 @@ def _has_openai_identity(payload: Mapping[str, Any]) -> bool:
     return isinstance(data, list)
 
 
-async def _check_vertex_service_async() -> bool:
+def _has_together_model_item(item: object, *, require_object: bool = False) -> bool:
+    if not isinstance(item, Mapping):
+        return False
+    model_id = item.get("id")
+    if not isinstance(model_id, str) or not model_id.strip():
+        return False
+    object_kind = item.get("object")
+    if require_object and object_kind != "model":
+        return False
+    return object_kind in (None, "model")
+
+
+def _has_together_models_identity(payload: object, *, expected_model: str = "") -> bool:
+    """Validate Together's native list and OpenAI-compatible model envelopes."""
+    require_object = isinstance(payload, list)
+    if require_object:
+        items = payload
+    elif isinstance(payload, Mapping) and payload.get("object") == "list":
+        items = payload.get("data")
+    else:
+        return False
+    if not isinstance(items, list) or not items:
+        return False
+    if not all(_has_together_model_item(item, require_object=require_object) for item in items):
+        return False
+    if expected_model:
+        model_ids = {str(item["id"]).strip() for item in items if isinstance(item, Mapping)}
+        return expected_model.strip() in model_ids
+    return True
+
+
+def _together_runtime_config_snapshot() -> tuple[str, str, str, str]:
+    """Read Together runtime config and return a non-reversible identity hash."""
+    with _TOGETHER_RUNTIME_CONFIG_LOCK:
+        api_key = (os.environ.get("TOGETHER_API_KEY") or "").strip()
+        base_url = _together_env_base_url()
+        model = _together_env_model()
+    identity = hashlib.sha256(
+        "\0".join((api_key, base_url, model)).encode("utf-8")
+    ).hexdigest()
+    return api_key, base_url, model, identity
+
+
+def _invalidate_together_readiness() -> None:
+    """Invalidate cached Together readiness and any in-flight provider probe."""
+    global _together_readiness_ok_until
+    global _together_readiness_cache_identity
+    global _together_readiness_failure_identity
+    global _together_readiness_retry_after
+    global _together_readiness_probe_task
+    global _together_readiness_probe_identity
+    global _together_readiness_generation
+
+    _together_readiness_generation += 1
+    _together_readiness_ok_until = 0.0
+    _together_readiness_cache_identity = None
+    _together_readiness_failure_identity = None
+    _together_readiness_retry_after = 0.0
+    task = _together_readiness_probe_task
+    if task is not None and not task.done():
+        try:
+            task.cancel()
+        except RuntimeError:
+            # A task can belong to a test/event loop that has already closed.
+            # The generation and identity checks below still make its result
+            # unable to warm the current configuration.
+            pass
+    _together_readiness_probe_task = None
+    _together_readiness_probe_identity = None
+
+
+async def _run_together_readiness_probe(
+    api_key: str,
+    base_url: str,
+    model: str,
+    identity: str,
+    generation: int,
+) -> bool:
+    """Run the slow authenticated Together probe away from the snapshot path."""
+    healthy = False
+    try:
+        _httpx = _get_httpx()
+        if _httpx is not None:
+            timeout = _httpx.Timeout(timeout=_TOGETHER_RUNTIME_PROBE_TIMEOUT_SECONDS)
+            async with _httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+                response = await client.get(
+                    f"{base_url}/models",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+            if response.status_code == 200:
+                healthy = _has_together_models_identity(response.json(), expected_model=model)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        healthy = False
+
+    # A provider response may arrive after the dashboard settings changed, or
+    # after a different environment changed the key/base/model.  Never attach
+    # that result to the new configuration.
+    current = _together_runtime_config_snapshot()
+    if generation != _together_readiness_generation or identity != current[3]:
+        return False
+
+    global _together_readiness_ok_until
+    global _together_readiness_cache_identity
+    global _together_readiness_failure_identity
+    global _together_readiness_retry_after
+    if healthy:
+        _together_readiness_cache_identity = identity
+        _together_readiness_ok_until = time.monotonic() + _TOGETHER_READINESS_CACHE_SECONDS
+        _together_readiness_failure_identity = None
+        _together_readiness_retry_after = 0.0
+    else:
+        _together_readiness_cache_identity = None
+        _together_readiness_ok_until = 0.0
+        _together_readiness_failure_identity = identity
+        _together_readiness_retry_after = time.monotonic() + _TOGETHER_READINESS_FAILURE_CACHE_SECONDS
+    return healthy
+
+
+async def _check_image_studio_service_async() -> bool:
     openapi_check, health_check = await asyncio.gather(
         _check_http_json_identity(
             VERTEX_URL,
@@ -5936,6 +8062,54 @@ async def _check_vertex_service_async() -> bool:
         ),
     )
     return openapi_check or health_check
+
+
+async def _check_together_service_async() -> bool:
+    """Return cached Together readiness and coalesce a slow background probe."""
+    global _together_readiness_probe_task
+    global _together_readiness_probe_identity
+
+    api_key, base_url, model, identity = _together_runtime_config_snapshot()
+    if not api_key:
+        if (
+            _together_readiness_probe_task is not None
+            or _together_readiness_cache_identity is not None
+            or _together_readiness_failure_identity is not None
+        ):
+            _invalidate_together_readiness()
+        return False
+    now = time.monotonic()
+    if (
+        _together_readiness_cache_identity == identity
+        and now < _together_readiness_ok_until
+    ):
+        return True
+    if (
+        _together_readiness_failure_identity == identity
+        and now < _together_readiness_retry_after
+    ):
+        return False
+
+    task = _together_readiness_probe_task
+    if task is not None and not task.done():
+        if _together_readiness_probe_identity == identity:
+            return False
+        try:
+            task.cancel()
+        except RuntimeError:
+            pass
+
+    _together_readiness_probe_identity = identity
+    _together_readiness_probe_task = asyncio.create_task(
+        _run_together_readiness_probe(
+            api_key,
+            base_url,
+            model,
+            identity,
+            _together_readiness_generation,
+        )
+    )
+    return False
 
 
 async def _check_mlx_service_async() -> bool:
@@ -5965,26 +8139,30 @@ async def service_status():
 
 async def _service_status_snapshot() -> dict[str, Any]:
     watcher_task = asyncio.create_task(_check_watcher_async())
-    vertex_task = asyncio.create_task(_check_vertex_service_async())
+    image_studio_task = asyncio.create_task(_check_image_studio_service_async())
+    together_task = asyncio.create_task(_check_together_service_async())
     mlx_task = asyncio.create_task(_check_mlx_service_async())
 
     try:
-        watcher, vertex_app, mlx_ai = await asyncio.wait_for(
-            asyncio.gather(watcher_task, vertex_task, mlx_task),
+        watcher, image_studio, together_api, mlx_ai = await asyncio.wait_for(
+            asyncio.gather(watcher_task, image_studio_task, together_task, mlx_task),
             timeout=_RUNTIME_SERVICE_SNAPSHOT_TIMEOUT_SECONDS,
         )
     except (asyncio.TimeoutError, Exception):
         # A readiness indicator is strictly best-effort.  Return all services
         # as offline rather than holding up the main dashboard API if a future
         # probe regresses or an optional process becomes wedged.
-        for task in (watcher_task, vertex_task, mlx_task):
+        for task in (watcher_task, image_studio_task, together_task, mlx_task):
             if not task.done():
                 task.cancel()
-        await asyncio.gather(watcher_task, vertex_task, mlx_task, return_exceptions=True)
-        watcher, vertex_app, mlx_ai = False, False, False
+        await asyncio.gather(
+            watcher_task, image_studio_task, together_task, mlx_task, return_exceptions=True
+        )
+        watcher, image_studio, together_api, mlx_ai = False, False, False, False
 
     return {
-        "vertex_app": vertex_app,
+        "image_studio": image_studio,
+        "together_api": together_api,
         "mlx_ai":     mlx_ai,
         "watcher":    watcher,
         "running":    list(dict.fromkeys(list(_running_processes.keys()) + list(_running_tasks.keys()))),
@@ -5999,7 +8177,7 @@ async def runtime_health() -> dict[str, Any]:
     optional_service_readiness = {
         key: bool(value)
         for key, value in services.items()
-        if isinstance(value, bool) and key in {"vertex_app", "mlx_ai", "watcher"}
+        if isinstance(value, bool) and key in {"image_studio", "together_api", "mlx_ai", "watcher"}
     }
     return runtime_identity.runtime_health_payload(
         runtime_root=BASE_DIR,
@@ -6023,7 +8201,7 @@ async def start_watcher():
     pid_file = Path.home() / "Desktop" / "Auto_Etsy_Planner" / ".watcher.pid"
     pid_file.unlink(missing_ok=True)
     proc = subprocess.Popen([PYTHON_BIN, watcher_py],
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=_together_child_env())
     broadcast(f"[WATCHER] 🚀 Started PID {proc.pid}")
     return {"ok": True, "pid": proc.pid}
 
@@ -6045,7 +8223,7 @@ async def sync_etsy_shop():
 
 
 async def _run_etsy_shop_sync(shop_id: str):
-    env = {**__import__('os').environ, "PYTHONUNBUFFERED": "1"}
+    env = _together_child_env()
     cmd = [sys.executable, "-u", str(BASE_DIR / "etsy_shop_sync.py"), "--shop", shop_id]
     broadcast(f"[ETSY-SYNC] 🔄 Bắt đầu đồng bộ shop {shop_id} từ Etsy Shop Manager...")
     try:
@@ -7166,43 +9344,6 @@ def _load_seo_image_evidence(p: dict) -> tuple[list[dict[str, object]], bool]:
     return images, bool(images)
 
 
-_SEO_TITLE_PROMPT_RULES = """TITLE QUALITY RULES:
-- Write a clear, buyer-friendly title of no more than 140 characters and preferably 10-15 words.
-- Lead with one factual primary product phrase, then add only essential differentiators a buyer needs to understand the item.
-- Use natural language. Avoid keyword stuffing, repeated synonyms, subjective filler, and long chains of pipe-separated fragments.
-- Do not repeat the same meaningful word merely to fill the character limit.
-- Use only product facts allowed by the active source-of-truth rules."""
-
-_SEO_TAG_PROMPT_RULES = """TAG QUALITY RULES:
-- Return exactly 13 unique, comma-separated tags; every tag must be 20 characters or fewer.
-- Prefer natural multi-word search phrases over isolated words.
-- Cover varied, evidence-supported buyer intent: what the item is, its specific style/use, and who it is for.
-- Do not repeat near-identical phrases, pad with generic terms, or invent unsupported formats, audiences, occasions, or compatibility."""
-
-_SEO_DESCRIPTION_PROMPT_TEMPLATE = """DESCRIPTION QUALITY AND LENGTH:
-- Write a substantial, scannable description of 2,500-4,500 characters. Do not pad it with repeated keywords or generic filler.
-- The first paragraph is the search/meta snippet: 150-160 characters, one natural sentence, led by the primary product phrase and containing up to two closely related terms only when supported.
-- Use the primary phrase naturally in the opening and once or twice later. Use secondary phrases where relevant; never repeat a phrase mechanically.
-- Replace every instruction below with finished buyer-facing copy. Never output bracketed placeholders or commentary about the template.
-- Every product claim, format, feature, included item, audience, use case, and compatibility statement must obey the active source-of-truth rules. Omit a section item when evidence is absent; never invent it.
-
-Required buyer-facing structure:
-1. Search/meta opening paragraph (150-160 characters).
-2. Two short value paragraphs explaining what the product is, who it helps, and the evidence-supported outcome.
-3. "📄 PRODUCT DETAILS" with a concise overview and an evidence-supported bullet list.
-4. "✨ KEY FEATURES" with 5-8 specific bullets when supported.
-5. "🎯 PERFECT FOR" with 4-6 evidence-supported audiences or use cases when supported.
-6. "💡 HOW TO USE" with clear, practical steps or ideas supported by the source.
-7. "📦 WHAT'S INCLUDED" listing only explicitly supported deliverables and formats.
-8. "🖥️ COMPATIBILITY" listing only explicitly supported software/devices; otherwise clearly say compatibility is not specified.
-9. "❓ FAQ" with 3-4 concise questions buyers are likely to ask, answered without unsupported claims.
-10. "⚡ INSTANT DOWNLOAD" clearly stating that this is a digital product and no physical item ships.
-11. "📜 TERMS & CONDITIONS" with concise personal-use, no-resale, no-redistribution language.
-12. Help/contact line and the supplied store link. Include social links only when supplied.
-
-Return polished English copy with short paragraphs and readable bullets. Do not call the text a meta description and do not include character counts."""
-
-
 def _build_keyword_only_seo_prompt(
     *,
     field: str,
@@ -7231,7 +9372,7 @@ Return ONLY: <etsy_title>...</etsy_title>"""
 Derive every tag only from the target keyword without inventing a niche.
 {_SEO_TAG_PROMPT_RULES}
 Return ONLY: <etsy_tags>...</etsy_tags>"""
-    description_body = f"""Use only generic digital-download/footer language and claims directly supported by the keyword; do not invent file formats, page counts, compatibility, features, or included items.
+    description_body = f"""Use only claims directly supported by the keyword plus generic help/store-footer language. Do not assume this is a digital download; do not invent specifications, policies, delivery, features, or included items.
 {_SEO_DESCRIPTION_PROMPT_TEMPLATE}
 Store link: {etsy_link}
 {('Follow Us: ' + social_links) if social_links else ''}"""
@@ -7251,6 +9392,13 @@ so no raw &, <, > appear in the generated values.
 Write the complete finished description using the template and rules below.
 {description_body}
 </description>"""
+
+
+_FULL_SEO_SEMANTIC_RETRY_INSTRUCTION = """CORRECTIVE RETRY: Return one complete replacement response now.
+- Use only the product evidence and rules in the original prompt and attached images; do not invent or add unrelated context.
+- Return only the exact XML structure in the original prompt, with no Markdown fence, prose, or partial fields.
+- Include a non-empty title, a non-empty finished description with every bracketed instruction replaced, and exactly 13 distinct comma-separated tags, each 20 characters or fewer.
+- Escape XML special characters inside field values so the response is well-formed."""
 
 
 def _parse_full_seo_xml(content: str) -> dict[str, str] | None:
@@ -7288,6 +9436,32 @@ def _parse_full_seo_xml(content: str) -> dict[str, str] | None:
             return None
         values[child.tag] = (child.text or "").strip()
     return values
+
+
+def _full_seo_values_pass_validation(full_values: Mapping[str, str] | None) -> bool:
+    """Keep the all-fields response gate strict and side-effect free."""
+    if full_values is None:
+        return False
+
+    raw_title = full_values["etsy_title"]
+    raw_tags = full_values["etsy_tags"]
+    raw_desc = full_values["description"]
+    if "[" in raw_tags:
+        raw_tags = re.sub(r'[\[\]"\'\n]', "", raw_tags)
+    tag_values = [tag.strip() for tag in raw_tags.split(",") if tag.strip()]
+    placeholder_pattern = re.compile(
+        r"\[(?:[^\]]*(?:feature|audience|use case|product keyword|paragraph|included item|generate|critical)[^\]]*)\]",
+        re.IGNORECASE,
+    )
+    tag_keys = [tag.casefold() for tag in tag_values]
+    return bool(
+        raw_title
+        and raw_desc
+        and len(tag_values) == 13
+        and not any(len(tag) > 20 for tag in tag_values)
+        and len(set(tag_keys)) == len(tag_keys)
+        and not placeholder_pattern.search(raw_desc)
+    )
 
 
 @app.get("/api/products/{row}/etsy-comparison")
@@ -7435,6 +9609,26 @@ async def post_to_etsy(row: int):
         return JSONResponse(
             status_code=409,
             content={"ok": False, "created": False, "error": block_reason},
+        )
+
+    session = resolve_etsy_session(BASE_DIR, SHOPS, shop_id)
+    if not await asyncio.to_thread(is_etsy_session_ready, session):
+        return JSONResponse(
+            status_code=409,
+            content={
+                "ok": False,
+                "created": False,
+                "shop_id": shop_id,
+                "profile_dir": str(session.profile_dir),
+                "debug_port": session.debug_port,
+                "error": (
+                    f"Phiên Etsy chưa sẵn sàng cho shop '{shop_id}': "
+                    f"profile='{session.profile_dir}', "
+                    f"debug_port={session.debug_port}. "
+                    "Hãy dùng nút 'Đăng nhập Etsy' dành cho Post trên dashboard "
+                    "và chờ Chrome sẵn sàng rồi thử lại."
+                ),
+            },
         )
 
     async def run_post():
@@ -7791,7 +9985,7 @@ async def _run_etsy_updater(
     terminal_message: str | None = None
     store = _get_job_store()
     runtime_key = job_id
-    env = {**__import__('os').environ, "PYTHONUNBUFFERED": "1"}
+    env = _together_child_env(include_together=True)
     try:
         _cache_job_status(
             job_id,
@@ -7906,7 +10100,7 @@ async def _run_poster(row: int, folder: str, shop_id: str, lock_key: str | None 
         lock_key = _etsy_post_lock_key(shop_id)
     proc: asyncio.subprocess.Process | None = None
     status_written = False
-    env = {**__import__('os').environ, "PYTHONUNBUFFERED": "1"}
+    env = _together_child_env(include_together=True)
     try:
         preflight_ok, preflight_msg = await _runtime_prefetch_import_check(
             PYTHON_BIN,
@@ -7921,6 +10115,7 @@ async def _run_poster(row: int, folder: str, shop_id: str, lock_key: str | None 
             raise RuntimeError(status_msg)
         cmd = [PYTHON_BIN, "-u", ETSY_POSTER, "--product", folder, "--shop", shop_id]
         broadcast(f"[POSTER] 🚀 Bắt đầu: {folder}")
+        env = _together_child_env(include_together=True)
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT, cwd=str(BASE_DIR), env=env)
@@ -7934,10 +10129,19 @@ async def _run_poster(row: int, folder: str, shop_id: str, lock_key: str | None 
         code = await proc.wait()
         if code != 0:
             status_msg = f"❌ Lỗi exit {code}"
-            save_to_excel(row, {"status": _preserve_new_import_status(status_msg, row=row)})
+            # The poster records a detailed "❌ Lỗi: ..." status itself before
+            # exiting 1; keep that detail and only fall back to the generic
+            # exit status when nothing was recorded.
+            current_status = _read_product_status_at_row(row)
+            if not str(current_status).startswith("❌ Lỗi:"):
+                save_to_excel(row, {"status": _preserve_new_import_status(status_msg, row=row)})
             status_written = True
             broadcast(f"[POSTER] {status_msg}: {folder}")
             raise RuntimeError(status_msg)
+        # Start the 24-hour eligibility window at the successful post
+        # transition.  The scheduler only records this observation here; it
+        # cannot enqueue cloud work until the due timestamp is reached.
+        _record_cloud_auto_post_observation(shop_id, folder, status="✅ Đã đăng")
         broadcast(f"[POSTER] ✅ Xong: {folder}")
     except asyncio.CancelledError:
         broadcast(f"[POSTER] ⚠️ Đã hủy: {folder}")
@@ -7981,7 +10185,7 @@ _LOG_NOISE = (
 
 async def _run_batch_poster(shop_id: str, lock_key: str):
     proc: asyncio.subprocess.Process | None = None
-    env = {**__import__('os').environ, "PYTHONUNBUFFERED": "1"}
+    env = _together_child_env(include_together=True)
     try:
         preflight_ok, preflight_msg = await _runtime_prefetch_import_check(
             PYTHON_BIN,
@@ -7993,6 +10197,7 @@ async def _run_batch_poster(shop_id: str, lock_key: str):
             return
         cmd = [PYTHON_BIN, "-u", ETSY_POSTER, "--batch", "200", "--shop", shop_id]
         broadcast("[BATCH] 🚀 Khởi động batch poster — 1 Chrome, xử lý tuần tự...")
+        env = _together_child_env(include_together=True)
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT, cwd=str(BASE_DIR), env=env)
@@ -8018,7 +10223,7 @@ async def _run_selected_poster(shop_id: str, items: list[tuple[int, str]], lock_
         cmd.extend(["--selected-product", f"{row}:{folder}"])
 
     proc: asyncio.subprocess.Process | None = None
-    env = {**__import__('os').environ, "PYTHONUNBUFFERED": "1"}
+    env = _together_child_env(include_together=True)
     try:
         preflight_ok, preflight_msg = await _runtime_prefetch_import_check(
             PYTHON_BIN,
@@ -8029,6 +10234,7 @@ async def _run_selected_poster(shop_id: str, items: list[tuple[int, str]], lock_
             broadcast(f"[BATCH] ❌ {preflight_msg}")
             return
         broadcast("[BATCH] 🚀 Khởi động đăng hàng loạt local đã chọn — 1 Chrome, xử lý tuần tự...")
+        env = _together_child_env(include_together=True)
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT, cwd=str(BASE_DIR), env=env)
@@ -8168,7 +10374,7 @@ async def _run_regenerate(p: dict, planner_path: str):
            "--output-dir", img_dir]
     try:
         proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, env=_together_child_env())
         if proc.stdout:
             async for line in proc.stdout:
                 text = line.decode("utf-8", errors="replace").rstrip()
@@ -8178,10 +10384,10 @@ async def _run_regenerate(p: dict, planner_path: str):
     except Exception as e:
         broadcast(f"[REGEN] ❌ {e}")
 
-# ── API: SEO regenerate via Google Vertex ────────────────────────────────────────
+# ── API: SEO regenerate via Together ────────────────────────────────────────────
 @app.post("/api/products/{row}/regen-seo")
 async def regen_seo(row: int, request: Request):
-    seo_deadline = time.monotonic() + _VERTEX_GENERATE_BUDGET_SECONDS
+    seo_deadline = time.monotonic() + _TOGETHER_GENERATE_BUDGET_SECONDS
     captured_shop_dir = SHOP_DIR()
     captured_excel_file = EXCEL_FILE()
     captured_shop_config = get_active_shop()
@@ -8216,191 +10422,286 @@ async def regen_seo(row: int, request: Request):
     return JSONResponse(
         {
             "ok": False,
-            "error": error_out.get("error") or "Vertex AI không phản hồi",
+            "error": error_out.get("error") or "Together không phản hồi",
             "error_code": error_out.get("error_code") or "SEO_PROVIDER_ERROR",
-            "provider": error_out.get("provider") or "google_vertex",
+            "provider": error_out.get("provider") or "together",
             "saved": False,
         },
         status_code=status_code,
     )
 
-_VERTEX_GENERATE_TIMEOUT_SECONDS = 180.0
-_VERTEX_GENERATE_BUDGET_SECONDS = 190.0
-_VERTEX_GENERATE_MAX_ATTEMPTS = 2
-_VERTEX_RETRY_BACKOFF_SECONDS = (1.0,)
+_TOGETHER_GENERATE_TIMEOUT_SECONDS = 180.0
+_TOGETHER_GENERATE_BUDGET_SECONDS = 190.0
+_TOGETHER_GENERATE_MAX_ATTEMPTS = 2
+_TOGETHER_RETRY_BACKOFF_SECONDS = (1.0,)
+_TOGETHER_IMAGE_MAX_BYTES = 700 * 1024
+_TOGETHER_IMAGE_MAX_DIMENSION = 768
 
 
-def _is_timeout_vertex_error(error: BaseException) -> bool:
-    return isinstance(error, (asyncio.TimeoutError, TimeoutError))
+class _TogetherHTTPStatusError(RuntimeError):
+    """HTTP failure with only the safe status code retained for diagnostics."""
+
+    def __init__(self, status_code: int):
+        self.status_code = int(status_code)
+        super().__init__(f"Together HTTP {self.status_code}")
 
 
-def _is_connectivity_vertex_error(error: BaseException) -> bool:
+def _current_together_model() -> str:
+    return _together_env_model()
+
+
+def _current_together_base_url() -> str:
+    return _together_env_base_url()
+
+
+def _current_together_reasoning_effort() -> int | None:
+    raw_value = os.environ.get("TOGETHER_REASONING_EFFORT", "").strip()
+    if not raw_value:
+        return None
+    try:
+        effort = int(raw_value)
+    except (TypeError, ValueError):
+        return None
+    return effort if 1 <= effort <= 100 else None
+
+
+def _is_timeout_together_error(error: BaseException) -> bool:
+    return isinstance(error, (asyncio.TimeoutError, TimeoutError)) or "timeout" in type(error).__name__.lower()
+
+
+def _is_connectivity_together_error(error: BaseException) -> bool:
     if isinstance(error, (ConnectionError, OSError)):
         return True
-
     message = str(error).lower()
-    timeout_keywords = (
-        "connection",
-        "connect",
-        "unreachable",
-        "temporary failure in name resolution",
-        "name or service not known",
-        "network",
-        "dns",
-        "ssl",
-    )
-    return any(keyword in message for keyword in timeout_keywords)
+    return any(keyword in message for keyword in (
+        "connection", "connect", "unreachable", "temporary failure in name resolution",
+        "name or service not known", "network", "dns", "ssl",
+    ))
 
 
-def _is_unavailable_vertex_error(error: BaseException) -> bool:
-    code = getattr(error, "code", None)
-    status = getattr(error, "status", None)
-    if code is not None:
-        try:
-            if int(code) == 503:
-                return True
-        except (TypeError, ValueError):
-            pass
-    if isinstance(status, str) and status.upper() == "UNAVAILABLE":
-        return True
-    if type(error).__name__ in {"ServerError", "ServiceUnavailable", "Unavailable"}:
+def _together_status_code(error: BaseException) -> int | None:
+    if isinstance(error, _TogetherHTTPStatusError):
+        return error.status_code
+    value = getattr(error, "status_code", getattr(error, "code", None))
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_unavailable_together_error(error: BaseException) -> bool:
+    status_code = _together_status_code(error)
+    if status_code in {500, 502, 503, 504}:
         return True
     message = str(error).lower()
-    return bool(re.search(r"\b503\b", message)) or "unavailable" in message
+    return bool(re.search(r"\b(?:500|502|503|504)\b", message)) or "unavailable" in message
 
 
-def _is_transient_vertex_error(error: BaseException) -> bool:
-    if _is_timeout_vertex_error(error) or _is_connectivity_vertex_error(error):
+def _is_capacity_together_error(error: BaseException) -> bool:
+    status_code = _together_status_code(error)
+    if status_code == 429:
+        return True
+    return bool(re.search(r"\b429\b", str(error))) or "too many requests" in str(error).lower()
+
+
+def _is_transient_together_error(error: BaseException) -> bool:
+    if _is_timeout_together_error(error) or _is_connectivity_together_error(error):
         return False
-
-    code = getattr(error, "code", None)
-    status = getattr(error, "status", None)
-    if code is not None:
-        try:
-            if int(code) in {429, 503}:
-                return True
-        except (TypeError, ValueError):
-            pass
-
-    if isinstance(status, str):
-        status_upper = status.upper()
-        if status_upper in {"RESOURCE_EXHAUSTED", "TOO_MANY_REQUESTS", "UNAVAILABLE"}:
-            return True
-
-    if type(error).__name__ in {
-        "ServiceUnavailable",
-        "InternalServerError",
-        "ResourceExhausted",
-        "TooManyRequests",
-        "Unavailable",
-        "ServerError",
-    }:
+    status_code = _together_status_code(error)
+    if status_code == 429 or status_code in {500, 502, 503, 504}:
         return True
-
     message = str(error).lower()
-    if re.search(r"\b(?:429|503)\b", message):
-        return True
-    if (
-        "resource exhausted" in message
-        or "resource_exhausted" in message
-        or "service unavailable" in message
-        or "unavailable" in message
-    ):
-        return True
-
-    return False
+    return bool(re.search(r"\b(?:429|500|502|503|504)\b", message))
 
 
-def _vertex_error_message(error: BaseException) -> str:
+def _together_error_message(error: BaseException) -> str:
     if "timeout budget exceeded" in str(error).lower():
         return (
-            f"Vertex AI không phản hồi trong tổng thời gian {_VERTEX_GENERATE_BUDGET_SECONDS:.0f} giây "
-            "(timeout). Kiểm tra lại dịch vụ Vertex / mạng rồi thử lại."
+            f"Together không phản hồi trong tổng thời gian {_TOGETHER_GENERATE_BUDGET_SECONDS:.0f} giây "
+            "(timeout). Kiểm tra mạng/Together rồi thử lại."
         )
-    if _is_timeout_vertex_error(error):
+    if _is_timeout_together_error(error):
         return (
-            f"Vertex AI không phản hồi trong {_VERTEX_GENERATE_TIMEOUT_SECONDS:.0f} giây "
-            "(timeout). Kiểm tra lại dịch vụ Vertex / mạng rồi thử lại."
+            f"Together không phản hồi trong {_TOGETHER_GENERATE_TIMEOUT_SECONDS:.0f} giây "
+            "(timeout). Kiểm tra mạng/Together rồi thử lại."
         )
-    if _is_connectivity_vertex_error(error):
-        return "Không kết nối được Vertex AI. Kiểm tra DNS/network hoặc dịch vụ Vertex có đang chạy."
-    if _is_unavailable_vertex_error(error):
-        return "Vertex AI tạm thời không khả dụng (503/UNAVAILABLE). Vui lòng thử lại sau ít phút."
-    if _is_capacity_vertex_error(error):
-        return "Vertex AI tạm quá tải (429/resource exhausted). Vui lòng thử lại sau vài phút."
+    if _is_connectivity_together_error(error):
+        return "Không kết nối được Together. Kiểm tra DNS/network hoặc trạng thái Together rồi thử lại."
+    if _is_unavailable_together_error(error):
+        return "Together tạm thời không khả dụng (5xx). Vui lòng thử lại sau ít phút."
+    if _is_capacity_together_error(error):
+        return "Together tạm quá tải (429). Vui lòng thử lại sau vài phút."
+    status_code = _together_status_code(error)
+    if status_code == 401:
+        return (
+            "Together từ chối API key: key có thể bị từ chối, hết hạn hoặc sai/không hợp lệ. "
+            "Kiểm tra TOGETHER_API_KEY rồi thử lại."
+        )
+    if status_code == 403:
+        return (
+            "Together từ chối quyền truy cập: API key không có quyền dùng model hoặc workspace hiện tại. "
+            "Kiểm tra model, workspace và quyền của key rồi thử lại."
+        )
 
     message = str(error).strip()
+    runtime_key = _together_runtime_api_key()
+    if runtime_key:
+        message = message.replace(runtime_key, "[redacted]")
+    message = re.sub(r"(?i)(bearer\s+)[^\s,;]+", r"\1[redacted]", message)
+    message = re.sub(r"(?i)(api[_-]?key\s*[:=]\s*)[^\s,;]+", r"\1[redacted]", message)
     lowered = message.lower()
-    if any(token in lowered for token in ("credential", "api key", "access token", "private key", "oauth")):
-        return "Lỗi xác thực hoặc cấu hình Vertex AI. Vui lòng kiểm tra quyền truy cập và thử lại."
+    if any(token in lowered for token in ("credential", "api key", "access token", "private key", "oauth", "401", "403")):
+        return "Lỗi xác thực hoặc cấu hình Together. Vui lòng kiểm tra TOGETHER_API_KEY và quyền truy cập."
     if not message:
-        return "Lỗi không xác định khi gọi Vertex AI."
-    return f"Vertex AI lỗi: {message}"
+        return "Lỗi không xác định khi gọi Together."
+    return f"Together lỗi: {message}"
 
 
-def _is_capacity_vertex_error(error: BaseException) -> bool:
-    code = getattr(error, "code", None)
-    status = getattr(error, "status", None)
-    if code is not None:
-        try:
-            if int(code) == 429:
-                return True
-        except (TypeError, ValueError):
-            pass
-    if isinstance(status, str):
-        status_upper = status.upper()
-        if status_upper in {"RESOURCE_EXHAUSTED", "TOO_MANY_REQUESTS"}:
-            return True
+def _together_message_content(payload: object) -> str:
+    if not isinstance(payload, Mapping):
+        raise ValueError("Together response is not an object")
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], Mapping):
+        raise ValueError("Together response has no choices")
+    message = choices[0].get("message")
+    if not isinstance(message, Mapping):
+        raise ValueError("Together response has no message")
+    content = message.get("content")
+    if isinstance(content, str) and content.strip():
+        return content
+    if isinstance(content, list):
+        text_parts = [
+            item if isinstance(item, str) else item.get("text", "")
+            for item in content
+            if isinstance(item, str) or isinstance(item, Mapping)
+        ]
+        result = "".join(part for part in text_parts if isinstance(part, str)).strip()
+        if result:
+            return result
+    raise ValueError("Together response has no text content")
 
-    message = str(error).lower()
-    if re.search(r"\b429\b", message):
-        return True
-    return "resource exhausted" in message or "resource_exhausted" in message
+
+def _together_messages(prompt: str, image_evidence_items: list[dict[str, object]] | None = None) -> list[dict[str, object]]:
+    content: list[dict[str, object]] = [{"type": "text", "text": prompt}]
+    for image in image_evidence_items or []:
+        data = image.get("data")
+        mime_type = str(image.get("mime_type") or "image/png")
+        if not isinstance(data, (bytes, bytearray)):
+            continue
+        image_data = bytes(data)
+        image_mime_type = mime_type
+        if len(image_data) > _TOGETHER_IMAGE_MAX_BYTES:
+            # Together accepts multimodal OpenAI-compatible requests, but sending
+            # several full-size Etsy PNGs can exceed the provider's request
+            # limit. Resize only the in-memory evidence copy; never mutate the
+            # source asset on disk. If a malformed/unsupported image cannot be
+            # safely converted, omit it and keep the bounded text evidence.
+            try:
+                from PIL import Image
+
+                with Image.open(io.BytesIO(image_data)) as source_image:
+                    resized = source_image.convert("RGB")
+                    resized.thumbnail((_TOGETHER_IMAGE_MAX_DIMENSION, _TOGETHER_IMAGE_MAX_DIMENSION))
+                    output = io.BytesIO()
+                    for quality in (75, 60, 45, 30):
+                        output.seek(0)
+                        output.truncate(0)
+                        resized.save(output, format="JPEG", quality=quality, optimize=True)
+                        if output.tell() <= _TOGETHER_IMAGE_MAX_BYTES:
+                            break
+                    image_data = output.getvalue()
+                    image_mime_type = "image/jpeg"
+            except (OSError, ValueError, RuntimeError):
+                continue
+        if not image_data or len(image_data) > _TOGETHER_IMAGE_MAX_BYTES:
+            continue
+        data_url = f"data:{image_mime_type};base64,{__import__('base64').b64encode(image_data).decode('ascii')}"
+        content.append({"type": "image_url", "image_url": {"url": data_url, "detail": "low"}})
+    return [{"role": "user", "content": content}]
 
 
-async def _generate_vertex_content_with_retry(
-    client,
-    prompt: str | list,
-    config,
+async def _together_chat_completion(payload: dict[str, object], timeout_seconds: float) -> str:
+    api_key = _together_runtime_api_key()
+    if not api_key:
+        raise RuntimeError("TOGETHER_API_KEY is not configured")
+    _httpx = _get_httpx()
+    if _httpx is None:
+        raise RuntimeError("httpx is unavailable")
+    timeout = _httpx.Timeout(timeout=timeout_seconds)
+    async with _httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+        response = await client.post(
+            f"{_current_together_base_url()}/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json=payload,
+        )
+    status_code = int(getattr(response, "status_code", 0) or 0)
+    if status_code < 200 or status_code >= 300:
+        raise _TogetherHTTPStatusError(status_code)
+    return _together_message_content(response.json())
+
+
+async def _generate_together_content_with_retry(
+    prompt: str,
+    image_evidence_items: list[dict[str, object]] | None = None,
     deadline: Optional[float] = None,
-):
-    seo_deadline = deadline if deadline is not None else time.monotonic() + _VERTEX_GENERATE_BUDGET_SECONDS
-    for attempt in range(_VERTEX_GENERATE_MAX_ATTEMPTS):
+) -> str:
+    seo_deadline = deadline if deadline is not None else time.monotonic() + _TOGETHER_GENERATE_BUDGET_SECONDS
+    payload = {
+        "model": _current_together_model(),
+        "messages": _together_messages(prompt, image_evidence_items),
+        "stream": False,
+        "temperature": 0.3,
+        "max_tokens": 8192,
+    }
+    reasoning_effort = _current_together_reasoning_effort()
+    if reasoning_effort is not None:
+        payload["reasoning_effort"] = reasoning_effort
+    for attempt in range(_TOGETHER_GENERATE_MAX_ATTEMPTS):
         remaining_budget = seo_deadline - time.monotonic()
         if remaining_budget <= 0:
-            raise TimeoutError("Vertex request timeout budget exceeded")
+            raise TimeoutError("Together request timeout budget exceeded")
         try:
             return await asyncio.wait_for(
-                asyncio.to_thread(
-                    client.models.generate_content,
-                    model="gemini-2.5-pro",
-                    contents=prompt,
-                    config=config,
+                _together_chat_completion(
+                    payload,
+                    timeout_seconds=min(_TOGETHER_GENERATE_TIMEOUT_SECONDS, remaining_budget),
                 ),
-                timeout=min(_VERTEX_GENERATE_TIMEOUT_SECONDS, remaining_budget),
+                timeout=min(_TOGETHER_GENERATE_TIMEOUT_SECONDS, remaining_budget),
             )
         except Exception as error:
-            is_last_attempt = attempt + 1 >= _VERTEX_GENERATE_MAX_ATTEMPTS
-            if is_last_attempt or not _is_transient_vertex_error(error):
+            is_last_attempt = attempt + 1 >= _TOGETHER_GENERATE_MAX_ATTEMPTS
+            if is_last_attempt or not _is_transient_together_error(error):
                 raise
-
-            delay_seconds = _VERTEX_RETRY_BACKOFF_SECONDS[attempt]
-            attempt_label = attempt + 2
-            if delay_seconds + _VERTEX_GENERATE_TIMEOUT_SECONDS > remaining_budget:
+            delay_seconds = _TOGETHER_RETRY_BACKOFF_SECONDS[attempt]
+            if delay_seconds + _TOGETHER_GENERATE_TIMEOUT_SECONDS > remaining_budget:
                 raise
             delay_label = f"{int(delay_seconds)}" if float(delay_seconds).is_integer() else f"{delay_seconds}"
-            if _is_capacity_vertex_error(error):
+            attempt_label = attempt + 2
+            if _is_capacity_together_error(error):
                 broadcast(
-                    f"[SEO] ⚠️ Vertex tạm hết capacity (429); thử lại sau {delay_label}s (lần "
-                    f"{attempt_label}/{_VERTEX_GENERATE_MAX_ATTEMPTS})"
+                    f"[SEO] ⚠️ Together tạm hết capacity (429); thử lại sau {delay_label}s (lần "
+                    f"{attempt_label}/{_TOGETHER_GENERATE_MAX_ATTEMPTS})"
                 )
             else:
                 broadcast(
-                    f"[SEO] ⚠️ Lỗi tạm thời khi gọi Vertex AI, thử lại sau {delay_label}s "
-                    f"(lần {attempt_label}/{_VERTEX_GENERATE_MAX_ATTEMPTS})"
+                    f"[SEO] ⚠️ Lỗi tạm thời khi gọi Together, thử lại sau {delay_label}s "
+                    f"(lần {attempt_label}/{_TOGETHER_GENERATE_MAX_ATTEMPTS})"
                 )
             await asyncio.sleep(delay_seconds)
-    raise RuntimeError("Vertex retry loop exhausted")
+    raise RuntimeError("Together retry loop exhausted")
+
+
+async def _generate_bai_content_with_retry(
+    prompt: str,
+    image_evidence_items: list[dict[str, object]] | None = None,
+    deadline: Optional[float] = None,
+) -> str:
+    """Compatibility wrapper; all configuration and requests use Together."""
+    return await _generate_together_content_with_retry(
+        prompt,
+        image_evidence_items=image_evidence_items,
+        deadline=deadline,
+    )
 
 
 async def _run_seo(
@@ -8412,7 +10713,7 @@ async def _run_seo(
 ):
     folder = p["folder"]
     title  = p["title"] or folder
-    seo_deadline = deadline if deadline is not None else time.monotonic() + _VERTEX_GENERATE_BUDGET_SECONDS
+    seo_deadline = deadline if deadline is not None else time.monotonic() + _TOGETHER_GENERATE_BUDGET_SECONDS
 
     def smart_trim(raw: str, max_len: int = 140) -> str:
         if len(raw) <= max_len:
@@ -8434,7 +10735,7 @@ async def _run_seo(
 
     try:
         if time.monotonic() >= seo_deadline:
-            raise TimeoutError("Vertex request timeout budget exceeded")
+            raise TimeoutError("Together request timeout budget exceeded")
         keyword_context = _seo_normalize_text(p.get("keywords"), max_chars=1200)
         keyword_mode = bool(keyword_context)
         asset_context = ""
@@ -8451,7 +10752,7 @@ async def _run_seo(
             if not has_readable_text and not image_evidence:
                 raise _SeoAssetContextError(
                     "Không tìm thấy text evidence đọc được hoặc hình ảnh local usable trong product; "
-                    "không gọi Vertex và không lưu SEO để tránh đoán sai nội dung.",
+                    "không gọi Together và không lưu SEO để tránh đoán sai nội dung.",
                     error_code="SEO_INSUFFICIENT_ASSET_EVIDENCE",
                 )
             # The asset block is quoted, untrusted product data. It is deliberately
@@ -8530,150 +10831,41 @@ EXTRA INSTRUCTIONS: PROHIBITED TOPIC SOURCE AND OMITTED.
 {shop_context_str}
 {content_rules}
 {_SEO_DESCRIPTION_PROMPT_TEMPLATE}
-Base the product type and every technical detail on the bounded file/image evidence only. If a format, feature, included item, or compatibility detail is not evidenced, say it is not specified rather than inventing it.
+Base the product type and every technical detail on the bounded file/image evidence only. Omit unsupported details; ask the buyer to message the shop only when an essential purchase detail needs confirmation.
 Folder, filenames, ZIP member names, shop metadata, extra instructions, current title, and seed title are not topic evidence unless independently confirmed by file text or attached images.
 Store link: {etsy_link}
 {('Follow Us: ' + social_links) if social_links else ''}
 Return ONLY: <description>...</description>"""
 
         else:
-            # Full generation
-            prompt = f"""You are a professional Etsy SEO copywriter creating a complete, high-converting product listing for a digital download product.
+            # Full and focused generation share one set of factual copy rules.
+            prompt = f"""You are an Etsy SEO copywriter creating a complete, buyer-friendly listing.
 
-STRICT RULES:
-	- Product topic comes only from {evidence_grounding}.
-	- Folder, filenames, ZIP member names, shop metadata, extra instructions, current title, and factory seed title are prohibited topic sources unless independently confirmed by the file text or attached images.
-	- No workbook keyword-list or popularity-optimization requirement applies in asset mode.
-	- For technical specs, formats, features, included items, and compatibility, use only facts in the bounded file/image evidence. If a fact is absent or conflicting, say it is not specified rather than inventing it.
-	- The first 160 characters of <description> must begin with a concise factual product phrase supported by the available evidence, not an unsupported keyword or popularity assumption.
-	- Title, tags, and description must not combine unrelated niches and must use only terms supported by the available evidence.
-		- If no specific included items or features are explicitly evidenced, say so plainly rather than inventing a typical bundle.
-	- Generic store/footer boilerplate may be retained, but it is not product-topic evidence.
-	- Return ONLY valid XML with the exact tags shown below. No extra text outside XML tags or Markdown code fences.
-	- XML MUST be well-formed: escape any ampersand, less-than, or greater-than characters inside generated text as &amp;, &lt;, and &gt; (do not emit raw '&', '<', or '>' in the field text).
-		- CRITICAL: Under <description>, the template contains instruction lines enclosed in square brackets (e.g. [GOOGLE-OPTIMIZED OPENING...], [Paragraph 1...], [Feature 1], [Audience 1], [Included item 1], etc.). You MUST completely replace these instructions with the actual generated text. Do NOT include the square brackets or the instruction text within them in your final output under any circumstances.
-		- {content_rules}
-		- {_SEO_TITLE_PROMPT_RULES}
-		- {_SEO_TAG_PROMPT_RULES}
-		- {_SEO_DESCRIPTION_PROMPT_TEMPLATE}
+{content_rules}
+{_SEO_TITLE_PROMPT_RULES}
+{_SEO_TAG_PROMPT_RULES}
+{_SEO_DESCRIPTION_PROMPT_TEMPLATE}
 
-	PRODUCT CONTEXT FROM LOCAL ASSETS:
-	{asset_context}
+PRODUCT CONTEXT FROM LOCAL ASSETS:
+{asset_context}
 
 CURRENT TITLE / FACTORY SEED TITLE / EXTRA INSTRUCTIONS: PROHIBITED METADATA, OMITTED.
 NO USER KEYWORD IS PROVIDED.
-{shop_context_str}
+Store link (footer only): {etsy_link}
+{('Follow Us: ' + social_links) if social_links else ''}
 
-Return ONLY this exact XML structure:
+Generate one coherent listing. Choose a specific primary product phrase from the evidence
+and use it naturally across title, relevant tags and the description opening. Do not
+optimize for popularity or invent unsupported terms. Product type is evidence-based,
+not automatically a digital download because local files exist.
 
-<etsy_title>
-	CRITICAL: The very first phrase before the first ' | ' MUST be a concise factual product phrase derived only from the available file/image evidence.
-Do not optimize for popularity or invent unsupported terms.
-Write the finished buyer-friendly title according to the title quality rules above.
-</etsy_title>
-
-<etsy_tags>Write the finished comma-separated list according to the tag quality rules above.</etsy_tags>
-
-<description>
-[EVIDENCE-SUPPORTED OPENING — The first 160 characters are the meta description. Start with a concise factual product phrase supported only by the available file/image evidence, then mention only evidenced format or features. Do not mention popularity or unsupported terms. End with ✨ when natural.]
-
-[Paragraph 1: 2-3 sentences describing the product's core value proposition using only facts supported by the available evidence.]
-
-[Paragraph 2: 2-3 sentences expanding on this specific product using only evidence-supported format, style, or use details.]
-
-Whether you're [evidence-supported use case 1] or [evidence-supported use case 2], describe only benefits supported by the evidence.
-
-📄 Product Details
-
-	[1-2 sentences describing only the product structure, design style, formats, and scope shown by the asset evidence.]
-
-	Key Features:
-
-[Feature 1 — specific and evidence-supported]
-[Feature 2]
-[Feature 3]
-[Feature 4]
-[Feature 5]
-[Feature 6]
-[Feature 7]
-[Feature 8]
-
-🎯 Perfect For
-
-✔ [Audience 1 — specific persona or use case]
-✔ [Audience 2]
-✔ [Audience 3]
-✔ [Audience 4]
-✔ [Audience 5]
-✔ [Audience 6]
-
-💡 Usage Ideas
-
-[Full sentence idea 1 — practical day-to-day use case]
-[Full sentence idea 2]
-[Full sentence idea 3]
-	[Full sentence idea 4 — mention compatible apps/software only when explicitly supported by the asset evidence]
-[Full sentence idea 5]
-
-📦 What's Included
-
-	[IMPORTANT: Only list items explicitly mentioned in the bounded file/image evidence. If no specific items are mentioned, say that the included items are not specified.]
-✔ [Included item 1 — be specific with file name, size, or format]
-✔ [Included item 2]
-✔ [Included item 3]
-✔ [Included item 4]
-✔ [Included item 5]
-✔ [Included item 6]
-
-	Everything explicitly evidenced for this digital product; do not claim unstated items.
-
-🖥️ Compatible With
-
-	[List only software/platforms explicitly supported by the file/image evidence. If none are specified, say compatibility is not specified.]
-
-❓ Frequently Asked Questions
-
-	Q: [Generate a relevant compatibility question based on the product type]
-	A: [Answer using only formats/software supported by the asset context]
-
-Q: [Generate a relevant Q&A based on the product type — e.g. about printing, dating, editing, file format, refund policy, or app compatibility]
-A: [Answer naturally and helpfully]
-
-Q: [Another relevant Q&A specific to this product]
-A: [Answer naturally and helpfully]
-
-	Q: [Generate a relevant usage question based on the product type]
-	A: [Answer using only formats and use cases supported by the asset context]
-
-⚡ INSTANT DOWNLOAD
-
-• Digital product only — no physical item shipped
-• Files available immediately after purchase
-• Download once and start using right away
-
-💬 Questions or Issues?
-
-We're here to help 💖
-If you have any questions about this product, need help setting it up, or run into any issues, please feel free to message us. We're always happy to assist and ensure you love your product.
-
-📜 TERMS & CONDITIONS
-
-Permitted Usage:
-• Personal use of the digital product
-• Use on your own devices
-• Customize pages for your personal needs
-
-Prohibited Usage:
-• Do not resell, redistribute, or share the files
-• Do not offer this product as a free download or giveaway
-
-If you enjoy using this digital product, please consider leaving a review — it truly helps support our shop ✨
-
-🛍️ FOR MORE DESIGNS LIKE THIS AND OTHER BEAUTIFUL BUNDLES PLEASE VISIT OUR STORE:
-
-{etsy_link}
-{(chr(10) + '📱 FOLLOW US:' + chr(10) + social_links + chr(10)) if social_links else ''}
-</description>"""
+Return ONLY this exact XML structure with finished content in each field, no Markdown
+fence, surrounding prose, placeholders or copied instructions.
+XML must be valid and well-formed. Escape &, <, > inside field text as &amp;, &lt;, &gt;
+so no raw &, <, > appear in the generated values.
+<etsy_title>Finished buyer-friendly title.</etsy_title>
+<etsy_tags>Finished comma-separated list of exactly 13 unique tags.</etsy_tags>
+<description>Complete finished description following the shared rules above.</description>"""
 
         if keyword_mode:
             prompt = _build_keyword_only_seo_prompt(
@@ -8684,54 +10876,52 @@ If you enjoy using this digital product, please consider leaving a review — it
             )
 
         if time.monotonic() >= seo_deadline:
-            raise TimeoutError("Vertex request timeout budget exceeded")
+            raise TimeoutError("Together request timeout budget exceeded")
 
-        from google import genai
-        client = genai.Client(
-            vertexai=True,
-            project="temply-ai-lab",
-            location="us-central1",
-            # google-genai expects HttpOptions.timeout in milliseconds; the
-            # provider budget above remains expressed in seconds for clarity.
-            http_options=genai.types.HttpOptions(
-                timeout=int(_VERTEX_GENERATE_TIMEOUT_SECONDS * 1000)
-            ),
-        )
-        generation_config = genai.types.GenerateContentConfig(
-            temperature=0.3,
-            max_output_tokens=8192,
-        )
-        vertex_contents: str | list = prompt
-        if not keyword_mode:
-            image_parts = [
-                genai.types.Part.from_bytes(
-                    data=image["data"],
-                    mime_type=image["mime_type"],
-                )
-                for image in image_evidence_items
-            ]
-            vertex_contents = [prompt, *image_parts]
-        response = await _generate_vertex_content_with_retry(
-            client,
-            vertex_contents,
-            generation_config,
+        content = await _generate_bai_content_with_retry(
+            prompt,
+            image_evidence_items=image_evidence_items if not keyword_mode else None,
             deadline=seo_deadline,
         )
-        content = response.text or ""
 
         if field == "all":
             full_values = _parse_full_seo_xml(content)
-            if full_values is None:
-                if error_out is not None:
-                    error_out.update({
-                        "error": "Vertex AI trả về XML full SEO không đúng cấu trúc; không lưu partial result.",
-                        "error_code": "SEO_PROVIDER_INVALID_RESPONSE",
-                        "http_status": 502,
-                        "provider": "google_vertex",
-                        "saved": False,
-                    })
-                broadcast("[SEO] ❌ Full SEO XML không hợp lệ hoặc có nội dung ngoài cấu trúc cho phép")
-                return {}
+            if not _full_seo_values_pass_validation(full_values):
+                # A semantic retry must consume the same route deadline and
+                # resend the complete prompt/evidence, so no partial field is
+                # ever saved or mixed with the first response.
+                if time.monotonic() < seo_deadline:
+                    broadcast("[SEO] ⚠️ Full SEO response không đạt parse/validation; thử semantic retry")
+                    retry_prompt = f"{prompt}\n\n{_FULL_SEO_SEMANTIC_RETRY_INSTRUCTION}"
+                    content = await _generate_bai_content_with_retry(
+                        retry_prompt,
+                        image_evidence_items=image_evidence_items if not keyword_mode else None,
+                        deadline=seo_deadline,
+                    )
+                    full_values = _parse_full_seo_xml(content)
+
+                if full_values is None:
+                    if error_out is not None:
+                        error_out.update({
+                            "error": "Together trả về XML full SEO không đúng cấu trúc; không lưu partial result.",
+                            "error_code": "SEO_PROVIDER_INVALID_RESPONSE",
+                            "http_status": 502,
+                            "provider": "together",
+                            "saved": False,
+                        })
+                    broadcast("[SEO] ❌ Full SEO XML không hợp lệ hoặc có nội dung ngoài cấu trúc cho phép")
+                    return {}
+                if not _full_seo_values_pass_validation(full_values):
+                    if error_out is not None:
+                        error_out.update({
+                            "error": "Together trả về SEO chưa đủ/không hợp lệ: cần title, description và đúng 13 tags không trùng.",
+                            "error_code": "SEO_PROVIDER_INVALID_RESPONSE",
+                            "http_status": 502,
+                            "provider": "together",
+                            "saved": False,
+                        })
+                    broadcast("[SEO] ❌ Full SEO response không đạt validation; không lưu partial result")
+                    return {}
             raw_title = full_values["etsy_title"]
             raw_tags = full_values["etsy_tags"]
             raw_desc = full_values["description"]
@@ -8746,10 +10936,10 @@ If you enjoy using this digital product, please consider leaving a review — it
             )
             if not has_match:
                 if error_out is not None:
-                    error_out["error"] = f"Vertex AI trả về nội dung không có thẻ XML phù hợp cho trường '{field}'"
+                    error_out["error"] = f"Together trả về nội dung không có thẻ XML phù hợp cho trường '{field}'"
                     error_out["error_code"] = "SEO_PROVIDER_INVALID_RESPONSE"
                     error_out["http_status"] = 502
-                    error_out["provider"] = "google_vertex"
+                    error_out["provider"] = "together"
                     error_out["saved"] = False
                 broadcast(f"[SEO] ❌ Lỗi Parse: Không tìm thấy thẻ XML phù hợp cho trường '{field}' trong phản hồi của AI.\nRaw (trích xuất): {content[:100]}...")
                 return {}
@@ -8759,31 +10949,7 @@ If you enjoy using this digital product, please consider leaving a review — it
         if "[" in raw_tags:
             raw_tags = re.sub(r'[\[\]"\'\n]', '', raw_tags)
         tag_values = [tag.strip() for tag in raw_tags.split(",") if tag.strip()]
-        if field == "all":
-            placeholder_pattern = re.compile(
-                r"\[(?:[^\]]*(?:feature|audience|use case|product keyword|paragraph|included item|generate|critical)[^\]]*)\]",
-                re.IGNORECASE,
-            )
-            tag_keys = [tag.casefold() for tag in tag_values]
-            if (
-                not raw_title
-                or not raw_desc
-                or len(tag_values) != 13
-                or any(len(tag) > 20 for tag in tag_values)
-                or len(set(tag_keys)) != len(tag_keys)
-                or placeholder_pattern.search(raw_desc)
-            ):
-                if error_out is not None:
-                    error_out.update({
-                        "error": "Vertex AI trả về SEO chưa đủ/không hợp lệ: cần title, description và đúng 13 tags không trùng.",
-                        "error_code": "SEO_PROVIDER_INVALID_RESPONSE",
-                        "http_status": 502,
-                        "provider": "google_vertex",
-                        "saved": False,
-                    })
-                broadcast("[SEO] ❌ Full SEO response không đạt validation; không lưu partial result")
-                return {}
-        elif field == "tags":
+        if field == "tags":
             tag_keys = [tag.casefold() for tag in tag_values]
             if (
                 len(tag_values) != 13
@@ -8792,10 +10958,10 @@ If you enjoy using this digital product, please consider leaving a review — it
             ):
                 if error_out is not None:
                     error_out.update({
-                        "error": "Vertex AI trả về tags chưa hợp lệ: cần đúng 13 tags duy nhất, mỗi tag tối đa 20 ký tự.",
+                        "error": "Together trả về tags chưa hợp lệ: cần đúng 13 tags duy nhất, mỗi tag tối đa 20 ký tự.",
                         "error_code": "SEO_PROVIDER_INVALID_RESPONSE",
                         "http_status": 502,
-                        "provider": "google_vertex",
+                        "provider": "together",
                         "saved": False,
                     })
                 broadcast("[SEO] ❌ Tags response không đạt validation; không lưu")
@@ -8819,14 +10985,9 @@ If you enjoy using this digital product, please consider leaving a review — it
                         continue
                 cleaned_lines.append(line)
             seo_desc = "\n".join(cleaned_lines).strip()
-            first_paragraph = re.split(r"\n\s*\n", seo_desc, maxsplit=1)[0].strip()
-            if not 150 <= len(first_paragraph) <= 160:
-                broadcast(
-                    f"[SEO] ⚠️ Meta opening dài {len(first_paragraph)} ký tự; mục tiêu là 150-160 ký tự"
-                )
 
         # In keyword mode the user-provided column-C keyword must lead the
-        # meta opening even if Vertex starts with a harmless filler phrase
+        # meta opening even if Together starts with a harmless filler phrase
         # such as "This ...". Asset-only mode intentionally has no such
         # forced keyword prefix.
         if keyword_mode and seo_desc and keyword_context:
@@ -8842,10 +11003,10 @@ If you enjoy using this digital product, please consider leaving a review — it
         if field == "all" and (not seo_title or len(seo_title) > 140):
             if error_out is not None:
                 error_out.update({
-                    "error": "Vertex AI trả về title full SEO vượt giới hạn 140 ký tự.",
+                    "error": "Together trả về title full SEO vượt giới hạn 140 ký tự.",
                     "error_code": "SEO_PROVIDER_INVALID_RESPONSE",
                     "http_status": 502,
-                    "provider": "google_vertex",
+                    "provider": "together",
                     "saved": False,
                 })
             broadcast("[SEO] ❌ Title full SEO không đạt giới hạn 140 ký tự; không lưu")
@@ -8853,7 +11014,7 @@ If you enjoy using this digital product, please consider leaving a review — it
 
         # Never persist a response that arrived after the route's total deadline.
         if time.monotonic() >= seo_deadline:
-            raise TimeoutError("Vertex request timeout budget exceeded")
+            raise TimeoutError("Together request timeout budget exceeded")
 
         # Save ONLY the requested field(s) to Excel — don't overwrite other fields
         excel_updates = {"keywords": p.get("keywords", ""), "extra": extra_hint}
@@ -8887,18 +11048,18 @@ If you enjoy using this digital product, please consider leaving a review — it
             })
         broadcast(f"[SEO] ❌ {e}")
     except Exception as e:
-        detail = _vertex_error_message(e)
+        detail = _together_error_message(e)
         if error_out is not None:
-            error_out["error"] = f"Vertex AI lỗi: {detail}" if not detail.startswith("Vertex AI") else detail
-            error_out["provider"] = "google_vertex"
+            error_out["error"] = detail
+            error_out["provider"] = "together"
             error_out["saved"] = False
-            if _is_timeout_vertex_error(e):
+            if _is_timeout_together_error(e):
                 error_out["error_code"] = "SEO_PROVIDER_TIMEOUT"
                 error_out["http_status"] = 504
-            elif _is_connectivity_vertex_error(e) or _is_unavailable_vertex_error(e):
+            elif _is_connectivity_together_error(e) or _is_unavailable_together_error(e):
                 error_out["error_code"] = "SEO_PROVIDER_UNAVAILABLE"
                 error_out["http_status"] = 503
-            elif _is_capacity_vertex_error(e):
+            elif _is_capacity_together_error(e):
                 error_out["error_code"] = "SEO_PROVIDER_CAPACITY"
                 error_out["http_status"] = 503
             else:
@@ -8962,7 +11123,7 @@ async def _run_batch_seo(targets: list):
         for i, p in enumerate(targets, 1):
             broadcast(f"[BATCH-SEO] [{i}/{len(targets)}] Đang xử lý {p['folder']}...")
             await _run_seo(p, "")
-            await asyncio.sleep(2)  # throttle to avoid Vertex overload
+            await asyncio.sleep(2)  # throttle to avoid Together rate limits
         broadcast(f"[BATCH-SEO] ✅ Hoàn thành {len(targets)} sản phẩm!")
     finally:
         _running_processes.pop("__BATCH_SEO__", None)
@@ -9116,7 +11277,7 @@ async def post_to_social(row: int, request: Request):
 
 async def _run_social_poster(shop_id: str, row: int, folder: str, platform: str):
     process_key = f"social_{shop_id}_{folder}_{platform}"
-    env = {**__import__('os').environ, "PYTHONUNBUFFERED": "1"}
+    env = _together_child_env()
 
     script_path = str(BASE_DIR / "social_auto_post.py")
     cmd = [PYTHON_BIN, "-u", script_path, "--row", str(row), "--platform", platform, "--shop", shop_id]
@@ -9172,7 +11333,7 @@ async def post_to_all_social(row: int):
 async def _run_social_poster_all(shop_id: str, row: int, folder: str):
     """Post one product to all social platforms sequentially."""
     process_key = f"social_all_{shop_id}_{folder}"
-    env = {**__import__('os').environ, "PYTHONUNBUFFERED": "1"}
+    env = _together_child_env()
 
     script_path = str(BASE_DIR / "social_auto_post.py")
     platforms = list(SOCIAL_URLS.keys())
@@ -9245,7 +11406,7 @@ async def bulk_post_social(request: Request):
 
 async def _run_social_bulk_poster(shop_id: str, start_row: int, end_row: int, platform: str, delay: int):
     process_key = f"social_bulk_{shop_id}_{platform}"
-    env = {**__import__('os').environ, "PYTHONUNBUFFERED": "1"}
+    env = _together_child_env()
 
     script_path = str(BASE_DIR / "social_bulk_post.py")
     cmd = [
@@ -9289,7 +11450,7 @@ async def setup_gumroad(request: Request):
 
 async def _run_gumroad_setup():
     process_key = "gumroad_setup"
-    env = {**__import__('os').environ, "PYTHONUNBUFFERED": "1"}
+    env = _together_child_env()
     script_path = str(BASE_DIR / "gumroad_setup_excel.py")
     cmd = [PYTHON_BIN, "-u", script_path, "--shop", _active_shop_id]
 
@@ -9326,7 +11487,7 @@ async def post_gumroad(request: Request):
 
 async def _run_gumroad_poster(batch: int, skip: int):
     process_key = "gumroad_post"
-    env = {**__import__('os').environ, "PYTHONUNBUFFERED": "1"}
+    env = _together_child_env()
     script_path = str(BASE_DIR / "gumroad_auto_post.py")
     cmd = [
         PYTHON_BIN, "-u", script_path,
@@ -9366,7 +11527,13 @@ async def get_planner_info(row: int):
     for f in sorted(file_dir.iterdir()):
         if f.suffix.lower() in IMG_EXTS | {".pdf"}:
             return JSONResponse({
-                "planner_url": f"/files/{p['folder']}/files/{urllib.parse.quote(f.name)}",
+                "planner_url": _shop_file_url(
+                    p["folder"],
+                    "files",
+                    f.name,
+                    shop_id=_active_shop_id,
+                    stat_result=f.stat(),
+                ),
                 "name": f.name,
             })
     return JSONResponse({"planner_url": None, "name": None})
@@ -9586,8 +11753,7 @@ async def api_repair_listing(req: Request):
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT
-        )
+            stderr=asyncio.subprocess.STDOUT, env=_together_child_env(include_together=True))
         stdout, _ = await process.communicate()
         output = stdout.decode('utf-8')
 
@@ -9600,61 +11766,74 @@ async def api_repair_listing(req: Request):
 
 from fastapi.responses import StreamingResponse
 
-@app.get("/api/scan-listings")
+
+async def _terminate_sse_process(process) -> None:
+    """Stop an action subprocess when its streaming client disconnects."""
+    if process is None or process.returncode is not None:
+        return
+    try:
+        process.terminate()
+    except ProcessLookupError:
+        pass
+    try:
+        await asyncio.wait_for(process.wait(), timeout=2)
+    except asyncio.TimeoutError:
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
+        await process.wait()
+
+
+@app.post("/api/scan-listings")
 async def api_scan_listings():
     async def event_stream():
-        script_path = BASE_DIR / "etsy_scan_errors.py"
-        process = await asyncio.create_subprocess_exec(
-            sys.executable, str(script_path),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT
-        )
-        if process.stdout:
-            while True:
-                try:
+        process = None
+        try:
+            script_path = BASE_DIR / "etsy_scan_errors.py"
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, str(script_path),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT, env=_together_child_env())
+            if process.stdout:
+                while True:
                     line = await process.stdout.readline()
                     if not line:
                         break
-                except Exception:
-                    break
-                try:
                     text = line.decode('utf-8').strip()
                     if text:
                         yield f"data: {text}\n\n"
-                except Exception:
-                    pass
-        await process.wait()
-        yield "data: {\"type\": \"finished\"}\n\n"
+            await process.wait()
+            yield "data: {\"type\": \"finished\"}\n\n"
+        finally:
+            await _terminate_sse_process(process)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
-@app.get("/api/clean-duplicates")
+@app.post("/api/clean-duplicates")
 async def api_clean_duplicates():
     async def event_stream():
-        script_path = BASE_DIR / "etsy_clean_duplicates.py"
-        process = await asyncio.create_subprocess_exec(
-            sys.executable, str(script_path),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT
-        )
-        if process.stdout:
-            while True:
-                try:
+        process = None
+        try:
+            script_path = BASE_DIR / "etsy_clean_duplicates.py"
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, str(script_path),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT, env=_together_child_env())
+            if process.stdout:
+                while True:
                     line = await process.stdout.readline()
                     if not line:
                         break
-                except Exception:
-                    break
-                try:
                     text = line.decode('utf-8').strip()
                     if text:
                         broadcast(f"[🧹 DỌN TRÙNG] {text}")
                         yield f"data: {text}\n\n"
-                except Exception:
-                    pass
-        await process.wait()
-        yield "data: {\"type\": \"finished\"}\n\n"
+            await process.wait()
+            yield "data: {\"type\": \"finished\"}\n\n"
+        finally:
+            await _terminate_sse_process(process)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -9672,39 +11851,66 @@ _FACTORY_SOURCE_EXCLUDE_DIRS = {
 
 _FACTORY_IMAGE_DIR_NAME = "etsy-images-chatgpt-final"
 _FACTORY_ZIP_DIR_NAME = "source-zip"
+_FACTORY_DIRECT_IMAGE_DIR_NAME = "images"
+_FACTORY_DIRECT_FILE_DIR_NAME = "files"
+_FACTORY_SOURCE_BASE_FILE_EXTS = {".zip", ".pdf"}
+_FACTORY_SOURCE_SPLIT_FILE_EXTS = {".001", ".002", ".003", ".004", ".005"}
+_FACTORY_SOURCE_FILE_EXTS = _FACTORY_SOURCE_BASE_FILE_EXTS | _FACTORY_SOURCE_SPLIT_FILE_EXTS
 _FACTORY_PRODUCT_RE = re.compile(r"^product-\d+$")
 
 def _factory_shop_active() -> bool:
     return bool(_active_shop_id) and _active_shop_id in SHOPS
 
 def _factory_shop_dir() -> Path:
-    return SHOP_DIR()
+    return _sync_safe_shop_dir(_active_shop_id, "Image Factory")
 
 def _factory_excel_file() -> Path:
     return _factory_shop_dir() / "Etsy_SEO_Generator.xlsx"
 
 def _is_supported_factory_source(folder: Path) -> bool:
     """Return True only for a complete direct-child active-shop intake folder."""
+    return _factory_source_layout(folder) is not None
+
+
+def _factory_source_layout(folder: Path) -> Optional[str]:
+    """Return source layout (`nested` or `direct`) if folder matches a safe layout."""
     if folder.is_symlink() or not folder.is_dir():
-        return False
+        return None
     if folder.name.startswith(".") or folder.name.startswith("_"):
-        return False
-    if _FACTORY_PRODUCT_RE.fullmatch(folder.name) or folder.name in _FACTORY_SOURCE_EXCLUDE_DIRS:
-        return False
-    image_dir = folder / _FACTORY_IMAGE_DIR_NAME
-    zip_dir = folder / _FACTORY_ZIP_DIR_NAME
-    if image_dir.is_symlink() or zip_dir.is_symlink():
-        return False
-    try:
-        folder_resolved = folder.resolve()
-        return (
-            image_dir.is_dir()
-            and image_dir.resolve().parent == folder_resolved
-            and zip_dir.is_dir()
-            and zip_dir.resolve().parent == folder_resolved
-        )
-    except OSError:
-        return False
+        return None
+    if folder.name in _FACTORY_SOURCE_EXCLUDE_DIRS:
+        return None
+    if _FACTORY_PRODUCT_RE.fullmatch(folder.name):
+        if (
+            _factory_asset_dir_is_contained(folder / _FACTORY_DIRECT_IMAGE_DIR_NAME)
+            and _factory_asset_dir_is_contained(folder / _FACTORY_DIRECT_FILE_DIR_NAME)
+        ):
+            return "direct"
+        return None
+    if (
+        _factory_asset_dir_is_contained(folder / _FACTORY_IMAGE_DIR_NAME)
+        and _factory_asset_dir_is_contained(folder / _FACTORY_ZIP_DIR_NAME)
+    ):
+        return "nested"
+    return None
+
+
+def _factory_image_dir(folder: Path) -> Optional[Path]:
+    layout = _factory_source_layout(folder)
+    if layout == "nested":
+        return folder / _FACTORY_IMAGE_DIR_NAME
+    if layout == "direct":
+        return folder / _FACTORY_DIRECT_IMAGE_DIR_NAME
+    return None
+
+
+def _factory_files_dir(folder: Path) -> Optional[Path]:
+    layout = _factory_source_layout(folder)
+    if layout == "nested":
+        return folder / _FACTORY_ZIP_DIR_NAME
+    if layout == "direct":
+        return folder / _FACTORY_DIRECT_FILE_DIR_NAME
+    return None
 
 
 def _factory_asset_is_usable(path: Path, allowed_suffixes: set[str]) -> bool:
@@ -9737,7 +11943,7 @@ def _collect_download_nodes(parent: Path) -> list[Path]:
         return []
     return sorted([
         item for item in parent.iterdir()
-        if _factory_asset_is_usable(item, {".zip"})
+        if _factory_asset_is_usable(item, _FACTORY_SOURCE_FILE_EXTS)
     ], key=lambda p: p.name.lower())
 
 def _normalize_factory_identity(value: object) -> str:
@@ -9746,14 +11952,38 @@ def _normalize_factory_identity(value: object) -> str:
 
 def _factory_image_files(folder: Path) -> list[Path]:
     """Return usable preview images from the exact Image Factory image folder."""
-    return _collect_image_nodes(folder / _FACTORY_IMAGE_DIR_NAME)
+    image_dir = _factory_image_dir(folder)
+    if image_dir is None:
+        return []
+    return _collect_image_nodes(image_dir)
 
 def _factory_download_files(folder: Path) -> list[Path]:
-    return _collect_download_nodes(folder / _FACTORY_ZIP_DIR_NAME)
+    files_dir = _factory_files_dir(folder)
+    if files_dir is None:
+        return []
+    return _collect_download_nodes(files_dir)
+
+def _factory_source_archive_name(download_file: Path) -> str:
+    name = download_file.name
+    while True:
+        lowered = name.lower()
+        split_suffix = next(
+            (suffix for suffix in _FACTORY_SOURCE_SPLIT_FILE_EXTS if lowered.endswith(suffix)),
+            None,
+        )
+        if not split_suffix:
+            break
+        name = name[:-len(split_suffix)]
+    lowered = name.lower()
+    for suffix in _FACTORY_SOURCE_BASE_FILE_EXTS:
+        if lowered.endswith(suffix):
+            name = name[:-len(suffix)]
+            break
+    return name
 
 def _factory_source_keyword(folder: Path, files: Optional[list[Path]] = None) -> str:
     download_files = files if files is not None else _factory_download_files(folder)
-    source_name = download_files[0].stem if download_files else folder.name
+    source_name = _factory_source_archive_name(download_files[0]) if download_files else folder.name
     return source_name.replace("-", " ").replace("_", " ").strip()
 
 def _next_empty_catalog_row(ws, start_row: int = 4) -> int:
@@ -9798,7 +12028,8 @@ def _factory_shop_import_index(shop_dir: Path, excel_file: Path) -> tuple[dict, 
     if shop_dir.exists():
         try:
             for product_dir in shop_dir.iterdir():
-                files_dir = product_dir / "files"
+                source_assets_dir = product_dir / "source_assets"
+                files_dir = source_assets_dir if source_assets_dir.is_dir() else product_dir / "files"
                 # Only catalog-backed folders belong to the active shop's
                 # imported state. Quarantine/orphan folders must not hide a
                 # source product from the importer.
@@ -9815,7 +12046,7 @@ def _factory_shop_import_index(shop_dir: Path, excel_file: Path) -> tuple[dict, 
                 names = frozenset(
                     source_file.name.casefold()
                     for source_file in files_dir.iterdir()
-                    if _factory_asset_is_usable(source_file, {".zip", ".pdf", ".001", ".002", ".003", ".004", ".005"})
+                    if _factory_asset_is_usable(source_file, _FACTORY_SOURCE_FILE_EXTS)
                 )
                 if names:
                     file_targets.setdefault(names, product_dir.name)
@@ -9844,8 +12075,16 @@ def _factory_import_match(
         return {"folder": matched[0], "row": matched[1], "matched_by": "keyword"}
     return None
 
-def _scan_factory_folders(source_dir: Path, shop_dir: Path, excel_file: Path) -> list[dict]:
-    keyword_targets, file_targets, folder_rows = _factory_shop_import_index(shop_dir, excel_file)
+def _scan_factory_folders(
+    source_dir: Path,
+    shop_dir: Path,
+    excel_file: Path,
+    folder_rows: Optional[dict[str, int]] = None,
+) -> list[dict]:
+    if folder_rows is None:
+        keyword_targets, file_targets, folder_rows = _factory_shop_import_index(shop_dir, excel_file)
+    else:
+        keyword_targets, file_targets, _ = _factory_shop_import_index(shop_dir, excel_file)
     folders = []
     for item in sorted(source_dir.iterdir(), key=lambda p: p.name.lower()):
         try:
@@ -9853,7 +12092,10 @@ def _scan_factory_folders(source_dir: Path, shop_dir: Path, excel_file: Path) ->
                 continue
         except OSError:
             continue
-        if not _is_supported_factory_source(item):
+        layout = _factory_source_layout(item)
+        if layout is None:
+            continue
+        if layout == "direct" and item.name in folder_rows:
             continue
 
         images_in_folder = _factory_image_files(item)
@@ -9890,35 +12132,27 @@ def _scan_factory_folders(source_dir: Path, shop_dir: Path, excel_file: Path) ->
     return folders
 
 
-def _factory_scan_summary(source_dir: Path, folders: list[dict]) -> dict[str, int]:
+def _factory_scan_summary(source_dir: Path, folders: list[dict], folder_rows: dict[str, int] | None = None) -> dict[str, int]:
     """Return aggregate-only scan context without exposing excluded paths.
 
     ``product-NN`` directories are the local catalog targets created by import,
     not Image Factory intake sources.  The UI needs their count to explain why
     they are absent, but must never receive their names or make them importable.
     """
-    excluded_product_folder_count = 0
-    try:
-        source_root = source_dir.resolve()
-        for item in source_dir.iterdir():
-            if item.is_symlink() or not item.is_dir() or not _FACTORY_PRODUCT_RE.fullmatch(item.name):
-                continue
-            try:
-                if item.resolve().parent == source_root:
-                    excluded_product_folder_count += 1
-            except OSError:
-                continue
-    except OSError:
-        pass
+    if folder_rows is None:
+        folder_rows = {}
     return {
         "eligible_intake_folders": len(folders),
-        "excluded_catalog_product_folders": excluded_product_folder_count,
+        "excluded_catalog_product_folders": len(folder_rows),
     }
 
 def _resolve_factory_source_folder(folder_name: object) -> Optional[Path]:
     if not isinstance(folder_name, str) or not folder_name or Path(folder_name).name != folder_name:
         return None
-    shop_dir = _factory_shop_dir()
+    try:
+        shop_dir = _factory_shop_dir()
+    except AssetValidationError:
+        return None
     candidate = shop_dir / folder_name
     try:
         if candidate.is_symlink() or not candidate.is_dir():
@@ -9943,23 +12177,32 @@ async def scan_image_factory():
         return {
             "ok": False,
             "error": "Image Factory cần một active shop hợp lệ.",
-            "factory_path": str(_factory_shop_dir()),
+            "factory_path": str(BASE_DIR / "shops" / _active_shop_id),
             "shop_id": _active_shop_id,
             "shop_name": _active_shop_id,
         }
-    shop_dir = _factory_shop_dir()
+    try:
+        shop_dir = _factory_shop_dir()
+    except AssetValidationError as exc:
+        return {"ok": False, "error": str(exc), "folders": []}
     if not shop_dir.exists():
         return {"ok": False, "error": f"Image Factory output not found: {shop_dir}", "folders": []}
 
     try:
-        folders = _scan_factory_folders(shop_dir, shop_dir, _factory_excel_file())
+        _keyword_targets, _file_targets, folder_rows = _factory_shop_import_index(shop_dir, _factory_excel_file())
+        folders = _scan_factory_folders(
+            shop_dir,
+            shop_dir,
+            _factory_excel_file(),
+            folder_rows=folder_rows,
+        )
     except OSError as exc:
         return {"ok": False, "error": f"Could not scan Image Factory: {exc}", "folders": []}
     shop = get_active_shop()
     return {
         "ok": True,
         "folders": folders,
-        "scan_summary": _factory_scan_summary(shop_dir, folders),
+        "scan_summary": _factory_scan_summary(shop_dir, folders, folder_rows),
         "factory_path": str(shop_dir),
         "source_label": shop.get("name") or _active_shop_id,
         "shop_id": _active_shop_id,
@@ -9972,12 +12215,18 @@ async def factory_thumb(folder_name: str, filename: str):
     """Serve only direct preview images from an active-shop Image Factory source."""
     if not _factory_shop_active():
         raise HTTPException(409, "Image Factory cần một active shop hợp lệ.")
+    try:
+        _factory_shop_dir()
+    except AssetValidationError as exc:
+        raise HTTPException(409, str(exc)) from exc
     folder = _resolve_factory_source_folder(folder_name)
     if not folder:
         raise HTTPException(404)
     if not filename or Path(filename).name != filename:
         raise HTTPException(404)
-    image_dir = folder / _FACTORY_IMAGE_DIR_NAME
+    image_dir = _factory_image_dir(folder)
+    if image_dir is None:
+        raise HTTPException(404)
     path = image_dir / filename
     try:
         if (
@@ -9993,10 +12242,11 @@ async def factory_thumb(folder_name: str, filename: str):
 @app.post("/api/image-factory/import")
 async def import_from_factory(request: Request):
     """
-    Import one or more folders from the Image Factory output into the dashboard.
+    Import one or more folders from the Image Factory output.
     For each folder:
-      1. Create product-XX folder with files/ and images/ subfolders
-      2. Copy all files from factory output
+      1. Nested intake: create product-XX folder with files/ and images/ subfolders
+         and copy assets
+      2. Direct product-* input: re-use existing product-* folder (do not duplicate)
       3. Write a new row in Excel with keyword from filename/folder name
       4. Trigger AI SEO generation (title, tags, description)
     """
@@ -10014,7 +12264,10 @@ async def import_from_factory(request: Request):
             "ok": False,
             "error": "Image Factory import cần shop_id khớp active shop.",
         }
-    shop_dir = _factory_shop_dir()
+    try:
+        shop_dir = _factory_shop_dir()
+    except AssetValidationError as exc:
+        return {"ok": False, "error": str(exc)}
     if not shop_dir.exists():
         return {"ok": False, "error": f"Image Factory output not found: {shop_dir}"}
 
@@ -10048,6 +12301,17 @@ async def import_from_factory(request: Request):
             results.append({"folder": factory_folder_name, "ok": False, "error": "Source folder is incomplete"})
             continue
 
+        if _factory_source_layout(src) == "direct" and src.name in folder_rows:
+            results.append({
+                "folder": factory_folder_name,
+                "ok": False,
+                "already_imported": True,
+                "imported_folder": src.name,
+                "imported_row": folder_rows.get(src.name),
+                "error": f"Already imported as {src.name}",
+            })
+            continue
+
         existing = _factory_import_match(src, keyword_targets, file_targets, folder_rows)
         if existing:
             results.append({
@@ -10059,29 +12323,62 @@ async def import_from_factory(request: Request):
             })
             continue
 
-        slot = _allocate_product_slot(ws, shop_dir, next_row, reusable_slots, used_folders)
-        folder_name = slot["folder"]
-        prod_path   = slot["path"]
+        source_layout = _factory_source_layout(src)
+        if source_layout == "direct":
+            # Direct product-* folders are already in catalog layout; register
+            # the same folder instead of duplicating files into a new folder.
+            folder_name = src.name
+            prod_path = src
+            slot = {
+                "folder": folder_name,
+                "path": prod_path,
+                "row": _next_empty_catalog_row(ws),
+                "reused": False,
+            }
+        else:
+            slot = _allocate_product_slot(ws, shop_dir, next_row, reusable_slots, used_folders)
+            folder_name = slot["folder"]
+            prod_path = slot["path"]
         img_dst     = prod_path / "images"
+        # Factory downloads are source material.  Keep them out of ``files/``
+        # so the poster can only upload a generated, QA-approved deliverable.
+        source_dst  = prod_path / "source_assets"
         file_dst    = prod_path / "files"
 
         try:
-            img_dst.mkdir(parents=True, exist_ok=slot["reused"])
-            file_dst.mkdir(parents=True, exist_ok=slot["reused"])
-
+            if source_layout != "direct":
+                img_dst.mkdir(parents=True, exist_ok=slot["reused"])
+                source_dst.mkdir(parents=True, exist_ok=slot["reused"])
+                file_dst.mkdir(parents=True, exist_ok=slot["reused"])
             copied_imgs = 0
-            for f in images:
-                copy_image_with_watermark(f, img_dst / f.name, watermark)
-                copied_imgs += 1
-
             copied_files = 0
             file_stems = []
-            for f in files:
-                shutil.copy2(f, file_dst / f.name)
-                copied_files += 1
-                file_stems.append(f.stem)
+            if source_layout != "direct":
+                for f in images:
+                    copy_image_with_watermark(f, img_dst / f.name, watermark)
+                    copied_imgs += 1
+
+                for f in files:
+                    shutil.copy2(f, source_dst / f.name)
+                    # Keep a compatibility mirror for legacy catalog tools
+                    # that expect an imported archive under files/.  The
+                    # pipeline manifest below marks this mirror as source
+                    # material, so poster/cloud allowlists never upload it as
+                    # a customer deliverable. New generated outputs replace
+                    # this mirror and update customer_files explicitly.
+                    shutil.copy2(f, file_dst / f.name)
+                    copied_files += 1
+                    file_stems.append(_factory_source_archive_name(f))
+            else:
+                copied_imgs = len(images)
+                copied_files = len(files)
+                file_stems = [_factory_source_archive_name(f) for f in files]
         except (OSError, ValueError) as exc:
-            if slot["reused"]:
+            if source_layout == "direct":
+                # Direct folders are the canonical catalog payload; do not mutate
+                # or clear the source on failure.
+                pass
+            elif slot["reused"]:
                 _clear_product_asset_folder(prod_path)
             else:
                 # This destination was allocated by this request only. Remove a
@@ -10093,6 +12390,42 @@ async def import_from_factory(request: Request):
                 "error": f"Could not copy product assets: {exc}",
             })
             continue
+
+        # Persist source/customer separation and per-file provenance beside
+        # the catalog folder.  This is intentionally atomic: an interrupted
+        # import must not leave a partially written contract that the poster
+        # could mistake for an approved deliverable.
+        source_manifest = []
+        for source_file in sorted(source_dst.iterdir()) if source_dst.is_dir() else []:
+            if not source_file.is_file() or source_file.is_symlink():
+                continue
+            try:
+                digest = hashlib.sha256(source_file.read_bytes()).hexdigest()
+                source_manifest.append({
+                    "name": source_file.name,
+                    "sha256": digest,
+                    "size": source_file.stat().st_size,
+                    "source": factory_folder_name,
+                })
+            except OSError:
+                continue
+        if source_layout != "direct":
+            metadata_path = prod_path / ".pipeline-product.json"
+            metadata_tmp = metadata_path.with_name(f".{metadata_path.name}.{secrets.token_hex(6)}.tmp")
+            metadata = {
+                "contract_version": PIPELINE_CONTRACT_VERSION,
+                "listing_type": "digital",
+                "pipeline_job_id": None,
+                "customer_files": [],
+                "source_assets": source_manifest,
+                "source_policy": "Creative Fabrica/source archives are provenance only; generate a new end product before upload.",
+                "imported_at": datetime.now(timezone.utc).isoformat(),
+            }
+            try:
+                metadata_tmp.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+                metadata_tmp.replace(metadata_path)
+            finally:
+                metadata_tmp.unlink(missing_ok=True)
 
         # Build keyword from file name (prefer file stem), else from folder name
         if file_stems:

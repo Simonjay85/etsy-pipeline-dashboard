@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
+import os
 from contextlib import contextmanager
 import filecmp
 import json
@@ -19,10 +21,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 import re
 import unicodedata
 from difflib import SequenceMatcher
+from typing import Any, Mapping
 
 # ── Auto-install ───────────────────────────────────────────────────────────────
 def ensure_deps():
@@ -33,11 +37,6 @@ def ensure_deps():
         except ImportError:
             print(f"▶ Cài {pkg}...")
             subprocess.run([sys.executable, "-m", "pip", "install", pkg, "--quiet"], check=True)
-    try:
-        from google import genai
-    except ImportError:
-        print("▶ Cài google-genai...")
-        subprocess.run([sys.executable, "-m", "pip", "install", "google-genai", "--quiet"], check=True)
 
 def initialize_poster_runtime() -> None:
     """Chuẩn bị dependency chỉ khi poster thực sự được chạy (không chạy khi import)."""
@@ -47,21 +46,34 @@ if __name__ == "__main__":
     initialize_poster_runtime()
 
 import openpyxl
-from playwright.async_api import TimeoutError as PlaywrightTimeoutError, async_playwright
-from deep_translator import GoogleTranslator
+from playwright.async_api import Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError, async_playwright
+from translation_service import get_translation_service
 from etsy_browser_session import (
     is_session_ready as is_etsy_session_ready,
     resolve_etsy_session,
 )
 from cloud_asset_store import CloudAssetError, CloudAssetStore
 from cloud_asset_store_config import load_config as load_cloud_asset_config
-
-try:
-    from google import genai
-    from google.genai import types
-    has_genai = True
-except ImportError:
-    has_genai = False
+from etsy_image_alt_text import (
+    ALT_TEXT_GENERATION_TIMEOUT_SECONDS,
+    build_text_fallback_alt_text,
+    generate_visual_alt_text,
+)
+from pipeline_contracts import (
+    PipelineContractError,
+    PipelinePolicy,
+    validate_customer_files,
+    validate_final_artifact,
+    validate_seo_payload,
+)
+from pipeline_artifacts import read_pipeline_product_manifest
+from job_store import (
+    JobStore,
+    JobStoreError,
+    PIPELINE_STATUS_BLOCKED,
+    PIPELINE_STATUS_FAILED,
+    PIPELINE_STATUS_UNKNOWN,
+)
 
 BASE_DIR    = Path(__file__).parent
 SHOP_DIR    = BASE_DIR
@@ -73,9 +85,12 @@ CLOUD_ASSET_STORE: CloudAssetStore | None = None
 POST_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 POST_FILE_EXTS = {".pdf", ".zip"}
 CDP_CONNECT_ATTEMPTS = 3
-CDP_CONNECT_TIMEOUT_MS = 10000
+CDP_CONNECT_TIMEOUT_MS = 30000
 CDP_CONNECT_RETRY_DELAYS = (0.25, 0.50)
 SHOP_MANAGER_LISTINGS_URL = "https://www.etsy.com/your/shops/me/tools/listings"
+LISTING_EDITOR_CREATE_URL = "https://www.etsy.com/your/shops/me/listing-editor/create"
+SHOP_MANAGER_DASHBOARD_URL = "https://www.etsy.com/your/shops/me/dashboard"
+PIPELINE_JOB_DB = BASE_DIR / ".etsy-dashboard-diagnostics" / "etsy_jobs.sqlite"
 # Shop Manager can take longer than the default Playwright navigation timeout
 # while an already-authenticated CDP page is waking up. Keep this bounded and
 # retry only the same page/session; callers still perform the sign-in and shop
@@ -170,12 +185,95 @@ def resolve_product_asset_paths(
                 verified.append(str(path))
         return sorted(verified)
 
-    image_paths = verified_paths(resolution.get("image_paths", []), POST_IMAGE_EXTS)[:10]
-    digital_paths = verified_paths(resolution.get("file_paths", []), POST_FILE_EXTS)
+    is_pipeline_product = bool(product.get("pipeline_job_id") or product.get("pipeline_contract_version"))
+    if is_pipeline_product:
+        # A pipeline manifest is an allowlist, not a hint.  Do not accept the
+        # resolver's directory-wide (sorted) image list: a stale cache or a
+        # second job in the same folder could otherwise replace the gallery
+        # between manifest binding and Etsy Save.
+        manifest_image_names = product.get("pipeline_image_files")
+        if not isinstance(manifest_image_names, (list, tuple)) or len(manifest_image_names) != 10:
+            raise RuntimeError(
+                f"❌ Pipeline product {shop_id}/{folder} chưa có đúng 10 ảnh trong manifest"
+            )
+        verified_image_paths: list[str] = []
+        allowed_resolved = allowed_root.resolve()
+        for raw_name in manifest_image_names:
+            name = str(raw_name or "").strip().replace("\\", "/")
+            relative = Path(name)
+            if not name or relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
+                raise RuntimeError(f"❌ Pipeline image path không an toàn cho {shop_id}/{folder}: {name}")
+            path = allowed_root / relative
+            if path.is_symlink() or not path.is_file():
+                raise RuntimeError(f"❌ Pipeline image path không tồn tại/an toàn cho {shop_id}/{folder}: {path}")
+            try:
+                path.resolve().relative_to(allowed_resolved)
+            except ValueError as exc:
+                raise RuntimeError(f"❌ Pipeline image nằm ngoài vùng đã xác minh: {path}") from exc
+            if relative.parts[0].casefold() != "images" or path.suffix.casefold() not in POST_IMAGE_EXTS:
+                raise RuntimeError(f"❌ Pipeline image không thuộc allowlist images/: {name}")
+            verified_image_paths.append(str(path))
+        if len({Path(path).resolve().as_posix().casefold() for path in verified_image_paths}) != 10:
+            raise RuntimeError(f"❌ Pipeline manifest chứa image path trùng cho {shop_id}/{folder}")
+        image_paths = verified_image_paths
+    else:
+        verified_image_paths = verified_paths(resolution.get("image_paths", []), POST_IMAGE_EXTS)
+        image_paths = verified_image_paths[:10]
+
+    # ``source_assets`` contains Creative Fabrica/source material and is never
+    # an Etsy customer upload.  New pipeline records may provide an explicit
+    # allowlist under ``customer_files``; legacy products continue to use the
+    # resolver's ``files`` list for compatibility.
+    explicit_customer_files = "customer_files" in product
+    pipeline_meta = product.get("pipeline") if isinstance(product.get("pipeline"), dict) else {}
+    explicit_type = str(product.get("listing_type") or pipeline_meta.get("listing_type") or "").strip().lower()
+    physical_scope = (
+        explicit_type == "physical"
+        or _is_furniture_scope(str(product.get("category", "")))
+        or _is_furniture_scope(str(product.get("section", "")))
+    )
+    if explicit_customer_files:
+        raw_customer_files = product.get("customer_files")
+        if not isinstance(raw_customer_files, (list, tuple)):
+            raise RuntimeError(f"❌ customer_files phải là danh sách cho {shop_id}/{folder}")
+        customer_candidates: list[str] = []
+        for raw in raw_customer_files:
+            path = Path(str(raw))
+            if not path.is_absolute():
+                path = product_root / path
+            try:
+                path.absolute().relative_to(product_root.absolute())
+            except ValueError as exc:
+                raise RuntimeError(f"❌ Customer file nằm ngoài product folder: {path}") from exc
+            customer_candidates.append(str(path))
+        if physical_scope:
+            # Physical Furniture listings do not have buyer digital files;
+            # their legacy ``files/`` contents are ignored after path scope
+            # checking and never opened/uploaded.
+            digital_paths = []
+        else:
+            try:
+                checked_customer = validate_customer_files(customer_candidates)
+            except PipelineContractError as exc:
+                raise RuntimeError(f"❌ Customer files không hợp lệ cho {shop_id}/{folder}: {exc}") from exc
+            digital_paths = [str(path) for path in checked_customer]
+    else:
+        digital_paths = [
+            path for path in verified_paths(resolution.get("file_paths", []), POST_FILE_EXTS)
+            if not any(part.casefold() == "source_assets" for part in Path(path).parts)
+        ]
+    # Physical Furniture rows in PivotAndPage/Bubble By Julie may still have
+    # a legacy archive mirror under ``files/``. Never treat that mirror as a
+    # buyer deliverable; only explicit digital metadata can opt into uploads.
+    if physical_scope:
+        digital_paths = []
+    if product.get("pipeline_job_id") and not digital_paths:
+        raise RuntimeError(f"❌ Pipeline product {shop_id}/{folder} chưa có customer file cuối đã kiểm tra")
     if resolution.get("source") == "cloud-cache" and not image_paths:
         raise RuntimeError(f"❌ Cloud asset {shop_id}/{folder} đã hydrate nhưng không có ảnh hợp lệ")
     product["image_paths"] = image_paths
     product["pdf_paths"] = digital_paths
+    product["customer_files"] = digital_paths
     product["asset_root"] = str(resolution.get("asset_root") or product_root)
     product["_cloud_asset_resolution"] = resolution
     return resolution
@@ -254,6 +352,15 @@ async def _open_poster_context(pw, shop_id: str, browser_dir: Path):
         )
 
     if is_etsy_session_ready(session):
+        def _requires_cdp_no_defaults_fallback(error: Exception) -> bool:
+            message = str(error)
+            return (
+                isinstance(error, PlaywrightTimeoutError)
+                or
+                "Browser.setDownloadBehavior" in message
+                and "Browser context management is not supported" in message
+            )
+
         last_error: Exception | None = None
         browser = None
         for attempt in range(CDP_CONNECT_ATTEMPTS):
@@ -261,8 +368,23 @@ async def _open_poster_context(pw, shop_id: str, browser_dir: Path):
                 browser = await pw.chromium.connect_over_cdp(
                     session.cdp_url, timeout=CDP_CONNECT_TIMEOUT_MS
                 )
-            except PlaywrightTimeoutError as exc:
+            except Exception as exc:
                 last_error = exc
+                if _requires_cdp_no_defaults_fallback(exc):
+                    try:
+                        browser = await pw.chromium.connect_over_cdp(
+                            session.cdp_url,
+                            timeout=CDP_CONNECT_TIMEOUT_MS,
+                            no_defaults=True,
+                        )
+                    except Exception as fallback_exc:
+                        last_error = fallback_exc
+                elif not isinstance(exc, PlaywrightTimeoutError):
+                    raise
+
+                if browser is not None:
+                    break
+
                 if attempt + 1 >= CDP_CONNECT_ATTEMPTS:
                     break
                 if not await asyncio.to_thread(is_etsy_session_ready, session):
@@ -279,7 +401,8 @@ async def _open_poster_context(pw, shop_id: str, browser_dir: Path):
             raise RuntimeError(
                 f"❌ CDP đang bận hoặc không phản hồi cho shop {shop_id}, "
                 f"profile {session.profile_dir}, port {session.debug_port}. "
-                "Hãy mở lại phiên đăng nhập đúng profile rồi thử lại."
+                "Hãy mở lại cửa sổ phiên đăng nhập Etsy dành riêng cho shop bằng nút "
+                "“Đăng nhập Etsy cho Post”, rồi thử lại."
             ) from last_error
         if not browser.contexts:
             raise RuntimeError("❌ Chrome Etsy đúng profile nhưng không có browser context")
@@ -295,27 +418,18 @@ async def _open_poster_context(pw, shop_id: str, browser_dir: Path):
             f"session Etsy đã xác minh cho shop {shop_id}. Đóng Chrome đó rồi mở lại "
             "bằng nút “Đăng nhập Etsy cho Post”."
         )
-
-    launch_kw = dict(
-        user_data_dir=str(browser_dir),
-        headless=False,
-        args=["--start-maximized", "--disable-blink-features=AutomationControlled"],
-        viewport=None,
+    raise RuntimeError(
+        f"❌ Chưa mở cửa sổ đăng nhập Etsy dành riêng cho shop {shop_id} tại profile "
+        f"{session.profile_dir} (port {session.debug_port}). "
+        "Hãy mở bằng nút “Đăng nhập Etsy cho Post”, sau đó chạy lại."
     )
-    if CHROME_PATH.exists():
-        launch_kw["executable_path"] = str(CHROME_PATH)
-        print("  🌐 Dùng Google Chrome thật")
-    else:
-        print("  🌐 Dùng Chromium")
-    ctx = await pw.chromium.launch_persistent_context(**launch_kw)
-    page = ctx.pages[0] if ctx.pages else await ctx.new_page()
-    return ctx, page, True
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 FILL_TRANSLATIONS = True
 DEFAULT_BATCH     = 5
-DRAFT_LISTINGS_URL = "https://www.etsy.com/your/shops/me/tools/listings/page:1,state:draft"
+DRAFT_LISTINGS_URL = "https://www.etsy.com/your/shops/me/tools/listings?state=draft&sort=update_date&page=1"
 DRAFT_FILTER_POLL_MS = 250
+DRAFT_FILTER_RENDER_POLLS = 24
 DRAFT_FILTER_CHECK_TIMEOUT_MS = 1200
 DRAFT_FILTER_FORCE_ATTEMPTS = 10
 UNVERIFIED_DRAFT_URL_SENTINEL = "<URL chưa xác minh>"
@@ -362,37 +476,11 @@ def trim_title(title: str, max_len: int = 140) -> str:
 
 # ── Alt text generator ────────────────────────────────────────────────────────
 def generate_alt_texts(title: str, keywords: str, count: int) -> list:
-    """Tạo alt text cho từng ảnh dựa vào title và keywords (tối đa 250 ký tự/ảnh)."""
-    clean_title = title[:200].strip()
-    kw_list = [k.strip() for k in keywords.split(",") if k.strip()]
-
-    suffixes = [
-        "instant download",
-        "printable PDF",
-        "digital download",
-        "printable template",
-        "digital planner",
-        "PDF download",
-        "printable download",
-        "digital file",
-        "instant printable",
-        "editable template",
+    """Tạo fallback alt text nhất quán, tối đa 250 ký tự/ảnh."""
+    return [
+        build_text_fallback_alt_text(title, keywords, i + 1, count)
+        for i in range(count)
     ]
-
-    alt_texts = []
-    for i in range(count):
-        if i == 0:
-            # Ảnh đầu tiên dùng full title
-            alt_texts.append(clean_title[:250])
-        else:
-            suffix = suffixes[i % len(suffixes)]
-            if kw_list:
-                kw = kw_list[i % len(kw_list)]
-                text = f"{kw} - {suffix}"
-            else:
-                text = f"{clean_title[:200]} - {suffix}"
-            alt_texts.append(text[:250])
-    return alt_texts
 
 # ── Tag cleaner ───────────────────────────────────────────────────────────────
 def clean_tags(raw: str, max_tags: int = 13) -> list:
@@ -421,6 +509,7 @@ def normalize_category_text(value: str) -> str:
 
 
 _CATEGORY_OPTION_METADATA_SUFFIXES = ("physical or digital", "physical", "digital")
+_CATEGORY_BREADCRUMB_SPLIT_RE = re.compile(r"\r\n?|\n|\s*>\s*|\s*/\s*|\\+")
 
 
 def _strip_metadata_suffix(category: str) -> tuple[str, str | None]:
@@ -432,6 +521,80 @@ def _strip_metadata_suffix(category: str) -> tuple[str, str | None]:
                 if base:
                     return base, suffix
     return normalized, None
+
+
+def _category_breadcrumb_parts(category_value: str) -> list[str]:
+    """Split Etsy breadcrumbs written with newlines or common path separators."""
+    parts = [
+        part.replace("✓", "").strip()
+        for part in _CATEGORY_BREADCRUMB_SPLIT_RE.split(str(category_value or ""))
+        if part.replace("✓", "").strip()
+    ]
+    # Etsy's Homepage heading is navigation chrome, not a taxonomy branch.
+    if parts and normalize_category_text(parts[0]) == "homepage":
+        parts = parts[1:]
+    return parts
+
+
+def _normalized_category_breadcrumb_parts(category_value: str) -> list[str]:
+    parts = [normalize_category_text(part) for part in _category_breadcrumb_parts(category_value)]
+    parts = [part for part in parts if part]
+    if parts:
+        parts[0] = re.sub(r"^\+\s*", "", parts[0]).strip()
+    return parts
+
+
+def _category_path_match_candidates(parts: list[str], *, option: bool = False) -> set[tuple[str, ...]]:
+    if not parts:
+        return set()
+
+    candidates = {tuple(parts)}
+    leaf_base, _ = _strip_metadata_suffix(parts[-1])
+    if leaf_base and leaf_base != parts[-1]:
+        candidates.add(tuple([*parts[:-1], leaf_base]))
+
+    # Etsy sometimes appends listing-type metadata as a final breadcrumb row.
+    if option and len(parts) > 1 and parts[-1] in _CATEGORY_OPTION_METADATA_SUFFIXES:
+        candidates.add(tuple(parts[:-1]))
+    return candidates
+
+
+def _category_option_leaf_norm(option_text: str) -> str:
+    parts = _normalized_category_breadcrumb_parts(option_text)
+    if not parts:
+        return ""
+    if len(parts) > 1 and parts[-1] in _CATEGORY_OPTION_METADATA_SUFFIXES:
+        parts = parts[:-1]
+    leaf_base, _ = _strip_metadata_suffix(parts[-1])
+    return leaf_base or parts[-1]
+
+
+def _is_exact_simple_leaf_category_option(target_category: str, option_text: str) -> bool:
+    target_parts = _normalized_category_breadcrumb_parts(target_category)
+    if len(target_parts) <= 1:
+        return False
+
+    # A simple-leaf fallback is only safe for the one category label Etsy
+    # returned, optionally followed by one terminal listing-type marker. A
+    # real breadcrumb must remain subject to the strict full-path matcher.
+    raw_option = str(option_text or "")
+    if re.search(r">|/|\\", raw_option):
+        return False
+
+    option_rows = [
+        normalize_category_text(row)
+        for row in re.split(r"\r\n?|\n", raw_option)
+        if normalize_category_text(row)
+    ]
+    if option_rows:
+        option_rows[0] = re.sub(r"^\+\s*", "", option_rows[0]).strip()
+    if len(option_rows) == 2 and option_rows[-1] in _CATEGORY_OPTION_METADATA_SUFFIXES:
+        option_rows.pop()
+    if len(option_rows) != 1:
+        return False
+
+    option_leaf, _ = _strip_metadata_suffix(option_rows[0])
+    return bool(option_leaf and option_leaf == target_parts[-1])
 
 
 _CATEGORY_DIGITAL_ONLY_METADATA_RE = re.compile(
@@ -463,6 +626,67 @@ def _category_option_is_digital_only_metadata(option_text: str) -> bool:
     return True
 
 
+def _category_option_is_physical_only_metadata(option_text: str) -> bool:
+    """Return true only for a terminal Physical-only category marker."""
+    raw_option = str(option_text or "")
+    normalized = normalize_category_text(raw_option)
+    if not normalized:
+        return False
+    if re.search(
+        r"\bdigital\b|\bnot\s+(?:an?\s+)?physical\b|\bno\s+physical\b|\bnon[- ]?physical\b",
+        normalized,
+    ):
+        return False
+    match = re.search(r"(?:\(\s*physical\s*\)|\bphysical\b)\s*[.!?]*$", normalized)
+    if not match:
+        return False
+
+    prefix = re.sub(r"^\+\s*", "", normalized[:match.start()]).rstrip()
+    if not prefix or prefix == "physical":
+        return False
+
+    # A plain Physical token after a breadcrumb separator is taxonomy text,
+    # not listing-type metadata. Parenthesized or newline/attached markers
+    # remain valid, matching Etsy's category option display forms.
+    marker = match.group(0).lstrip()
+    if not marker.startswith("(") and prefix.endswith((">", "/", "\\")):
+        return False
+    return True
+
+
+async def _current_committed_category_is_physical(page) -> bool:
+    """Read one visible committed Etsy category badge as exact Physical evidence."""
+    selector = "#field-category .le-category-search__committed clg-signal"
+    for attempt in range(8):
+        visible_badges = []
+        try:
+            badges = page.locator(selector)
+            badge_count = await badges.count()
+            for index in range(badge_count):
+                badge = badges.nth(index)
+                try:
+                    if await badge.is_visible():
+                        visible_badges.append(badge)
+                except Exception:
+                    return False
+        except Exception:
+            return False
+
+        if len(visible_badges) > 1:
+            return False
+        if len(visible_badges) == 1:
+            try:
+                badge_text = normalize_category_text(await visible_badges[0].inner_text())
+            except Exception:
+                return False
+            if badge_text:
+                return badge_text == "physical"
+
+        if attempt < 7:
+            await page.wait_for_timeout(100)
+    return False
+
+
 def category_option_matches(target_category: str, option_text: str) -> bool:
     """Khớp chính xác theo option label hoặc leaf breadcrumb, có xử lý suffix metadata."""
     target_norm = normalize_category_text(target_category)
@@ -473,11 +697,27 @@ def category_option_matches(target_category: str, option_text: str) -> bool:
     if not option_norm:
         return False
 
+    target_path_parts = _normalized_category_breadcrumb_parts(target_category)
+    option_path_parts = _normalized_category_breadcrumb_parts(option_text)
+    if len(target_path_parts) > 1:
+        return bool(
+            _category_path_match_candidates(target_path_parts)
+            & _category_path_match_candidates(option_path_parts, option=True)
+        )
+
     target_base, _ = _strip_metadata_suffix(target_norm)
     target_candidates = {target_norm, target_base}
+    if target_path_parts:
+        target_candidates.add(" > ".join(target_path_parts))
+        if len(target_path_parts) == 1:
+            target_candidates.add(target_path_parts[0])
 
     option_leaf_norm = normalize_category_text(extract_category_leaf(option_text))
-    option_candidates = {option_norm, option_leaf_norm}
+    option_candidates = {
+        option_norm,
+        option_leaf_norm,
+        _category_option_leaf_norm(option_text),
+    }
     option_without_prefix = re.sub(r"^\+\s*", "", option_norm)
     if option_without_prefix:
         option_candidates.add(option_without_prefix)
@@ -487,7 +727,7 @@ def category_option_matches(target_category: str, option_text: str) -> bool:
                     base = option_without_prefix[: -len(suffix_token)].rstrip()
                     if base:
                         option_candidates.add(base)
-    option_parts = [part.strip() for part in re.split(r"\s*>\s*|\s*/\s*|\\", option_text) if part.strip()]
+    option_parts = option_path_parts
     if len(option_parts) >= 2:
         suffix_candidate = normalize_category_text(option_parts[-1])
         if suffix_candidate in _CATEGORY_OPTION_METADATA_SUFFIXES:
@@ -505,15 +745,9 @@ def category_option_matches(target_category: str, option_text: str) -> bool:
 
 
 def extract_category_leaf(category_value: str) -> str:
-    """Lấy leaf name từ chuỗi danh mục dạng 'A > B > C' hoặc path."
-    """
-    category_value = str(category_value or "").strip()
-    if not category_value:
-        return ""
-    # Ưu tiên tách bằng các delimiter phổ biến của breadcrumb
-    parts = re.split(r"\s*>\s*|\s*/\s*|\\", category_value)
-    leaf = parts[-1] if parts else category_value
-    return leaf.replace("✓", "").strip()
+    """Return the leaf from a newline- or delimiter-separated category path."""
+    parts = _category_breadcrumb_parts(category_value)
+    return parts[-1] if parts else ""
 
 
 def infer_listing_category(product: dict) -> str:
@@ -598,10 +832,136 @@ def infer_listing_category(product: dict) -> str:
 
 def resolve_listing_category(product: dict) -> str:
     """Giải quyết danh mục cuối cùng để chọn: ưu tiên category trong workbook, nếu trống thì suy luận."""
-    explicit = extract_category_leaf(product.get("category", ""))
+    # Keep an explicit workbook breadcrumb intact.  The category selector
+    # searches by its leaf, but exact option/readback matching needs the full
+    # path when Etsy has duplicate leaves in different trees.
+    explicit = str(product.get("category") or "").strip()
     if explicit:
         return explicit
     return infer_listing_category(product)
+
+
+def _listing_category_preflight_error(product: dict) -> str | None:
+    """Reject the generic Furniture node before opening the Etsy editor."""
+    category = resolve_listing_category(product)
+    if normalize_category_text(extract_category_leaf(category)) != "furniture":
+        return None
+    return (
+        f"Category '{category}' chỉ xác định nhóm Furniture, chưa đủ cấp danh mục Etsy. "
+        "Hãy cập nhật cột Category bằng breadcrumb Etsy chính xác của một danh mục con; "
+        "listing vẫn được phân loại Physical và hệ thống không tự đoán danh mục."
+    )
+
+
+def _is_furniture_scope(value: str) -> bool:
+    normalized = _normalize_listing_type(value)
+    if not normalized:
+        return False
+    if normalized == "furniture":
+        return True
+    leaf = _normalize_listing_type(extract_category_leaf(value))
+    return leaf == "furniture"
+
+
+def resolve_listing_type(product: dict) -> str:
+    """Resolve explicit Physical/Digital listing intent from product metadata."""
+    # New pipeline records carry an explicit listing contract.  It wins over
+    # legacy category heuristics, so a deliberately classified digital product
+    # can coexist with physical catalog rows in the same shop.
+    pipeline_meta = product.get("pipeline") if isinstance(product.get("pipeline"), dict) else {}
+    explicit = str(
+        product.get("listing_type")
+        or product.get("_listing_type")
+        or pipeline_meta.get("listing_type")
+        or ""
+    ).strip().lower()
+    if explicit in {"digital", "physical"}:
+        return explicit
+    # PivotAndPage (shop3) and Bubble By Julie use the Furniture category for
+    # their physical products. Preserve that business meaning even when a
+    # legacy row happens to have a PDF/ZIP path attached. A digital exception
+    # must carry explicit listing_type metadata (as pipeline manifests do).
+    if _is_furniture_scope(str(product.get("category", ""))):
+        return "physical"
+    if _is_furniture_scope(str(product.get("section", ""))):
+        return "physical"
+    if product.get("pdf_paths"):
+        return "digital"
+    return "physical"
+
+
+def _pipeline_store_for_product(product: Mapping[str, Any]) -> JobStore | None:
+    """Open the local durable store only for a pipeline-bound product."""
+    if not str(product.get("pipeline_job_id") or "").strip():
+        return None
+    return JobStore(PIPELINE_JOB_DB)
+
+
+def _pipeline_worker_identity(product: Mapping[str, Any]) -> str:
+    value = str(product.get("pipeline_worker_id") or os.environ.get("ETSY_PIPELINE_WORKER_ID") or "").strip()
+    if not value:
+        value = f"poster-{os.getpid()}"
+    return value[:120]
+
+
+def _sha256_file(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _pipeline_verified_receipt(product: Mapping[str, Any], listing_url: str, *, worker_id: str, fence: int) -> dict[str, Any]:
+    """Build evidence from files and the browser result, never caller booleans."""
+    listing_match = re.search(r"/listing/(\d+)", str(listing_url or ""))
+    if not listing_match:
+        listing_match = re.search(r"/listing-editor/edit/(\d+)", str(listing_url or ""))
+    if not listing_match:
+        raise PipelineContractError("Etsy readback URL has no numeric listing id")
+    image_paths = [Path(str(item)) for item in (product.get("image_paths") or [])]
+    if len(image_paths) != 10:
+        raise PipelineContractError("Pipeline receipt requires exactly 10 verified images")
+    image_hashes = [_sha256_file(path) for path in image_paths]
+    customer_paths = [Path(str(item)) for item in (product.get("customer_files") or product.get("pdf_paths") or [])]
+    checked_customer = validate_customer_files(customer_paths)
+    customer_hashes = [_sha256_file(path) for path in checked_customer]
+    root = Path(str(product.get("asset_root") or "")).expanduser()
+    manifest_path = root / ".pipeline-product.json"
+    if not manifest_path.is_file() or manifest_path.is_symlink():
+        raise PipelineContractError("Pipeline receipt requires .pipeline-product.json")
+    read_pipeline_product_manifest(root)
+    manifest_hash = _sha256_file(manifest_path)
+    tags = clean_tags(str(product.get("tags") or ""))
+    evidence_urls = product.get("research_evidence_urls") or product.get("evidence_urls") or []
+    if isinstance(evidence_urls, str):
+        evidence_urls = [item.strip() for item in evidence_urls.split(",") if item.strip()]
+    validate_seo_payload(
+        title=str(product.get("title") or ""),
+        tags=tags,
+        description=str(product.get("description") or ""),
+        evidence_urls=evidence_urls,
+    )
+    job_id = str(product.get("pipeline_job_id") or "")
+    return {
+        "job_id": job_id,
+        "campaign_id": str(product.get("pipeline_campaign_id") or ""),
+        "candidate_id": str(product.get("pipeline_candidate_id") or ""),
+        "shop_id": str(product.get("pipeline_shop_id") or ""),
+        "product_id": str(product.get("pipeline_product_id") or product.get("product_id") or ""),
+        "worker_id": worker_id,
+        "fence": int(fence),
+        "listing_id": listing_match.group(1),
+        "listing_status": "draft",
+        "readback_url": str(listing_url),
+        "readback_ok": True,
+        "image_hashes": image_hashes,
+        "customer_file_hashes": customer_hashes,
+        "manifest_sha256": manifest_hash,
+        "asset_qa_ok": True,
+        "seo_validated": True,
+        "customer_files_validated": True,
+    }
 
 
 def normalize_search_text(value: str) -> str:
@@ -614,19 +974,68 @@ def normalize_sku(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
 
 
+def _is_network_changed_error(error: BaseException) -> bool:
+    return isinstance(error, PlaywrightError) and bool(
+        re.search(
+            r"(?<![A-Z0-9_])net::ERR_NETWORK_CHANGED(?![A-Z0-9_])",
+            str(error),
+        )
+    )
+
+
+async def _goto_listings_with_network_retry(page, target_url: str, *, wait_until: str, timeout=None):
+    """Retry only Playwright's transient network-change error on listings routes."""
+    listings_urls = (DRAFT_LISTINGS_URL, SHOP_MANAGER_LISTINGS_URL)
+    attempts = SHOP_MANAGER_NAVIGATION_ATTEMPTS if target_url in listings_urls else 1
+    for attempt in range(attempts):
+        try:
+            goto_kwargs = {"wait_until": wait_until}
+            if timeout is not None:
+                goto_kwargs["timeout"] = timeout
+            await page.goto(target_url, **goto_kwargs)
+            return
+        except PlaywrightError as exc:
+            if not _is_network_changed_error(exc) or attempt + 1 >= attempts:
+                raise
+            await page.wait_for_timeout(SHOP_MANAGER_NAVIGATION_RETRY_DELAY_MS)
+
+
 async def _force_draft_filter(page):
     """Điều hướng về drafts và ép filter về Draft status an toàn trước khi đọc listings."""
     print("  🔧 Ép bộ lọc Draft để đọc đúng danh sách.")
-    await page.goto(DRAFT_LISTINGS_URL, wait_until="domcontentloaded")
-    for _ in range(24):
-        status_state = await _collect_status_radio_state(page)
+    status_state = {"radio_count": 0, "radios": [], "draft_indexes": [], "checked_values": []}
+    navigation_urls = (DRAFT_LISTINGS_URL, SHOP_MANAGER_LISTINGS_URL)
+
+    for nav_index, target_url in enumerate(navigation_urls):
+        await _goto_listings_with_network_retry(
+            page, target_url, wait_until="domcontentloaded"
+        )
+        for _ in range(DRAFT_FILTER_RENDER_POLLS):
+            status_state = await _collect_status_radio_state(page)
+            if status_state["radio_count"] > 0 and status_state["draft_indexes"]:
+                break
+            await page.wait_for_timeout(DRAFT_FILTER_POLL_MS)
+
         if status_state["radio_count"] > 0 and status_state["draft_indexes"]:
             break
-        await page.wait_for_timeout(250)
 
-    status_state = await _collect_status_radio_state(page)
-    if status_state["radio_count"] == 0:
-        raise RuntimeError("Không tìm thấy bộ lọc Draft trên danh sách listings.")
+        if nav_index == 0:
+            print("  ⚠ Filter Draft chưa render; thử lại qua trang Listings chuẩn.")
+
+    if status_state["radio_count"] == 0 or not status_state["draft_indexes"]:
+        title = ""
+        title_reader = getattr(page, "title", None)
+        if callable(title_reader):
+            try:
+                title = str(await title_reader()).strip()
+            except Exception:
+                title = ""
+        values = [str(radio.get("value") or "") for radio in status_state.get("radios", [])]
+        raise RuntimeError(
+            "Không tìm thấy bộ lọc Draft trên danh sách listings sau retry. "
+            f"url={getattr(page, 'url', '')!s}; title={title or '<unknown>'}; "
+            f"radio_count={status_state.get('radio_count', 0)}; values={values}"
+        )
 
     all_status_locator = page.locator('input[name="item_status"]')
     for _ in range(DRAFT_FILTER_FORCE_ATTEMPTS):
@@ -810,9 +1219,10 @@ def _get_media_thumbnail_fallback_selectors() -> list[str]:
     ]
 
 
-PHOTO_UPLOAD_BATCH_SIZE = 5
-# The observed Etsy editor can take roughly two minutes to settle a five-photo
-# batch. Keep this bounded while allowing that slow, but finite, upload window.
+PHOTO_UPLOAD_BATCH_SIZE = 1
+# Etsy's current editor can leave concurrent multi-photo uploads pending
+# indefinitely in an authenticated CDP session. Submit one photo at a time so
+# each upload has an independent settle/read-back boundary before continuing.
 PHOTO_UPLOAD_WAIT_MS = 180000
 PHOTO_UPLOAD_POLL_MS = 500
 
@@ -861,23 +1271,199 @@ async def _read_pending_photo_uploads(page) -> dict | None:
                     && style.opacity !== '0';
             };
 
+            const normalizeText = (value) => String(value || '')
+                .replace(/\s+/g, ' ')
+                .trim()
+                .toLowerCase();
+            const unrelatedSurfaceSelector = [
+                '[data-testid*="video" i]', '[data-testid*="digital" i]',
+                '[aria-label*="video" i]', '[aria-label*="digital" i]',
+                // The current Etsy media grid uses "multi-video-component"
+                // around both the photo and video slots. Match video-specific
+                // upload/tile classes, not every ancestor whose class contains
+                // the word "video".
+                '[class*="video-upload" i]', '[class*="video-multiple-upload" i]',
+                '[class*="video-thumbnail" i]', '[class*="digital" i]'
+            ].join(', ');
+            const isInUnrelatedSurface = (node) => Boolean(
+                node && node.closest && node.closest(unrelatedSurfaceSelector)
+            );
+            const isPhotoFileInput = (input) => {
+                if (!input || String(input.tagName || '').toLowerCase() !== 'input'
+                    || String(input.type || '').toLowerCase() !== 'file') return false;
+                const name = normalizeText(input.getAttribute('name'));
+                const accept = normalizeText(input.getAttribute('accept'));
+                const hasImageAccept = /(?:^|[\s,])image\/[a-z0-9.+*-]+/i.test(accept)
+                    || /(?:^|[\s,])\.(?:jpe?g|png|gif|webp|avif|heic)(?:$|[\s,])/i.test(accept);
+                // An explicit non-image accept list wins over a reused input name.
+                if (accept && !hasImageAccept) return false;
+                return (name === 'listing-media-upload' || hasImageAccept)
+                    && !isInUnrelatedSurface(input);
+            };
+            const isAddPhotosLabel = (label) => {
+                if (!label || String(label.tagName || '').toLowerCase() !== 'label') return false;
+                return normalizeText(label.getAttribute('aria-label')) === 'add photos'
+                    || normalizeText(label.textContent) === 'add photos';
+            };
+            const fileInputsForLabel = (label) => {
+                const candidates = [];
+                for (const input of label.querySelectorAll('input[type="file"]')) {
+                    candidates.push(input);
+                }
+                if (label.control && String(label.control.type || '').toLowerCase() === 'file') {
+                    candidates.push(label.control);
+                }
+                const forId = String(label.getAttribute('for') || '').trim();
+                if (forId) {
+                    const input = document.getElementById(forId);
+                    if (input && String(input.type || '').toLowerCase() === 'file') {
+                        candidates.push(input);
+                    }
+                }
+                const sibling = label.nextElementSibling;
+                if (sibling && String(sibling.tagName || '').toLowerCase() === 'input'
+                    && String(sibling.type || '').toLowerCase() === 'file') {
+                    candidates.push(sibling);
+                }
+                return Array.from(new Set(candidates));
+            };
+            const roots = new Set();
+            const photoSections = new Set();
+            const photoSectionSelector = [
+                '[data-testid*="listing-media" i]',
+                '[data-testid*="listing-photo" i]',
+                '[data-testid*="photo-upload" i]',
+                '[class*="listing-media" i]',
+                '[class*="listing-photo" i]'
+            ].join(', ');
+            const hasPhotoSectionSemantics = (node) => {
+                if (node.matches(photoSectionSelector)) return true;
+                const headingSectionSelector = [
+                    'section', '[role="group"]', '[data-testid*="section" i]',
+                    '[class*="section" i]'
+                ].join(', ');
+                if (!node.matches(headingSectionSelector)) return false;
+                const heading = node.querySelector('h1, h2, h3, [role="heading"]');
+                return Boolean(heading && heading.closest(headingSectionSelector) === node
+                    && /^(photos|listing photos)$/i.test(
+                        (heading.textContent || '').replace(/\s+/g, ' ').trim()
+                    ));
+            };
+            const isSeparateUploadWidget = (node) => Boolean(
+                node && node.closest && node.closest([
+                    '[data-testid*="avatar" i]', '[data-testid*="profile" i]',
+                    '[data-testid*="cover" i]',
+                    '[class*="avatar" i]', '[class*="profile" i]', '[class*="cover" i]'
+                ].join(', '))
+            );
+            const addVisibleLocalWrapper = (node) => {
+                let current = node && node.parentElement;
+                let depth = 0;
+                while (current && current !== document.body
+                    && current !== document.documentElement && depth < 6) {
+                    depth += 1;
+                    if (isVisible(current)
+                        && !current.matches('form, section, fieldset, [role="group"], [role="main"]')
+                        && !isInUnrelatedSurface(current)) {
+                        roots.add(current);
+                        return;
+                    }
+                    current = current.parentElement;
+                }
+            };
+            const addVisiblePhotoTileAncestors = (node) => {
+                let current = node && node.parentElement;
+                let depth = 0;
+                while (current && current !== document.body
+                    && current !== document.documentElement && depth < 2) {
+                    depth += 1;
+                    if (current.matches('form, section, fieldset, [role="group"], [role="main"]')
+                        || isInUnrelatedSurface(current)) break;
+                    if (isVisible(current)) roots.add(current);
+                    current = current.parentElement;
+                }
+            };
+            const addPhotoSurface = (label, input) => {
+                if (!isPhotoFileInput(input)
+                    || isInUnrelatedSurface(label)
+                    || isInUnrelatedSurface(input)) return;
+                roots.add(label);
+                roots.add(input);
+                addVisibleLocalWrapper(label);
+                addVisibleLocalWrapper(input);
+            };
+
+            // Etsy may remove the Add photos control after the first file is
+            // selected. A visible photo delete button is specific evidence
+                // that the remaining thumbnail tile is still the photo surface.
+                for (const deleteButton of Array.from(document.querySelectorAll(
+                    'button[data-testid="image-delete-button"]'
+                ))) {
+                    if (!isVisible(deleteButton) || isInUnrelatedSurface(deleteButton)) continue;
+                    roots.add(deleteButton);
+                    // Include only its bounded local ancestors so a progress
+                    // sibling elsewhere in the same thumbnail tile remains visible
+                    // to the pending-state scan.
+                    addVisiblePhotoTileAncestors(deleteButton);
+
+                    // An out-of-tile marker is trusted only inside a bounded
+                    // ancestor with listing-photo semantics or a Photos heading.
+                    let current = deleteButton.parentElement;
+                    let depth = 0;
+                    while (current && current !== document.body
+                        && current !== document.documentElement && depth < 6) {
+                        depth += 1;
+                        if (isInUnrelatedSurface(current)) break;
+                        if (hasPhotoSectionSemantics(current)) {
+                            photoSections.add(current);
+                            roots.add(current);
+                            break;
+                        }
+                        if (current.matches('section, [role="group"], [role="main"], form')) break;
+                        current = current.parentElement;
+                    }
+                }
+
+            // A hidden input does not make its own ancestor visible. Require
+            // an exact Add photos label and a photo-compatible associated input
+            // before admitting a generic local wrapper into the scope.
+            for (const label of Array.from(document.querySelectorAll('label')).filter(isAddPhotosLabel)) {
+                for (const input of fileInputsForLabel(label)) {
+                    addPhotoSurface(label, input);
+                }
+            }
+
+            // Retain existing semantic photo roots for Etsy variants that do
+            // not expose a label, but do not treat generic media/video/file
+            // containers as proof that this is the photo surface.
             const anchors = Array.from(document.querySelectorAll(
                 'input[name="listing-media-upload"], '
                 + 'input[type="file"][accept*="image" i], '
                 + '[data-testid*="listing-media" i], '
-                + '[data-testid*="photo" i], '
-                + '[class*="photo" i], [class*="media" i]'
-            ));
-            const roots = new Set();
+                + '[data-testid*="photo" i], [class*="photo" i]'
+            )).filter((anchor) => {
+                if (String(anchor.tagName || '').toLowerCase() === 'input') {
+                    return isPhotoFileInput(anchor);
+                }
+                return !isInUnrelatedSurface(anchor);
+            });
             for (const anchor of anchors) {
                 roots.add(anchor);
+                // Etsy's Photo & Video editor can attach its hidden image input
+                // directly to a generic upload wrapper instead of an explicit
+                // <label> or a named listing-photo container. Keep the search
+                // bounded to the nearest visible local wrapper; the input has
+                // already passed isPhotoFileInput() and unrelated video/digital
+                // surfaces were filtered above.
+                if (String(anchor.tagName || '').toLowerCase() === 'input') {
+                    addVisibleLocalWrapper(anchor);
+                }
                 const root = anchor.closest(
-                    'section, form, [role="group"], '
-                    + '[data-testid*="listing-media" i], '
-                    + '[data-testid*="photo" i], [class*="photo" i], '
-                    + '[class*="media" i]'
+                    '[data-testid*="listing-media" i], '
+                    + '[data-testid*="photo" i], [class*="photo" i]'
                 );
-                if (root && root !== document.body && root !== document.documentElement) {
+                if (root && root !== document.body && root !== document.documentElement
+                    && !isInUnrelatedSurface(root)) {
                     roots.add(root);
                 }
             }
@@ -887,6 +1473,7 @@ async def _read_pending_photo_uploads(page) -> dict | None:
                 root === node || root.contains(node) || node.contains(root)
             );
             const candidates = new Set();
+            let hasAmbiguousOutOfScopePhotoMarker = false;
             const candidateSelector = [
                 '[role="alert"]', '[role="status"]', '[aria-live]',
                 '[role="progressbar"]', 'progress', '[aria-busy="true"]',
@@ -907,9 +1494,38 @@ async def _read_pending_photo_uploads(page) -> dict | None:
                 }
             }
 
+            // Etsy can place this photo-specific marker beside, rather than
+            // inside, the thumbnail tile. Trust it only when it is inside a
+            // semantically identified photo section associated with the tile.
+            if (mediaRoots.length > 0) {
+                const exactPhotoPendingText = /^image\s+is\s+uploading\s*[.!]?$/i;
+                for (const node of document.querySelectorAll(
+                    'span, p, [role="status"], [role="alert"], [aria-live]'
+                )) {
+                    if (!isVisible(node) || isInUnrelatedSurface(node)) continue;
+                    const text = (node.textContent || '').replace(/\s+/g, ' ').trim();
+                    if (!exactPhotoPendingText.test(text)) continue;
+                    if (isSeparateUploadWidget(node)) continue;
+                    if (Array.from(photoSections).some((section) => section.contains(node))) {
+                        candidates.add(node);
+                    } else {
+                        if (inMediaSurface(node)) {
+                            // A marker in the bounded thumbnail tile is local
+                            // photo evidence even when no section heading exists.
+                            candidates.add(node);
+                        } else {
+                            // An unclassified marker may belong to this listing's
+                            // photo upload, so fail closed instead of declaring settle.
+                            hasAmbiguousOutOfScopePhotoMarker = true;
+                        }
+                    }
+                }
+            }
+
             const pendingCandidates = [];
             for (const node of candidates) {
-                if (!isVisible(node) || !inMediaSurface(node)) continue;
+                if (!isVisible(node) || !inMediaSurface(node)
+                    || isInUnrelatedSurface(node) || isSeparateUploadWidget(node)) continue;
                 const text = [
                     node.textContent || '',
                     node.getAttribute('aria-label') || '',
@@ -942,9 +1558,12 @@ async def _read_pending_photo_uploads(page) -> dict | None:
             );
 
             return {
-                readable: mediaRoots.length > 0,
+                readable: mediaRoots.length > 0 && !hasAmbiguousOutOfScopePhotoMarker,
                 pending: pending.length > 0,
                 pendingCount: pending.length,
+                diagnostic: hasAmbiguousOutOfScopePhotoMarker
+                    ? 'photo_scope_ambiguous'
+                    : (mediaRoots.length > 0 ? 'ok' : 'photo_surface_unreadable'),
                 evidence: pending.slice(0, 5).map((node) =>
                     (node.textContent || node.getAttribute('aria-label') || '')
                         .replace(/\s+/g, ' ').trim()
@@ -955,11 +1574,33 @@ async def _read_pending_photo_uploads(page) -> dict | None:
     try:
         state = await page.evaluate(script)
     except Exception:
-        return None
+        # Keep the error class useful to the caller without logging or exposing
+        # page content or exception strings from the authenticated browser.
+        return {
+            "readable": False,
+            "pending": False,
+            "pendingCount": 0,
+            "diagnostic": "evaluate_error",
+            "evidence": [],
+        }
     if not isinstance(state, dict):
-        return None
+        return {
+            "readable": False,
+            "pending": False,
+            "pendingCount": 0,
+            "diagnostic": "invalid_evaluate_result",
+            "evidence": [],
+        }
     if not isinstance(state.get("readable"), bool) or not isinstance(state.get("pending"), bool):
-        return None
+        return {
+            "readable": False,
+            "pending": False,
+            "pendingCount": 0,
+            "diagnostic": "invalid_evaluate_result",
+            "evidence": [],
+        }
+    if not state.get("diagnostic"):
+        state["diagnostic"] = "ok" if state["readable"] else "photo_surface_unreadable"
     return state
 
 
@@ -1153,9 +1794,14 @@ async def _upload_listing_photos_until_count(
         if not settled:
             pending_state = await _read_pending_photo_uploads(page)
             if pending_state is None or not pending_state.get("readable"):
+                diagnostic = (
+                    pending_state.get("diagnostic", "photo_surface_unreadable")
+                    if isinstance(pending_state, dict) else "photo_surface_unreadable"
+                )
                 raise RuntimeError(
                     "Không xác minh được trạng thái settle của upload ảnh sau "
-                    f"{timeout_ms / 1000:.0f}s; dừng trước khi upload bổ sung."
+                    f"{timeout_ms / 1000:.0f}s (diagnostic={diagnostic}); "
+                    "dừng trước khi upload bổ sung."
                 )
             if pending_state.get("pending"):
                 evidence = ", ".join(pending_state.get("evidence") or [])
@@ -1165,9 +1811,14 @@ async def _upload_listing_photos_until_count(
                     f"{': ' + evidence if evidence else ''}); "
                     "dừng, không upload trùng path."
                 )
-            # Count is settled but Etsy did not accept the full batch. Continue
-            # only with paths never submitted; never replay the same batch.
-            print("  ⚠️ Batch đã settle nhưng số ảnh còn thiếu; chỉ dùng path chưa gửi.")
+            current = await _count_listing_image_thumbs(page)
+            if current < batch_target:
+                raise RuntimeError(
+                    "Upload ảnh đã settle nhưng Etsy chỉ chấp nhận một phần batch; "
+                    "dừng trước khi upload path tiếp theo. "
+                    f"before={before}, batch_size={len(batch)}, "
+                    f"target={batch_target}, actual={current}."
+                )
 
     current = await _count_listing_image_thumbs(page)
 
@@ -1252,6 +1903,14 @@ def _pick_draft_card_id(cards: list[dict], product: dict) -> str | None:
     return str(best_match["id"])
 
 
+def _draft_card_diagnostic(card: dict) -> str:
+    """Return bounded, non-sensitive evidence for an ambiguous draft candidate."""
+    listing_id = str(card.get("id", "")).strip() or "?"
+    title = " ".join(str(card.get("title", "") or "").split())[:100]
+    sku = " ".join(str(card.get("sku", "") or "").split())[:60]
+    return f"{listing_id}(title={title!r}, sku={sku!r})"
+
+
 async def _editor_product_signature_matches(page, product: dict) -> bool:
     """Chỉ tin ID trên URL nếu title/SKU trong editor khớp sản phẩm."""
     target_title = normalize_search_text(product.get("title", ""))
@@ -1284,20 +1943,49 @@ async def _collect_draft_cards(page):
     cards = await page.evaluate(r'''() => {
         let items = [];
         let anchors = Array.from(document.querySelectorAll('a[href*="/listing-editor/edit/"]'));
+        const cleanText = (element) => {
+            if (!element) return '';
+            return String(element.innerText || element.textContent || '').trim();
+        };
+        const readTitleElement = (element) => {
+            if (!element) return '';
+            const titleAttribute = String(element.getAttribute('title') || '').trim();
+            return titleAttribute || cleanText(element);
+        };
+        const readSemanticCardTitle = (scope) => {
+            if (!scope) return '';
+            const titleElements = scope.querySelectorAll(
+                'h2.card-title, [class~="card-title"], ' +
+                '[data-testid="card-title"], [data-testid*="card-title"]'
+            );
+            for (const titleElement of titleElements) {
+                const title = readTitleElement(titleElement);
+                if (title) return title;
+            }
+            return '';
+        };
         for (let a of anchors) {
             let href = a.getAttribute('href') || '';
             let match = href.match(/\/listing-editor\/edit\/(\d+)/);
             if (!match) continue;
             let id = match[1];
             let row = a.closest('tr') || a.closest('[class*="card"]') || a.closest('div');
-            let title = (a.innerText || '').trim();
+            // Etsy's card-body anchor contains badge, stock, price, and update
+            // metadata. Prefer the semantic card title before any whole-anchor
+            // fallback so exact matching remains possible with multiple drafts.
+            let title = readSemanticCardTitle(row);
             if (!title && row) {
                 let titleEl = row.querySelector('[class*="title"], [class*="name"], h3, h4, [data-testid*="title"]');
-                if (titleEl) title = (titleEl.innerText || '').trim();
+                if (titleEl) title = readTitleElement(titleEl);
             }
             if (!title && row) {
                 let textNodes = Array.from(row.querySelectorAll('a,span,div')).map(el => (el.innerText || '').trim()).filter(Boolean);
                 if (textNodes.length > 0) title = textNodes[0];
+            }
+            if (!title) {
+                // Keep the anchor title/text as a last-resort compatibility
+                // fallback. A polluted anchor will not become an exact match.
+                title = String(a.getAttribute('title') || '').trim() || cleanText(a);
             }
             let rowText = row ? (row.innerText || '').toLowerCase() : '';
             let sku = '';
@@ -1355,12 +2043,15 @@ async def _wait_for_draft_grid_stable(
             return n && n.offsetParent !== null && style && style.visibility !== "hidden" && style.display !== "none";
         });
 
-        const emptyStateMarkers = Array.from(document.querySelectorAll('.wt-empty-state, [role="status"], [data-testid*="empty"]'));
+        const emptyStateMarkers = Array.from(document.querySelectorAll(
+            '.list-region .empty-state, .wt-empty-state, [role="status"], [data-testid*="empty"]'
+        ));
         const emptyState = emptyStateMarkers.some((el) => {
             if (!el || el.offsetParent === null) return false;
             const text = (el.textContent || "").toLowerCase();
             return (
                 text.includes("no listings") ||
+                text.includes("no listings matched these filters") ||
                 text.includes("no results") ||
                 text.includes("you have no drafts") ||
                 text.includes("nothing to show")
@@ -1433,40 +2124,12 @@ def _get_save_button_selector(explicit_edit: bool = False) -> str:
         'button:has-text("Save Draft"):visible'
     )
 # ── Translate ──────────────────────────────────────────────────────────────────
-def translate_text(text: str, lang: str, max_chars=4800) -> str:
-    if not text: return ""
-    try:
-        if len(text) <= max_chars:
-            return GoogleTranslator(source="en", target=lang).translate(text) or text
-        parts, chunk = [], ""
-        for para in text.split("\n\n"):
-            if len(chunk) + len(para) + 2 > max_chars:
-                if chunk:
-                    parts.append(GoogleTranslator(source="en", target=lang).translate(chunk) or chunk)
-                chunk = para
-            else:
-                chunk = (chunk + "\n\n" + para).strip()
-        if chunk:
-            parts.append(GoogleTranslator(source="en", target=lang).translate(chunk) or chunk)
-        return "\n\n".join(parts)
-    except Exception as e:
-        print(f"    ⚠ dịch {lang}: {e}")
-        return text
+def translate_text(text: str, lang: str, max_chars=4200) -> str:
+    return get_translation_service().translate_text(text, lang, max_chars=max_chars)
+
 
 def translate_tag(tag: str, lang: str) -> str:
-    """Dịch 1 tag, giữ ≤20 ký tự."""
-    try:
-        translated = GoogleTranslator(source="en", target=lang).translate(tag) or tag
-        translated = translated.strip()
-        if len(translated) > 20:
-            short = translated[:20].rsplit(" ", 1)[0].rstrip(",- ")
-            if 1 <= len(short) <= 20:
-                translated = short
-            else:
-                translated = translated[:20].rstrip(",- ")
-        return translated if 1 <= len(translated) <= 20 else tag[:20].rstrip(",- ")
-    except Exception:
-        return tag[:20].rstrip(",- ")
+    return get_translation_service().translate_tag(tag, lang)
 
 def get_sku_prefix(shop_id: str) -> str:
     shop_id_lower = str(shop_id or "templystudios").lower()
@@ -1607,7 +2270,7 @@ def read_products(
         clean_title = trim_title(str(title))
         clean_keywords = str(cols[2] or "")  # column C = keywords
 
-        all_products.append({
+        product_record = {
             "folder":      folder,
             "title":       clean_title,
             "description": str(description or ""),
@@ -1623,7 +2286,97 @@ def read_products(
             "row":         row_num,
             "keywords":    clean_keywords,
             "alt_texts":   [],
-        })
+    }
+        product_path = SHOP_DIR / str(folder)
+        for metadata_name in (".pipeline-product.json", "pipeline-product.json", ".pipeline-manifest.json"):
+            metadata_path = product_path / metadata_name
+            if metadata_path.is_symlink() or not metadata_path.is_file():
+                continue
+            strict_manifest = metadata_name == ".pipeline-product.json"
+            try:
+                if metadata_name == ".pipeline-product.json":
+                    metadata = read_pipeline_product_manifest(product_path)
+                else:
+                    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, TypeError, PipelineContractError):
+                # A malformed pipeline manifest must fail closed. Keep an
+                # explicit empty allowlist so a legacy ``files/`` mirror of a
+                # Creative Fabrica archive cannot silently become a customer
+                # upload. Legacy rows without a manifest continue normally.
+                metadata = {"listing_type": "digital", "pipeline_manifest_invalid": True, "customer_files": []}
+            if isinstance(metadata, dict):
+                if str(metadata.get("listing_type") or "").strip().lower() in {"digital", "physical"}:
+                    product_record["listing_type"] = str(metadata["listing_type"]).strip().lower()
+                if metadata.get("pipeline_manifest_invalid"):
+                    product_record["pipeline_manifest_invalid"] = True
+                if metadata.get("pipeline_job_id"):
+                    product_record["pipeline_job_id"] = str(metadata["pipeline_job_id"]).strip()
+                if strict_manifest:
+                    manifest_images = metadata.get("image_files")
+                    product_record["pipeline_image_files"] = (
+                        [Path(str(item)).as_posix() for item in manifest_images]
+                        if isinstance(manifest_images, list)
+                        else []
+                    )
+                for metadata_key, product_key in (
+                    ("campaign_id", "pipeline_campaign_id"),
+                    ("candidate_id", "pipeline_candidate_id"),
+                    ("shop_id", "pipeline_shop_id"),
+                    ("product_id", "pipeline_product_id"),
+                    ("worker_id", "pipeline_worker_id"),
+                ):
+                    if metadata.get(metadata_key):
+                        product_record[product_key] = str(metadata[metadata_key]).strip()
+                if metadata.get("contract_version"):
+                    product_record["pipeline_contract_version"] = str(metadata["contract_version"]).strip()
+                customer_dir = product_path / "files"
+                if metadata.get("pipeline_manifest_invalid"):
+                    product_record["customer_files"] = []
+                else:
+                    allowed_names = metadata.get("customer_files")
+                    if strict_manifest and isinstance(allowed_names, list):
+                        # Strict manifests already validated each exact path
+                        # and hash.  Preserve those paths instead of reducing
+                        # them to basenames under ``files/``; this keeps the
+                        # writer and poster contracts identical for products
+                        # whose final deliverable lives at the product root or
+                        # in a nested final-output folder.
+                        exact_paths: list[str] = []
+                        for raw_name in allowed_names:
+                            path = Path(str(raw_name))
+                            if not path.is_absolute():
+                                path = product_path / path
+                            try:
+                                path.absolute().relative_to(product_path.absolute())
+                            except ValueError:
+                                raise PipelineContractError(
+                                    f"Customer manifest path is outside product folder: {raw_name}"
+                                )
+                            if path.is_file() and not path.is_symlink() and path.suffix.lower() in POST_FILE_EXTS:
+                                exact_paths.append(str(path))
+                        product_record["customer_files"] = sorted(exact_paths)
+                    else:
+                        allowed_names = (
+                            {Path(str(item)).name for item in allowed_names}
+                            if isinstance(allowed_names, list)
+                            else None
+                        )
+                        if customer_dir.is_dir() and not customer_dir.is_symlink():
+                            product_record["customer_files"] = [
+                                str(path) for path in sorted(customer_dir.iterdir())
+                                if path.is_file() and not path.is_symlink() and path.suffix.lower() in POST_FILE_EXTS
+                                and (allowed_names is None or path.name in allowed_names)
+                            ]
+            break
+        # Persist the business meaning in the in-memory contract for legacy
+        # rows. PivotAndPage and Bubble By Julie's Furniture catalog remains
+        # physical; only an explicit digital manifest can override it.
+        if "listing_type" not in product_record and (
+            _is_furniture_scope(product_record.get("category", ""))
+            or _is_furniture_scope(product_record.get("section", ""))
+        ):
+            product_record["listing_type"] = "physical"
+        all_products.append(product_record)
 
     if selected_products:
         all_products = sorted(all_products, key=lambda item: selected_order[item["row"]])
@@ -1730,87 +2483,6 @@ async def clear_and_fill(el, value):
     await el.fill(value)
 
 # ── Fill alt text cho từng ảnh ────────────────────────────────────────────────
-# ── Visual Alt Text Generator ──────────────────────────────────────────────────
-def generate_visual_alt_text(img_path, title, keywords):
-    """
-    Sử dụng Gemini 2.5 Flash thông qua Vertex AI để phân tích hình ảnh và sinh Alt Text chuẩn SEO.
-    Nếu thất bại hoặc không có thư viện, trả về None để dùng cơ chế fallback dựa trên text.
-    """
-    if not has_genai:
-        print("      ⚠️ Không có thư viện google-genai. Sử dụng Text SEO fallback.")
-        return None
-
-    try:
-        # Đọc ảnh dưới dạng bytes
-        with open(img_path, "rb") as f:
-            img_bytes = f.read()
-
-        # Xác định mime_type
-        suffix = Path(img_path).suffix.lower()
-        mime_type = "image/png"
-        if suffix in [".jpg", ".jpeg"]:
-            mime_type = "image/jpeg"
-        elif suffix == ".webp":
-            mime_type = "image/webp"
-        elif suffix == ".gif":
-            mime_type = "image/gif"
-
-        # Khởi tạo client Vertex AI
-        client = genai.Client(vertexai=True, project="temply-ai-lab", location="us-central1")
-
-        prompt = f"""
-Analyze the provided product image and generate a highly descriptive, SEO-optimized Alt Text for Etsy.
-
-Instructions:
-1. Describe the layout, visual design, text, and specific pages or features shown in the image in detail.
-2. Incorporate 1-2 relevant SEO keywords from the following list: {keywords}.
-3. The description must be natural, engaging, and extremely helpful for visually impaired buyers.
-4. Keep the length strictly under 250 characters.
-5. Do NOT use generic phrases like "image of" or "screenshot of".
-6. Output ONLY the raw alt text, no quotes, no markdown, no comments, just the plain text.
-
-Listing Title: {title}
-"""
-        part = types.Part.from_bytes(
-            data=img_bytes,
-            mime_type=mime_type
-        )
-
-        import time
-        max_retries = 3
-        backoff_sec = 3
-        response = None
-        for attempt in range(max_retries + 1):
-            try:
-                response = client.models.generate_content(
-                    model="gemini-2.5-flash",
-                    contents=[part, prompt]
-                )
-                break
-            except Exception as e:
-                err_msg = str(e).lower()
-                if ("429" in err_msg or "resource exhausted" in err_msg or "resource_exhausted" in err_msg) and attempt < max_retries:
-                    print(f"      ⚠️ Gặp lỗi 429 (Resource Exhausted). Đợi {backoff_sec}s và thử lại #{attempt + 1}...")
-                    time.sleep(backoff_sec)
-                    backoff_sec *= 2
-                else:
-                    raise e
-
-        text = (response.text or "").strip()
-        if text.startswith('"') and text.endswith('"'):
-            text = text[1:-1].strip()
-        if text.startswith("'") and text.endswith("'"):
-            text = text[1:-1].strip()
-
-        if len(text) > 250:
-            text = text[:247] + "..."
-
-        return text
-    except Exception as e:
-        print(f"      ❌ Lỗi khi phân tích ảnh qua Gemini: {e}")
-        return None
-
-# ── Fill alt text cho từng ảnh ────────────────────────────────────────────────
 async def fill_image_alt_texts(page, product):
     """Điền alt text cho từng ảnh sau khi upload lên Etsy."""
     title = product.get("title", "")
@@ -1861,28 +2533,32 @@ async def fill_image_alt_texts(page, product):
                 await page.wait_for_timeout(1000)
                 continue
 
-            # 3. Tạo nội dung Alt Text (Thử Gemini trước, nếu lỗi/thiếu ảnh thì dùng Fallback)
+            # 3. Tạo nội dung Alt Text (Thử Together AI Vision trước, nếu lỗi/thiếu ảnh thì dùng Fallback)
             alt_val = None
             if i < len(image_paths):
                 img_path = image_paths[i]
-                print(f"      📸 Đang phân tích ảnh cục bộ qua Gemini: {Path(img_path).name}...")
+                print(f"      📸 Đang phân tích ảnh cục bộ qua Together AI Vision: {Path(img_path).name}...")
                 try:
                     alt_val = await asyncio.wait_for(
                         asyncio.to_thread(generate_visual_alt_text, img_path, title, keywords),
-                        timeout=15.0
+                        timeout=ALT_TEXT_GENERATION_TIMEOUT_SECONDS
                     )
                 except asyncio.TimeoutError:
-                    print("      ⚠️ Gemini API call timed out after 15 seconds. Using Text SEO fallback.")
+                    print(
+                        "      ⚠️ Together AI Vision API call timed out after "
+                        f"{ALT_TEXT_GENERATION_TIMEOUT_SECONDS:g} seconds. "
+                        "Using Text SEO fallback."
+                    )
                     alt_val = None
                 except Exception as g_err:
-                    print(f"      ⚠️ Lỗi khi gọi Gemini: {g_err}. Using Text SEO fallback.")
+                    print(f"      ⚠️ Lỗi khi gọi Together AI Vision: {g_err}. Using Text SEO fallback.")
                     alt_val = None
             
             if not alt_val:
                 alt_val = fallback_alts[i]
                 print(f"      ⚠️ Sử dụng Alt Text văn bản SEO (fallback): '{alt_val[:50]}...'")
             else:
-                print(f"      ✨ Sinh Alt Text bằng Gemini thành công: '{alt_val}'")
+                print(f"      ✨ Sinh Alt Text bằng Together AI Vision thành công: '{alt_val}'")
 
             # 4. Tìm textarea trong Alt Text modal và điền
             alt_input = page.locator('div[role="dialog"]:visible textarea, div[class*="dialog"]:visible textarea, [class*="modal"]:visible textarea').first
@@ -2019,6 +2695,11 @@ _LISTING_TYPE_DISPLAY_VALUES = {
     "digital listing",
     "downloadable",
 }
+_PHYSICAL_LISTING_TYPE_DISPLAY_VALUES = {
+    "physical",
+    "physical item",
+    "physical listing",
+}
 
 
 def _normalize_listing_text(value: object) -> str:
@@ -2086,8 +2767,33 @@ def _looks_like_listing_type_control_text(value: str) -> bool:
     return False
 
 
+def _normalize_listing_type(name: str) -> str:
+    return _normalize_listing_text(name) if name else ""
+
+
+def _is_affirmative_listing_type_display(value: str, listing_type: str) -> bool:
+    normalized_type = _normalize_listing_type(listing_type)
+    normalized = _normalize_listing_type(value)
+    if normalized_type == "digital":
+        return normalized in _LISTING_TYPE_DISPLAY_VALUES
+    if normalized_type == "physical":
+        return normalized in _PHYSICAL_LISTING_TYPE_DISPLAY_VALUES
+    return False
+
+
 def _is_affirmative_digital_display(value: str) -> bool:
-    return _normalize_listing_text(value) in _LISTING_TYPE_DISPLAY_VALUES
+    return _is_affirmative_listing_type_display(value, "digital")
+
+
+def _is_affirmative_physical_display(value: str) -> bool:
+    return _is_affirmative_listing_type_display(value, "physical")
+
+
+async def _control_has_listing_type_readback(control, listing_type: str) -> bool:
+    for candidate in await _get_control_text_candidates(control):
+        if _is_affirmative_listing_type_display(candidate, listing_type):
+            return True
+    return False
 
 
 async def _is_listing_type_control(control) -> bool:
@@ -2098,10 +2804,11 @@ async def _is_listing_type_control(control) -> bool:
 
 
 async def _control_has_digital_listing_readback(control) -> bool:
-    for candidate in await _get_control_text_candidates(control):
-        if _is_affirmative_digital_display(candidate):
-            return True
-    return False
+    return await _control_has_listing_type_readback(control, "digital")
+
+
+async def _control_has_physical_listing_readback(control) -> bool:
+    return await _control_has_listing_type_readback(control, "physical")
 
 
 async def _locate_candidate_listing_type_controls(page) -> list:
@@ -2220,13 +2927,28 @@ async def _option_text_candidates(option) -> list[str]:
 
 async def _option_has_affirmative_digital_display(option) -> bool:
     """Check each option label/value independently for an exact Digital value."""
+    return await _option_has_affirmative_listing_display(option, "digital")
+
+
+async def _option_has_affirmative_physical_display(option) -> bool:
+    return await _option_has_affirmative_listing_display(option, "physical")
+
+
+async def _option_has_affirmative_listing_display(option, listing_type: str) -> bool:
+    """Check each option label/value independently for an exact listing type value."""
     return any(
-        _is_affirmative_digital_display(candidate)
+        _is_affirmative_listing_type_display(candidate, listing_type)
         for candidate in await _option_text_candidates(option)
     )
 
 
-async def _wait_for_listing_type_listbox(page, *, timeout_ms: int = 5000, poll_ms: int = 250):
+async def _wait_for_listing_type_listbox(
+    page,
+    *,
+    listing_type: str,
+    timeout_ms: int = 5000,
+    poll_ms: int = 250,
+):
     popup_name_re = re.compile(r"(?:physical|digital|mixed).*listing type|listing type.*(?:physical|digital)", re.IGNORECASE)
     attempts = max(1, int(timeout_ms) // int(poll_ms) + 1)
     for attempt in range(attempts):
@@ -2251,7 +2973,7 @@ async def _wait_for_listing_type_listbox(page, *, timeout_ms: int = 5000, poll_m
                     return candidate
                 digital_options = [
                     option for option in options
-                    if await _option_has_affirmative_digital_display(option)
+                    if await _option_has_affirmative_listing_display(option, listing_type)
                 ]
                 if len(digital_options) == 1:
                     return candidate
@@ -2260,8 +2982,10 @@ async def _wait_for_listing_type_listbox(page, *, timeout_ms: int = 5000, poll_m
     return None
 
 
-async def _select_digital_listing_type_dropdown_if_present(page) -> bool:
+async def _select_listing_type_dropdown_if_present(page, listing_type: str) -> bool:
     """Select and verify the current Etsy Physical/Digital listbox control."""
+    if _normalize_listing_type(listing_type) not in {"digital", "physical"}:
+        raise DigitalListingTypeError(f"Loại listing không được hỗ trợ: {listing_type}")
     controls = await _locate_candidate_listing_type_controls(page)
     if not controls:
         controls = []
@@ -2276,46 +3000,60 @@ async def _select_digital_listing_type_dropdown_if_present(page) -> bool:
         )
 
     control = controls[0]
-    current_is_digital = await _control_has_digital_listing_readback(control)
-    if not current_is_digital:
+    current_is_expected = await _control_has_listing_type_readback(control, listing_type)
+    if not current_is_expected:
         await control.click()
         await page.wait_for_timeout(300)
 
-        listbox = await _wait_for_listing_type_listbox(page, timeout_ms=5000, poll_ms=250)
+        listbox = await _wait_for_listing_type_listbox(
+            page,
+            listing_type=listing_type,
+            timeout_ms=5000,
+            poll_ms=250,
+        )
         if listbox is None:
             raise DigitalListingTypeError(
                 "Cần đúng 1 listbox listing type sau khi mở dropdown"
             )
 
-        digital_options = []
+        matched_options = []
         for idx in range(5):
             candidates = await _visible_locator_items(listbox.get_by_role("option"))
-            digital_options = []
+            matched_options = []
             for candidate in candidates:
-                if await _option_has_affirmative_digital_display(candidate):
-                    digital_options.append(candidate)
-            if digital_options:
+                if await _option_has_affirmative_listing_display(candidate, listing_type):
+                    matched_options.append(candidate)
+            if matched_options:
                 break
             if idx + 1 < 5:
                 await page.wait_for_timeout(250)
 
-        if len(digital_options) != 1:
+        if len(matched_options) != 1:
             raise DigitalListingTypeError(
-                f"Cần đúng 1 tùy chọn Digital trong listing-type listbox, tìm thấy {len(digital_options)}"
+                f"Cần đúng 1 tùy chọn {listing_type.capitalize()} trong listing-type listbox, tìm thấy {len(matched_options)}"
             )
-        await digital_options[0].click()
+        await matched_options[0].click()
         await page.wait_for_timeout(500)
 
     for _ in range(5):
-        if await _control_has_digital_listing_readback(control):
+        if await _control_has_listing_type_readback(control, listing_type):
             return True
         await page.wait_for_timeout(200)
         final_text = _normalize_listing_text(await control.inner_text())
 
     raise DigitalListingTypeError(
-        "Dropdown loại listing không giữ trạng thái Digital (đang hiển thị: "
+        "Dropdown loại listing không giữ trạng thái "
+        f"{listing_type} (đang hiển thị: "
         f"'{final_text or 'trống'}')"
     )
+
+
+async def _select_digital_listing_type_dropdown_if_present(page) -> bool:
+    return await _select_listing_type_dropdown_if_present(page, "digital")
+
+
+async def _select_physical_listing_type_dropdown_if_present(page) -> bool:
+    return await _select_listing_type_dropdown_if_present(page, "physical")
 
 
 async def _legacy_listing_type_radio_semantics(radio) -> dict[str, object]:
@@ -2367,7 +3105,55 @@ def _is_affirmative_digital_radio_semantics(semantics: dict[str, object]) -> boo
     return any(field in allowed for field in normalized_fields)
 
 
-async def _select_and_verify_legacy_digital_radio(page) -> bool:
+async def _is_affirmative_listing_radio_semantics(semantics: dict[str, object], listing_type: str) -> bool:
+    normalized_type = _normalize_listing_type(listing_type)
+    if normalized_type == "digital":
+        allowed = {
+            "digital",
+            "digital download",
+            "digital file",
+            "digital files",
+            "digital item",
+            "digital listing",
+            "downloadable",
+        }
+        fields = [semantics.get("value"), semantics.get("aria_label")]
+        labels = semantics.get("labels")
+        if isinstance(labels, list):
+            fields.extend(labels)
+        normalized_fields = [str(field or "").strip().casefold() for field in fields]
+        combined = " ".join(normalized_fields)
+        if re.search(
+            r"\bphysical\b|\bnot\s+(?:an?\s+)?digital\b|\bnon[- ]digital\b|\bno\s+digital\b",
+            combined,
+        ):
+            return False
+        return any(field in allowed for field in normalized_fields)
+
+    if normalized_type == "physical":
+        allowed = {
+            "physical",
+            "physical item",
+            "physical listing",
+            "physical product",
+        }
+        fields = [semantics.get("value"), semantics.get("aria_label")]
+        labels = semantics.get("labels")
+        if isinstance(labels, list):
+            fields.extend(labels)
+        normalized_fields = [str(field or "").strip().casefold() for field in fields]
+        combined = " ".join(normalized_fields)
+        if re.search(
+            r"\bdigital\b|\bnot\s+(?:an?\s+)?physical\b|\bnon[- ]physical\b|\bno\s+physical\b",
+            combined,
+        ):
+            return False
+        return any(field in allowed for field in normalized_fields)
+
+    return False
+
+
+async def _select_and_verify_legacy_listing_type_radio(page, listing_type: str) -> bool:
     """Select a legacy Digital radio by semantics, independent of DOM order."""
     radios = page.locator('input[name="listing_type_options_group"]')
     radio_count = await radios.count()
@@ -2378,7 +3164,7 @@ async def _select_and_verify_legacy_digital_radio(page) -> bool:
     for index in range(radio_count):
         radio = radios.nth(index)
         semantics = await _legacy_listing_type_radio_semantics(radio)
-        if _is_affirmative_digital_radio_semantics(semantics):
+        if await _is_affirmative_listing_radio_semantics(semantics, listing_type):
             digital_radios.append((index, radio))
 
     if len(digital_radios) != 1:
@@ -2402,20 +3188,31 @@ async def _select_and_verify_legacy_digital_radio(page) -> bool:
         raise DigitalListingTypeError("Legacy radio không giữ duy nhất trạng thái Digital")
 
     final_semantics = await _legacy_listing_type_radio_semantics(digital)
-    if not _is_affirmative_digital_radio_semantics(final_semantics):
+    if not await _is_affirmative_listing_radio_semantics(final_semantics, listing_type):
         raise DigitalListingTypeError(
-            "Legacy radio đã chọn không còn mang ngữ nghĩa Digital khẳng định"
+            f"Legacy radio đã chọn không còn mang ngữ nghĩa {listing_type.capitalize()} khẳng định"
         )
     return True
 
 
 async def select_and_verify_digital_listing_type(page) -> str:
     """Fail closed unless the current or legacy editor proves Digital state."""
-    if await _select_digital_listing_type_dropdown_if_present(page):
+    return await _select_and_verify_listing_type(page, "digital")
+
+
+async def select_and_verify_physical_listing_type(page) -> str:
+    return await _select_and_verify_listing_type(page, "physical")
+
+
+async def _select_and_verify_listing_type(page, listing_type: str) -> str:
+    """Fail closed unless the current or legacy editor proves the requested listing type."""
+    if await _select_listing_type_dropdown_if_present(page, listing_type):
         return "dropdown"
-    if await _select_and_verify_legacy_digital_radio(page):
+    if await _select_and_verify_legacy_listing_type_radio(page, listing_type):
         return "legacy_radio"
-    raise DigitalListingTypeError("Không tìm thấy điều khiển loại listing Physical/Digital")
+    raise DigitalListingTypeError(
+        f"Không tìm thấy điều khiển loại listing type phù hợp với {listing_type.capitalize()}"
+    )
 
 
 DIGITAL_UPLOAD_SURFACE_WAIT_MS = 12000
@@ -2442,6 +3239,70 @@ _IMAGE_ONLY_ACCEPT_TOKENS = {
 
 def _normalize_ui_text(value) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _truncate_text_for_evidence(value: str, limit: int) -> str:
+    text = _normalize_ui_text(value)
+    if len(text) <= limit:
+        return text
+    if limit <= 1:
+        return text[:limit]
+    return f"{text[:limit - 1]}…"
+
+
+def _is_shop_manager_dashboard_url(url: str) -> bool:
+    normalized = str(url or "").lower()
+    return SHOP_MANAGER_DASHBOARD_URL in normalized or "/your/shops/me/dashboard" in normalized
+
+
+async def _collect_editor_navigation_evidence(page) -> str:
+    """Collect concise evidence from the current page when create flow cannot enter editor."""
+    title = ""
+    headline = ""
+    body_snippet = ""
+
+    if hasattr(page, "title"):
+        try:
+            title = _normalize_ui_text(await page.title())
+        except Exception:
+            title = ""
+
+    if hasattr(page, "evaluate"):
+        try:
+            headline = _normalize_ui_text(
+                await page.evaluate(
+                    "() => {\n"
+                    "  const nodes = Array.from(\n"
+                    "    document.querySelectorAll('h1, h2, [role=\"heading\"], .etsy-page-title, .display-page-title')\n"
+                    "  );\n"
+                    "  for (const node of nodes) {\n"
+                    "    const txt = (node?.textContent || '').trim();\n"
+                    "    if (txt) return txt;\n"
+                    "  }\n"
+                    "  return '';\n"
+                    "}"
+                )
+            )
+        except Exception:
+            headline = ""
+
+    if hasattr(page, "inner_text"):
+        try:
+            body_snippet = _normalize_ui_text(await page.inner_text("body"))
+        except Exception:
+            body_snippet = ""
+
+    parts = []
+    if title:
+        parts.append(f"title: {_truncate_text_for_evidence(title, 110)}")
+    if headline:
+        parts.append(f"headline: {_truncate_text_for_evidence(headline, 90)}")
+    if body_snippet:
+        parts.append(f"body: {_truncate_text_for_evidence(body_snippet, 150)}")
+
+    if parts:
+        return "; ".join(parts)
+    return "Không thu thập được evidence (title/body/headline) từ trang hiện tại."
 
 
 def _accepts_only_images(accept: str | None) -> bool:
@@ -2679,10 +3540,26 @@ async def _verify_digital_files_region(page) -> None:
     await _resolve_digital_upload_surface(page)
 
 
-async def _select_category_with_exact_readback(page, search_term: str, *, cat_input=None) -> str:
-    """Select one exact category option and verify readback, returning the clicked text."""
+async def _select_category_with_exact_readback(
+    page,
+    search_term: str,
+    *,
+    cat_input=None,
+    target_category: str | None = None,
+) -> str:
+    """Select one exact category option and verify readback, returning the clicked text.
+
+    ``search_term`` is intentionally the short leaf Etsy's typeahead accepts.
+    When the workbook contains a full breadcrumb, ``target_category`` keeps
+    that context for option selection and UI readback so two identical leaves
+    under different Etsy trees cannot be silently conflated.
+    """
+    search_term = str(search_term or "").strip()
+    target_category = str(target_category or search_term).strip()
     if not search_term:
         raise RuntimeError("search_term for category selection cannot be empty")
+    if not target_category:
+        raise RuntimeError("target_category for category selection cannot be empty")
     if cat_input is None:
         cat_input = page.locator(
             '#category-field-search, '
@@ -2728,15 +3605,20 @@ async def _select_category_with_exact_readback(page, search_term: str, *, cat_in
     await cat_input.fill("")
     await cat_input.fill(search_term)
 
-    target_norm = normalize_category_text(search_term)
+    target_norm = normalize_category_text(target_category)
+    target_path_parts = _normalized_category_breadcrumb_parts(target_category)
+    target_has_full_path = len(target_path_parts) > 1
+    target_leaf_norm = target_path_parts[-1] if target_has_full_path else ""
     option_text_sample_limit = 8
     observed_option_texts: list[str] = []
     selected_option_text = ""
     selected = False
+    unique_leaf_readback_evidence = None
     options_selector = '[role="option"], li[class*="option"], li[class*="result"], div[role="option"]'
     for _ in range(15):
         options = page.locator(options_selector)
         option_count = await options.count()
+        visible_options = []
         for idx in range(option_count):
             opt = options.nth(idx)
             if not await opt.count() > 0:
@@ -2747,11 +3629,46 @@ async def _select_category_with_exact_readback(page, search_term: str, *, cat_in
             if opt_text and len(observed_option_texts) < option_text_sample_limit:
                 if opt_text not in observed_option_texts:
                     observed_option_texts.append(opt_text)
-            if category_option_matches(search_term, opt_text):
-                await opt.click()
-                selected_option_text = opt_text
+            if opt_text:
+                visible_options.append((opt, opt_text))
+
+        exact_matches = [
+            (opt, opt_text)
+            for opt, opt_text in visible_options
+            if category_option_matches(target_category, opt_text)
+        ]
+        if exact_matches:
+            option, selected_option_text = exact_matches[0]
+            await option.click()
+            selected = True
+        elif target_has_full_path:
+            matching_leaf_options = [
+                (opt, opt_text)
+                for opt, opt_text in visible_options
+                if _category_option_leaf_norm(opt_text) == target_leaf_norm
+            ]
+            simple_leaf_options = [
+                (opt, opt_text)
+                for opt, opt_text in visible_options
+                if _is_exact_simple_leaf_category_option(target_category, opt_text)
+            ]
+            if simple_leaf_options:
+                if len(simple_leaf_options) != 1 or len(matching_leaf_options) != 1:
+                    raise RuntimeError(
+                        f"Không thể chọn leaf category '{target_leaf_norm}' cho breadcrumb "
+                        f"'{target_category}': nhãn leaf mơ hồ "
+                        f"({len(simple_leaf_options)} option đơn, "
+                        f"{len(matching_leaf_options)} option cùng leaf đang hiển thị)."
+                    )
+                option, selected_option_text = simple_leaf_options[0]
+                await option.click()
+                unique_leaf_readback_evidence = {
+                    "leaf": target_leaf_norm,
+                    "label": _category_option_leaf_norm(selected_option_text),
+                    "simple_option_count": len(simple_leaf_options),
+                    "same_leaf_option_count": len(matching_leaf_options),
+                }
                 selected = True
-                break
         if selected:
             break
         await page.wait_for_timeout(300)
@@ -2759,7 +3676,7 @@ async def _select_category_with_exact_readback(page, search_term: str, *, cat_in
     if not selected:
         visible_sample = ", ".join(observed_option_texts[:option_text_sample_limit]) or "<không có tùy chọn nào>"
         raise RuntimeError(
-            f"Không tìm thấy tùy chọn danh mục chính xác cho '{search_term}'. "
+            f"Không tìm thấy tùy chọn danh mục chính xác cho '{target_category}'. "
             f"Giá trị gợi ý không khớp (target_norm='{target_norm}'). "
             f"Đã quan sát: [{visible_sample}]"
         )
@@ -2772,13 +3689,21 @@ async def _select_category_with_exact_readback(page, search_term: str, *, cat_in
             current_text = (await cat_input.input_value()).strip()
         except Exception:
             pass
-        if category_option_matches(search_term, current_text):
+        matches_unique_leaf_readback = bool(
+            unique_leaf_readback_evidence
+            and unique_leaf_readback_evidence["leaf"] == target_leaf_norm
+            and unique_leaf_readback_evidence["simple_option_count"] == 1
+            and unique_leaf_readback_evidence["same_leaf_option_count"] == 1
+            and _is_exact_simple_leaf_category_option(target_category, current_text)
+            and _category_option_leaf_norm(current_text) == unique_leaf_readback_evidence["label"]
+        )
+        if category_option_matches(target_category, current_text) or matches_unique_leaf_readback:
             matched = True
             break
         await page.wait_for_timeout(300)
 
     if not matched:
-        raise RuntimeError(f"Không xác nhận được danh mục đã chọn: '{search_term}'.")
+        raise RuntimeError(f"Không xác nhận được danh mục đã chọn: '{target_category}'.")
 
     return selected_option_text
 
@@ -2789,6 +3714,7 @@ async def _prime_digital_listing_type_via_planner_templates(
     *,
     planner_category: str = "Planner Templates",
     cat_input=None,
+    target_category: str | None = None,
 ) -> None:
     """Prime Digital listing type via a mixed category path when direct digital-only path misses upload surface."""
     if not target_search_term:
@@ -2803,7 +3729,15 @@ async def _prime_digital_listing_type_via_planner_templates(
             "Không chọn được Digital sau khi chuyển qua category tạm Planner Templates"
         )
     print("  🧪 Đã kiểm tra Digital control")
-    await _select_category_with_exact_readback(page, target_search_term, cat_input=cat_input)
+    if target_category:
+        await _select_category_with_exact_readback(
+            page,
+            target_search_term,
+            cat_input=cat_input,
+            target_category=target_category,
+        )
+    else:
+        await _select_category_with_exact_readback(page, target_search_term, cat_input=cat_input)
     print(f"  🧪 Đã chọn lại mục tiêu danh mục: {target_search_term}")
 
 
@@ -2811,10 +3745,17 @@ async def fill_category_tab(page, product):
     await click_tab(page, "Category")
     await page.wait_for_timeout(800)
 
+    listing_type = resolve_listing_type(product)
+    product["_resolved_listing_type"] = listing_type
+
     # The current editor scopes category choices by this Physical/Digital
-    # dropdown. Select Digital before searching so the category result set is
-    # digital-aware. Legacy forms expose their radios later in Item Options.
-    category_listing_type_control = await _select_digital_listing_type_dropdown_if_present(page)
+    # dropdown. Select the resolved listing type so category and surface
+    # selection are scoped correctly. Legacy forms expose their radios later
+    # in Item Options.
+    if listing_type == "digital":
+        category_listing_type_control = await _select_digital_listing_type_dropdown_if_present(page)
+    else:
+        category_listing_type_control = await _select_physical_listing_type_dropdown_if_present(page)
 
     category_str = resolve_listing_category(product)
     if not category_str:
@@ -2842,26 +3783,42 @@ async def fill_category_tab(page, product):
         'input[role="combobox"][placeholder*="Type to search" i], '
         'input[aria-label*="category" i]'
     ).first
+    selection_kwargs = {"cat_input": cat_input}
+    if normalize_category_text(category_str) != normalize_category_text(search_term):
+        selection_kwargs["target_category"] = category_str
     selected_option_text = await _select_category_with_exact_readback(
         page,
         search_term,
-        cat_input=cat_input,
+        **selection_kwargs,
     )
 
     has_customer_files = bool(product.get("pdf_paths"))
     if (
-        not has_customer_files
+        listing_type == "digital"
+        and not has_customer_files
         and not product.get("_digital_listing_type_verified")
         and _category_option_is_digital_only_metadata(selected_option_text)
     ):
         product["_digital_listing_type_verified"] = "category_digital_metadata"
 
+    if (
+        listing_type == "physical"
+        and not category_listing_type_control
+        and not has_customer_files
+        and not product.get("_digital_listing_type_verified")
+        and _category_option_is_physical_only_metadata(selected_option_text)
+        and await _current_committed_category_is_physical(page)
+    ):
+        product["_digital_listing_type_verified"] = "category_physical_metadata"
+        print("  💻 Listing type: Physical — đã xác nhận từ danh mục Etsy ✓")
+
     if category_listing_type_control:
-        if not await _select_digital_listing_type_dropdown_if_present(page):
-            raise DigitalListingTypeError(
-                "Dropdown loại listing biến mất sau khi chọn category; không thể xác minh Digital"
-            )
-        product["_digital_listing_type_verified"] = "dropdown"
+        expected_listing_type = await (
+            select_and_verify_physical_listing_type(page)
+            if listing_type == "physical"
+            else select_and_verify_digital_listing_type(page)
+        )
+        product["_digital_listing_type_verified"] = expected_listing_type
 
     print(f"  📂 Category: {search_term} ✓")
 
@@ -2871,7 +3828,7 @@ async def fill_category_tab(page, product):
     # upload while the positively verified Category surface is still present.
     # The marker is written only after upload_digital_files completes its
     # positive UI read-back contract.
-    if has_customer_files and not product.get("_digital_files_uploaded"):
+    if has_customer_files and listing_type == "digital" and not product.get("_digital_files_uploaded"):
         initial_surface = await _find_visible_digital_files_container(page)
         surface = await _establish_stable_digital_upload_surface(
             page,
@@ -2887,6 +3844,9 @@ async def fill_category_tab(page, product):
                 page,
                 search_term,
                 cat_input=cat_input,
+                **({"target_category": category_str}
+                   if normalize_category_text(category_str) != normalize_category_text(search_term)
+                   else {}),
             )
             surface = await _establish_stable_digital_upload_surface(page)
             if surface is not None:
@@ -2897,6 +3857,9 @@ async def fill_category_tab(page, product):
                 page,
                 search_term,
                 cat_input=cat_input,
+                **({"target_category": category_str}
+                   if normalize_category_text(category_str) != normalize_category_text(search_term)
+                   else {}),
             )
             surface = await _establish_stable_digital_upload_surface(page)
             if surface is not None:
@@ -2931,8 +3894,14 @@ async def fill_item_details_tab(page, product):
     # Etsy lazy-mounts the Physical/Digital control in Item Details. Prove the
     # listing type while this tab is active, before Item Options can unmount it.
     if not product.get("_digital_listing_type_verified"):
-        product["_digital_listing_type_verified"] = await select_and_verify_digital_listing_type(page)
-        print("  💻 Listing type: Digital ✓")
+        listing_type = product.get("_resolved_listing_type") or resolve_listing_type(product)
+        product["_resolved_listing_type"] = listing_type
+        product["_digital_listing_type_verified"] = await (
+            select_and_verify_physical_listing_type(page)
+            if listing_type == "physical"
+            else select_and_verify_digital_listing_type(page)
+        )
+        print(f"  💻 Listing type: {listing_type.capitalize()} ✓")
 
     # Title
     if await smart_fill(page, '#listing-title-input, textarea[name="title"]', product["title"]):
@@ -2992,8 +3961,11 @@ async def fill_item_details_tab(page, product):
     if section_name:
         try:
             await dismiss_alerts(page)
-            # Tìm dropdown Shop Section
+            # Inspect native options first. A visible native select owns the
+            # section flow; do not fall through to unrelated custom buttons
+            # when its requested label is absent or ambiguous.
             section_found = False
+            native_select_found = False
             for sel in [
                 'select[name*="section" i]',
                 'select[id*="section" i]',
@@ -3001,13 +3973,42 @@ async def fill_item_details_tab(page, product):
             ]:
                 sel_el = page.locator(sel).first
                 if await sel_el.count() > 0 and await sel_el.is_visible():
-                    await sel_el.select_option(label=section_name)
-                    await page.wait_for_timeout(800)
-                    print(f"  📁 Section: {section_name} ✓")
-                    section_found = True
+                    native_select_found = True
+                    options = sel_el.locator("option")
+                    option_count = await options.count()
+                    available_choices = []
+                    exact_option_indexes = []
+                    requested_norm = _normalize_ui_text(section_name).casefold()
+                    for index in range(option_count):
+                        option = options.nth(index)
+                        try:
+                            label = await option.get_attribute("label")
+                        except Exception:
+                            label = None
+                        if not label:
+                            try:
+                                label = await option.inner_text()
+                            except Exception:
+                                label = ""
+                        normalized_label = _normalize_ui_text(label)
+                        if normalized_label:
+                            available_choices.append(normalized_label)
+                            if normalized_label.casefold() == requested_norm:
+                                exact_option_indexes.append(index)
+                    if len(exact_option_indexes) == 1:
+                        await sel_el.select_option(index=exact_option_indexes[0], timeout=3000)
+                        await page.wait_for_timeout(800)
+                        print(f"  📁 Section: {section_name} ✓")
+                        section_found = True
+                    else:
+                        choices = ", ".join(available_choices[:8]) or "<trống>"
+                        print(
+                            f"  ⚠ Section: native select không có đúng 1 lựa chọn "
+                            f"'{section_name}' (available: {choices})"
+                        )
                     break
 
-            if not section_found:
+            if not section_found and not native_select_found:
                 # Thử click vào combobox rồi chọn option
                 for btn_sel in [
                     'button[id*="section" i]',
@@ -3026,7 +4027,7 @@ async def fill_item_details_tab(page, product):
                             section_found = True
                             break
 
-            if not section_found:
+            if not section_found and not native_select_found:
                 print(f"  ⚠ Section: không tìm thấy dropdown — bỏ qua")
         except Exception as e:
             print(f"  ⚠ section: {e}")
@@ -3044,8 +4045,16 @@ async def fill_item_options_tab(page, product):
     await page.wait_for_timeout(1000)
 
     if not product.get("_digital_listing_type_verified"):
-        product["_digital_listing_type_verified"] = await select_and_verify_digital_listing_type(page)
-    print("  💻 Listing type: Digital ✓")
+        listing_type = product.get("_resolved_listing_type") or resolve_listing_type(product)
+        product["_resolved_listing_type"] = listing_type
+        product["_digital_listing_type_verified"] = await (
+            select_and_verify_physical_listing_type(page)
+            if listing_type == "physical"
+            else select_and_verify_digital_listing_type(page)
+        )
+    resolved_listing_type = product.get("_resolved_listing_type") or resolve_listing_type(product)
+    product["_resolved_listing_type"] = resolved_listing_type
+    print(f"  💻 Listing type: {resolved_listing_type.capitalize()} ✓")
 
     # Who made = I did
     try:
@@ -3082,55 +4091,56 @@ async def fill_item_options_tab(page, product):
         print(f"  ⚠ whenMade: {e}")
 
     # How is this digital content created? → "Created by me"
-    await page.wait_for_timeout(800)
-    try:
-        # Tìm radio button "Created by me"
-        created_by_me = False
-        for sel in [
-            'input[type="radio"][value*="created_by_me" i]',
-            'input[type="radio"][value*="human" i]',
-            'input[type="radio"][value*="manually" i]',
-        ]:
-            rb = page.locator(sel).first
-            if await rb.count() > 0:
-                handle = await rb.element_handle()
-                if handle:
-                    await page.evaluate("el => el.click()", handle)
-                    await page.wait_for_timeout(600)
-                    print("  ✍️  Digital content: Created by me ✓")
-                created_by_me = True
-                break
-
-        if not created_by_me:
-            # Tìm theo label text
-            for label_text in ["Created by me", "I created this"]:
-                label = page.locator(f'label:has-text("{label_text}")').first
-                if await label.count() > 0 and await label.is_visible():
-                    await label.click()
-                    await page.wait_for_timeout(600)
-                    print(f"  ✍️  Digital content: {label_text} ✓")
-                    created_by_me = True
-                    break
-
-        if not created_by_me:
-            # Thử radio đầu tiên trong nhóm liên quan
-            radios = page.locator('input[type="radio"]')
-            cnt = await radios.count()
-            for i in range(cnt):
-                r = radios.nth(i)
-                # Tìm radio gần text "Created by me"
-                parent = r.locator('xpath=../..')
-                txt = await parent.inner_text()
-                if "created" in txt.lower() or "Created" in txt:
-                    handle = await r.element_handle()
+    if resolved_listing_type == "digital":
+        await page.wait_for_timeout(800)
+        try:
+            # Tìm radio button "Created by me"
+            created_by_me = False
+            for sel in [
+                'input[type="radio"][value*="created_by_me" i]',
+                'input[type="radio"][value*="human" i]',
+                'input[type="radio"][value*="manually" i]',
+            ]:
+                rb = page.locator(sel).first
+                if await rb.count() > 0:
+                    handle = await rb.element_handle()
                     if handle:
                         await page.evaluate("el => el.click()", handle)
                         await page.wait_for_timeout(600)
                         print("  ✍️  Digital content: Created by me ✓")
                     created_by_me = True
                     break
-    except Exception as e:
-        print(f"  ⚠ digital content created: {e}")
+
+            if not created_by_me:
+                # Tìm theo label text
+                for label_text in ["Created by me", "I created this"]:
+                    label = page.locator(f'label:has-text("{label_text}")').first
+                    if await label.count() > 0 and await label.is_visible():
+                        await label.click()
+                        await page.wait_for_timeout(600)
+                        print(f"  ✍️  Digital content: {label_text} ✓")
+                        created_by_me = True
+                        break
+
+            if not created_by_me:
+                # Thử radio đầu tiên trong nhóm liên quan
+                radios = page.locator('input[type="radio"]')
+                cnt = await radios.count()
+                for i in range(cnt):
+                    r = radios.nth(i)
+                    # Tìm radio gần text "Created by me"
+                    parent = r.locator('xpath=../..')
+                    txt = await parent.inner_text()
+                    if "created" in txt.lower() or "Created" in txt:
+                        handle = await r.element_handle()
+                        if handle:
+                            await page.evaluate("el => el.click()", handle)
+                            await page.wait_for_timeout(600)
+                            print("  ✍️  Digital content: Created by me ✓")
+                        created_by_me = True
+                        break
+        except Exception as e:
+            print(f"  ⚠ digital content created: {e}")
 
     # Category normally uploads while Etsy's Digital files region is mounted.
     # Keep an exact-tab, fail-closed fallback for UI variants where Category
@@ -3233,13 +4243,24 @@ def _customer_file_alias_groups(source_paths, staged_paths=None):
 
 
 def _add_customer_receipt_aliases(alias_groups, receipts):
-    """Attach a complete, positional receipt set or fail closed."""
+    """Attach a complete receipt set or fail closed.
+
+    A single customer file has no mapping ambiguity, so its server filename is
+    retained positionally for backwards compatibility.  For multiple files,
+    callers must either provide names that identify exactly one known source or
+    receipts captured by a singleton upload may carry a private source index;
+    that index is the only safe way to retain an unrelated server rename across
+    a multi-file upload.  A batch of unrelated renamed receipts without that
+    evidence is ambiguous and must not be used to construct draft readback
+    aliases.
+    """
     groups = [dict(group) for group in (alias_groups or [])]
     for group in groups:
         group["aliases"] = _canonicalize_customer_filename_representations(
             group.get("aliases") or []
         )
     normalized_receipts = []
+    receipt_source_indices = []
     receipt_ids = set()
     for receipt in receipts or []:
         if not isinstance(receipt, dict):
@@ -3263,19 +4284,69 @@ def _add_customer_receipt_aliases(alias_groups, receipts):
                 "Customer-file response có fileId hợp lệ nhưng thiếu filename"
             )
         normalized_receipts.append(receipt_name)
+        raw_source_index = receipt.get("_source_index")
+        if raw_source_index is None:
+            receipt_source_indices.append(None)
+        else:
+            try:
+                receipt_source_indices.append(int(raw_source_index))
+            except (TypeError, ValueError):
+                raise DigitalListingTypeError(
+                    "Customer-file response có source index không hợp lệ"
+                )
     if not normalized_receipts:
         if groups:
             raise DigitalListingTypeError(
-                "Customer-file response không có receipt hợp lệ cho logical source files"
+                "Customer-file response không có receipt hợp lệ cho logical source files "
+                f"(expected={len(groups)}, actual=0)"
             )
         return groups
     if len(normalized_receipts) != len(groups):
         raise DigitalListingTypeError(
-            "Customer-file receipt cardinality không khớp logical source files"
+            "Customer-file receipt cardinality không khớp logical source files "
+            f"(expected={len(groups)}, actual={len(normalized_receipts)})"
         )
-    # The response preserves upload order and has one receipt per staged
-    # source, so non-equivalent names still map deterministically by position.
-    for index, receipt_name in enumerate(normalized_receipts):
+
+    if len(groups) > 1 and all(index is not None for index in receipt_source_indices):
+        if sorted(receipt_source_indices) != list(range(len(groups))):
+            raise DigitalListingTypeError(
+                "Customer-file response có source index trùng hoặc thiếu; "
+                f"expected={list(range(len(groups)))}, actual={receipt_source_indices}"
+            )
+        assignments = list(zip(receipt_source_indices, normalized_receipts))
+    elif len(groups) > 1 and any(index is not None for index in receipt_source_indices):
+        raise DigitalListingTypeError(
+            "Customer-file response có source index không đầy đủ; "
+            "không thể map multi-file an toàn"
+        )
+    elif len(groups) > 1:
+        # When a caller has a complete response batch, only known names can
+        # identify their source.  Never infer a multi-file mapping from the
+        # response arrival order: Etsy may return those responses out of order.
+        assignments = []
+        used_groups = set()
+        for receipt_name in normalized_receipts:
+            candidates = [
+                index for index, group in enumerate(groups)
+                if index not in used_groups
+                and any(
+                    _upload_readback_matches(receipt_name, alias)
+                    for alias in (group.get("aliases") or [])
+                )
+            ]
+            if len(candidates) != 1:
+                raise DigitalListingTypeError(
+                    "Customer-file response có mapping multi-file không xác định; "
+                    "cần tên source/staged đã biết hoặc source index của invocation "
+                    f"(receipt={receipt_name!r}, candidates={len(candidates)})"
+                )
+            index = candidates[0]
+            used_groups.add(index)
+            assignments.append((index, receipt_name))
+    else:
+        assignments = list(enumerate(normalized_receipts))
+
+    for index, receipt_name in assignments:
         groups[index]["aliases"] = sorted(
             set(groups[index].get("aliases") or []) | {receipt_name}
         )
@@ -3347,6 +4418,10 @@ def _stage_etsy_customer_files(source_paths):
             raise DigitalListingTypeError(
                 f"Customer file '{source_name}' phải là regular file, không phải symlink"
             )
+        if any(part.casefold() == "source_assets" for part in source.parts):
+            raise DigitalListingTypeError(
+                f"Source asset '{source_name}' không được đưa vào bộ file giao khách"
+            )
         if source_key in seen_sources:
             raise DigitalListingTypeError(
                 f"Customer file '{source_name}' bị lặp; không thể upload an toàn"
@@ -3356,6 +4431,13 @@ def _stage_etsy_customer_files(source_paths):
             raise DigitalListingTypeError(
                 f"Customer file '{source_name}' có phần mở rộng không được hỗ trợ"
             )
+        if source.stat().st_size > 20 * 1024 * 1024:
+            raise DigitalListingTypeError(
+                f"Customer file '{source_name}' vượt giới hạn 20MB"
+            )
+
+    if len(paths) > 5:
+        raise DigitalListingTypeError("Tối đa 5 customer files cho một digital listing")
 
     stage_root = Path(tempfile.mkdtemp(prefix="etsy-customer-files-"))
     reserved_names = set()
@@ -3697,9 +4779,21 @@ async def _capture_customer_file_upload_response(page, operation) -> list[dict[s
         })
     if not receipts:
         raise DigitalListingTypeError(
-            "Customer-file upload response không có fileId hợp lệ"
+            "Customer-file upload response không có fileId hợp lệ "
+            "(expected>=1, actual=0)"
         )
     return receipts
+
+
+async def _capture_customer_file_upload_receipt(page, operation) -> dict[str, object]:
+    """Capture exactly one receipt for one submitted customer file."""
+    receipts = await _capture_customer_file_upload_response(page, operation)
+    if len(receipts) != 1:
+        raise DigitalListingTypeError(
+            "Customer-file upload response cardinality không hợp lệ cho một file "
+            f"(expected=1, actual={len(receipts)})"
+        )
+    return receipts[0]
 
 
 def _digital_file_state_matches_paths(state: dict[str, object], expected_paths) -> bool:
@@ -3938,6 +5032,12 @@ async def _discover_new_draft_id(page, product: dict) -> str | None:
         matched_id = _pick_draft_card_id(new_cards, product)
         if matched_id:
             return matched_id
+        candidate_summary = ", ".join(_draft_card_diagnostic(card) for card in new_cards)
+        print(
+            f"  ℹ️ Draft discovery lần {attempt + 1}/2: "
+            f"{len(new_cards)} candidate(s) ngoài baseline"
+            f"{f' [{candidate_summary}]' if candidate_summary else ''}."
+        )
         if attempt == 0:
             await page.wait_for_timeout(3000)
     return None
@@ -4067,18 +5167,24 @@ async def upload_digital_files(page, product, *, verified_surface=None):
                         "Bề mặt Digital files đã xác minh đã biến mất"
                     )
 
-            # Step 2: Scroll the exact Add file affordance when one exists.
-            if verified_surface is None:
-                add_btn = await _find_exact_add_file_affordance(
-                    page,
-                    container=surface["locator"],
-                )
-            else:
+            async def refresh_surface(file_index: int):
+                """Re-resolve after each React upload remount when we own the surface."""
+                nonlocal surface
+                if file_index and verified_surface is None:
+                    surface = await _resolve_digital_upload_surface(page)
+                return surface
+
+            async def discover_add_button(current_surface):
+                if verified_surface is None:
+                    return await _find_exact_add_file_affordance(
+                        page,
+                        container=current_surface["locator"],
+                    )
                 try:
-                    add_btn = await asyncio.wait_for(
+                    return await asyncio.wait_for(
                         _find_exact_add_file_affordance(
                             page,
-                            container=surface["locator"],
+                            container=current_surface["locator"],
                             visibility_timeout_ms=DIGITAL_ADD_FILE_VISIBILITY_TIMEOUT_MS,
                         ),
                         timeout=DIGITAL_ADD_FILE_VISIBILITY_TIMEOUT_MS / 1000,
@@ -4088,8 +5194,11 @@ async def upload_digital_files(page, product, *, verified_surface=None):
                         "  ⚠ Add file discovery vượt quá "
                         f"{DIGITAL_ADD_FILE_VISIBILITY_TIMEOUT_MS}ms — tiếp tục input scoped"
                     )
-                    add_btn = None
-            if add_btn is not None:
+                    return None
+
+            async def prepare_add_button(add_btn):
+                if add_btn is None:
+                    return False
                 try:
                     if verified_surface is None:
                         # Preserve the legacy caller behavior, including its
@@ -4109,20 +5218,22 @@ async def upload_digital_files(page, product, *, verified_surface=None):
                 else:
                     if verified_surface is None:
                         await page.wait_for_timeout(500)
-
-            # Step 3: Use the file chooser, then require positive UI read-back.
-            btn_disabled = False
-            if add_btn is not None:
                 if verified_surface is None:
-                    # Preserve legacy caller behavior and its default timeout.
-                    btn_disabled = await add_btn.is_disabled()
+                    return not await add_btn.is_disabled()
+                return True
 
-            if add_btn is not None and (verified_surface is not None or not btn_disabled):
-                chooser_set_files = False
-                try:
+            # Step 3: Submit one staged path per fresh chooser. Etsy can emit
+            # one customer-file POST per selected path; a single batch listener
+            # therefore cannot safely associate receipts with logical sources.
+            chooser_submission_started = False
+            try:
+                for file_index, staged_path in enumerate(staged_paths):
+                    current_surface = await refresh_surface(file_index)
+                    add_btn = await discover_add_button(current_surface)
+                    if add_btn is None or not await prepare_add_button(add_btn):
+                        raise RuntimeError("Add file affordance unavailable or disabled")
                     async with page.expect_file_chooser(timeout=10000) as fc_info:
                         if verified_surface is None:
-                            # Preserve legacy caller behavior and its default timeout.
                             await add_btn.click()
                         else:
                             await asyncio.wait_for(
@@ -4130,77 +5241,108 @@ async def upload_digital_files(page, product, *, verified_surface=None):
                                 timeout=DIGITAL_ADD_FILE_CLICK_TIMEOUT_MS / 1000,
                             )
                     file_chooser = await fc_info.value
-                    upload_receipts = await _capture_customer_file_upload_response(
+                    # From this point on the browser may already have submitted
+                    # the file. Never retry it through another input/surface.
+                    chooser_submission_started = True
+                    receipt = await _capture_customer_file_upload_receipt(
                         page,
-                        lambda: file_chooser.set_files(staged_paths),
+                        lambda: file_chooser.set_files([staged_path]),
                     )
-                    chooser_set_files = True
-                    print(f"  ⏳ Đợi xác minh {len(staged_paths)} customer file(s) trên Etsy...")
+                    receipt = dict(receipt)
+                    receipt["_source_index"] = file_index
+                    upload_receipts.append(receipt)
+                    expected_prefix = staged_paths[: file_index + 1]
+                    print(
+                        f"  ⏳ Đợi xác minh {len(expected_prefix)} "
+                        "customer file(s) trên Etsy..."
+                    )
                     await _wait_for_uploaded_digital_files(
                         page,
-                        staged_paths,
-                        surface=surface,
+                        expected_prefix,
+                        surface=current_surface,
                     )
-                    product["_digital_file_upload_receipts"] = upload_receipts
-                    product["_digital_file_alias_groups"] = _add_customer_receipt_aliases(
-                        alias_groups,
-                        upload_receipts,
-                    )
-                    print(f"  📎 {len(staged_paths)} file(s) ✓ (đã xác minh trên UI)")
-                    return
-                except DigitalListingTypeError:
-                    raise
-                except Exception as fc_err:
-                    if chooser_set_files:
-                        raise DigitalListingTypeError(
-                            "Đã gửi customer files nhưng không xác minh được upload "
-                            f"({type(fc_err).__name__})"
-                        ) from fc_err
-                    print(
-                        "  ⚠ File chooser failed "
-                        f"({type(fc_err).__name__}) — trying direct input..."
-                    )
-            elif add_btn is not None:
-                print("  ℹ️  'Add file' button disabled — using direct input fallback")
+            except DigitalListingTypeError:
+                raise
+            except Exception as fc_err:
+                if chooser_submission_started:
+                    raise DigitalListingTypeError(
+                        "Đã gửi một phần customer files nhưng không xác minh được upload; "
+                        f"đã nhận {len(upload_receipts)}/{len(staged_paths)} receipt(s) "
+                        f"({type(fc_err).__name__})"
+                    ) from fc_err
+                print(
+                    "  ⚠ File chooser failed "
+                    f"({type(fc_err).__name__}) — trying direct input..."
+                )
             else:
-                print("  ℹ️  No exact 'Add file' affordance — using scoped input fallback")
+                product["_digital_file_upload_receipts"] = upload_receipts
+                product["_digital_file_alias_groups"] = _add_customer_receipt_aliases(
+                    alias_groups,
+                    upload_receipts,
+                )
+                print(f"  📎 {len(staged_paths)} file(s) ✓ (đã xác minh trên UI)")
+                return
 
-            # Step 4: Fallback — a direct input is successful only after the same
-            # complete filename read-back contract passes.
+            # Step 4: Fallback — rediscover a scoped input for each singleton
+            # submission. A failed submission is terminal; retrying a different
+            # input could duplicate a file that Etsy accepted without a receipt.
             direct_errors = []
-            for idx, inp in await _find_scoped_customer_file_inputs(
-                page,
-                container=surface["locator"],
-            ):
+            direct_submission_started = False
+            for file_index, staged_path in enumerate(staged_paths):
+                current_surface = await refresh_surface(file_index)
+                scoped_inputs = await _find_scoped_customer_file_inputs(
+                    page,
+                    container=current_surface["locator"],
+                )
+                if not scoped_inputs:
+                    direct_errors.append(f"file #{file_index + 1}: không tìm thấy file input")
+                    break
+                input_index, inp = scoped_inputs[0]
                 try:
-                    upload_receipts = await _capture_customer_file_upload_response(
+                    direct_submission_started = True
+                    receipt = await _capture_customer_file_upload_receipt(
                         page,
-                        lambda: inp.set_input_files(staged_paths, timeout=15000),
+                        lambda: inp.set_input_files([staged_path], timeout=15000),
                     )
+                    receipt = dict(receipt)
+                    receipt["_source_index"] = file_index
+                    upload_receipts.append(receipt)
                     await _wait_for_uploaded_digital_files(
                         page,
-                        staged_paths,
-                        surface=surface,
+                        staged_paths[: file_index + 1],
+                        surface=current_surface,
                     )
-                    product["_digital_file_upload_receipts"] = upload_receipts
-                    product["_digital_file_alias_groups"] = _add_customer_receipt_aliases(
-                        alias_groups,
-                        upload_receipts,
-                    )
-                    print(
-                        f"  📎 {len(staged_paths)} file(s) ✓ "
-                        f"(đã xác minh trên UI, input #{idx})"
-                    )
-                    return
                 except DigitalListingTypeError:
                     raise
                 except Exception as direct_err:
-                    direct_errors.append(f"input #{idx}: {type(direct_err).__name__}")
-                    continue
+                    if direct_submission_started:
+                        raise DigitalListingTypeError(
+                            "Đã gửi một phần customer files bằng direct input nhưng "
+                            "không xác minh được upload; "
+                            f"đã nhận {len(upload_receipts)}/{len(staged_paths)} receipt(s) "
+                            f"(input #{input_index}, {type(direct_err).__name__})"
+                        ) from direct_err
+                    direct_errors.append(
+                        f"input #{input_index}: {type(direct_err).__name__}"
+                    )
+                    break
+
+            if len(upload_receipts) == len(staged_paths):
+                product["_digital_file_upload_receipts"] = upload_receipts
+                product["_digital_file_alias_groups"] = _add_customer_receipt_aliases(
+                    alias_groups,
+                    upload_receipts,
+                )
+                print(
+                    f"  📎 {len(staged_paths)} file(s) ✓ "
+                    "(đã xác minh trên UI, direct input)"
+                )
+                return
 
             detail = "; ".join(direct_errors) if direct_errors else "không tìm thấy file input"
             raise DigitalListingTypeError(
-                f"Không upload được customer files bằng file chooser hoặc direct input ({detail})"
+                "Không upload được customer files bằng file chooser hoặc direct input "
+                f"(đã nhận {len(upload_receipts)}/{len(staged_paths)} receipt(s); {detail})"
             )
     except DigitalListingTypeError:
         raise
@@ -4214,7 +5356,11 @@ async def upload_digital_files(page, product, *, verified_surface=None):
 
 # ── Translations ───────────────────────────────────────────────────────────────
 async def fill_translations(page, product):
-    print("  🌐 Đang dịch và điền Translations...")
+    translation_service = get_translation_service()
+    print(
+        "  🌐 Đang dịch và điền Translations... "
+        f"[providers: {' -> '.join(translation_service.provider_names())}]"
+    )
     try:
         h = page.locator('text="Translations"').first
         if await h.count() > 0:
@@ -4246,6 +5392,7 @@ async def fill_translations(page, product):
             # Dịch title và description
             trans_title = trim_title(translate_text(product["title"], lang_code))
             trans_desc  = translate_text(product["description"], lang_code)
+            trans_tags = translation_service.translate_tags(en_tags, lang_code) if en_tags else []
 
             # Điền title
             for sel in [f'textarea[name="translations.{idx}.title"]',
@@ -4308,8 +5455,7 @@ async def fill_translations(page, product):
                         pass
 
                     tags_filled = 0
-                    for tag in en_tags:
-                        trans_tag = translate_tag(tag, lang_code)
+                    for trans_tag in trans_tags:
                         if not trans_tag:
                             continue
                         norm_tag = trans_tag.strip().lower()
@@ -4472,20 +5618,52 @@ async def get_newly_created_listing_url(page, product: dict):
     return UNVERIFIED_DRAFT_URL_SENTINEL
 
 
-async def fill_listing(page, product, edit_url=None):
+async def fill_listing(page, product, edit_url=None, pipeline_store: JobStore | None = None):
     print(f"\n{'─'*55}")
-    print(f"  📦 {product['folder']} | {len(product['image_paths'])} ảnh | {len(product['pdf_paths'])} PDF")
+    print(f"  📦 {product['folder']} | {len(product['image_paths'])} ảnh | {len(product['pdf_paths'])} file giao khách")
     print(f"     {product['title'][:60]}...")
 
     # Early local validations to save time and provide clear feedback
     early_errors = []
+    category_error = _listing_category_preflight_error(product)
+    if category_error:
+        early_errors.append(category_error)
+
     if product.get("price", 0) < 0.20:
         early_errors.append(f"Giá bán ${product.get('price', 0):.2f} không hợp lệ (tối thiểu $0.20)")
     
-    for path in product.get("pdf_paths", []):
-        size_mb = Path(path).stat().st_size / (1024 * 1024)
+    deliverables = product.get("customer_files", product.get("pdf_paths", []))
+    try:
+        checked_deliverables = validate_customer_files(deliverables)
+    except (PipelineContractError, TypeError) as exc:
+        # Legacy physical rows may not have files; only a pipeline/digital
+        # record must pass the stricter customer-file allowlist here.
+        if product.get("pipeline_job_id") or str(product.get("listing_type") or "").strip().lower() == "digital":
+            early_errors.append(f"Customer files không hợp lệ: {exc}")
+        checked_deliverables = tuple(Path(str(path)) for path in (deliverables or []))
+
+    for path in checked_deliverables:
+        try:
+            size_mb = Path(path).stat().st_size / (1024 * 1024)
+        except OSError:
+            early_errors.append(f"Không đọc được file giao khách '{Path(path).name}'")
+            continue
         if size_mb > 20:
-            early_errors.append(f"File PDF '{Path(path).name}' ({size_mb:.2f} MB) vượt quá giới hạn 20MB")
+            early_errors.append(f"File giao khách '{Path(path).name}' ({size_mb:.2f} MB) vượt quá giới hạn 20MB")
+
+    is_pipeline_product = bool(product.get("pipeline_job_id") or product.get("pipeline_contract_version"))
+    if is_pipeline_product:
+        if len(checked_deliverables) == 0:
+            early_errors.append("Pipeline product chưa có file giao khách")
+        if len(checked_deliverables) > 5:
+            early_errors.append("Pipeline product vượt tối đa 5 file giao khách")
+        if len(product.get("image_paths") or []) != 10:
+            early_errors.append("Pipeline product phải có đúng 10 ảnh riêng đã kiểm tra")
+        for path in checked_deliverables:
+            try:
+                validate_final_artifact(path)
+            except PipelineContractError as exc:
+                early_errors.append(f"Artifact cuối '{Path(path).name}' không đạt QA: {exc}")
             
     if early_errors:
         err_msg = " | ".join(early_errors)
@@ -4498,25 +5676,39 @@ async def fill_listing(page, product, edit_url=None):
     product.pop("_digital_files_uploaded", None)
     product.pop("_digital_file_upload_receipts", None)
     product.pop("_digital_file_alias_groups", None)
+    product.pop("_resolved_listing_type", None)
 
-    if edit_url:
-        print(f"  📝 Đang sửa listing tại {edit_url}...")
-        await page.goto(edit_url, wait_until="domcontentloaded")
-    else:
-        # ── Kiểm tra trùng draft trên Etsy trước khi tạo mới ──────────────────
+    listing_type = resolve_listing_type(product)
+    product["_resolved_listing_type"] = listing_type
+
+    if not edit_url:
+        # ── Kiểm tra trùng draft trước khi mở editor tạo mới ────────────────
+        # check_duplicate_draft() ép page về Drafts để đọc đúng filter. Chạy
+        # sau khi goto(create) sẽ đẩy page rời editor, khiến URL gate bên dưới
+        # báo lỗi dù duplicate check đã thành công.
         is_dup = await check_duplicate_draft(page, product)
         if is_dup == DRAFT_DUPLICATE_CHECK_FAILED_SENTINEL:
             return False, "Không thể xác minh trùng lặp draft trước khi tạo mới, dừng để tránh lỗi trùng"
         if is_dup:
             return "DUPLICATE"   # Caller sẽ mark Excel là đã đăng
 
-        await page.goto("https://www.etsy.com/your/shops/me/listing-editor/create",
+        await page.goto(LISTING_EDITOR_CREATE_URL,
                         wait_until="domcontentloaded")
+    else:
+        print(f"  📝 Đang sửa listing tại {edit_url}...")
+        await page.goto(edit_url, wait_until="domcontentloaded")
+
     await page.wait_for_timeout(5000)
 
     if "listing-editor" not in page.url:
-        print(f"  ❌ Không vào được editor. URL hiện tại: {page.url}")
-        return False, "Không vào được Etsy listing editor"
+        evidence = await _collect_editor_navigation_evidence(page)
+        if _is_shop_manager_dashboard_url(page.url):
+            reason = "Etsy redirect về Dashboard sau khi mở listing-editor/create."
+        else:
+            reason = "Không vào được Etsy listing editor."
+        print(f"  ❌ {reason} URL hiện tại: {page.url}")
+        print(f"  🔎 Evidence: {evidence}")
+        return False, f"{reason} URL hiện tại: {page.url}. Evidence: {evidence}"
 
     await page.wait_for_timeout(2500)
 
@@ -4525,10 +5717,11 @@ async def fill_listing(page, product, edit_url=None):
     print(f"  📋 Form: {form_type}")
 
     if form_type == "tabs":
-        await fill_photo_tab(page, product, explicit_edit=bool(edit_url))
+        # Verify the exact Etsy taxonomy before spending time on photo assets.
+        await fill_category_tab(page, product)
         await page.wait_for_timeout(1000)
 
-        await fill_category_tab(page, product)
+        await fill_photo_tab(page, product, explicit_edit=bool(edit_url))
         await page.wait_for_timeout(1000)
 
         await fill_item_details_tab(page, product)
@@ -4542,13 +5735,25 @@ async def fill_listing(page, product, edit_url=None):
 
     else:
         # ── Form trang dài cũ (fallback) ──────────────────────────────────
-        product["_digital_listing_type_verified"] = await select_and_verify_digital_listing_type(page)
-        print("  💻 Digital ✓")
-        if product["pdf_paths"]:
+        product["_digital_listing_type_verified"] = await (
+            select_and_verify_physical_listing_type(page)
+            if listing_type == "physical"
+            else select_and_verify_digital_listing_type(page)
+        )
+        print(f"  💻 {listing_type.title()} ✓")
+        if listing_type == "digital" and product["pdf_paths"]:
             raise DigitalListingTypeError(
                 "Form Etsy trang dài không có luồng upload customer files đã xác minh; "
                 "dừng trước khi Save"
             )
+        if listing_type == "physical":
+            # Legacy long-form has no digital file upload surface. Ensure we do
+            # not accept digital-only markers for a resolved physical listing.
+            if product["pdf_paths"]:
+                raise DigitalListingTypeError(
+                    "Form Etsy trang dài không hỗ trợ physical listings có customer files; "
+                    "dừng trước khi Save"
+                )
 
         ok = await smart_fill(page, '#listing-title-input, textarea[name="title"]', product["title"])
         print(f"  📝 Title {'✓' if ok else '⚠ không điền được'}")
@@ -4588,21 +5793,55 @@ async def fill_listing(page, product, edit_url=None):
                 exact=False,
             )
 
-    if not product.get("_digital_listing_type_verified"):
+    # The tabbed editor can unmount Etsy's listing-type control after Item
+    # Options/Pricing.  Re-probing the DOM here creates a false negative even
+    # though an earlier step proved the type and, for digital listings,
+    # customer-file readback also succeeded.  The marker is cleared at the
+    # start of every fill_listing() run, so requiring it here remains
+    # fail-closed without depending on a control that may no longer be live.
+    listing_type_evidence = product.get("_digital_listing_type_verified")
+    if not listing_type_evidence:
         raise DigitalListingTypeError(
-            "Chưa xác minh được listing ở trạng thái Digital; dừng trước khi Save"
+            f"Chưa xác minh được listing ở trạng thái {listing_type.title()}; "
+            "dừng trước khi Save"
         )
+    print(
+        f"  💻 Listing-type evidence before Save: "
+        f"{listing_type.title()} ({listing_type_evidence}) ✓"
+    )
 
     # Translations (chạy cuối, sau khi đã điền hết)
     if FILL_TRANSLATIONS:
         await page.wait_for_timeout(1000)
         await fill_translations(page, product)
 
-    # Save listing
+    # Save listing. Locate and wait for the actual Etsy button first; only
+    # then perform the fenced quota/lease admission immediately before the
+    # irreversible click. This keeps the browser wait outside the write gate.
     await page.wait_for_timeout(1500)
     try:
         btn = page.locator(_get_save_button_selector(explicit_edit=bool(edit_url))).first
         await btn.wait_for(state="visible", timeout=10000)
+        if product.get("pipeline_job_id"):
+            if pipeline_store is None:
+                raise JobStoreError(
+                    "Pipeline product requires the local JobStore before Etsy Save"
+                )
+            current_job = pipeline_store.get_pipeline_job(str(product["pipeline_job_id"]))
+            if current_job is None:
+                raise JobStoreError("Pipeline job không còn tồn tại trước khi Etsy Save")
+            # The product may have remained open in the browser for minutes
+            # after the initial claim. Re-read and hash the exact allowlisted
+            # gallery immediately before admission/click so a file replacement
+            # during that interval cannot create a wrong draft.
+            _verify_pipeline_image_selection(product, current_job)
+            pipeline_store.prepare_pipeline_write(
+                str(product["pipeline_job_id"]),
+                worker_id=str(product.get("pipeline_worker_id") or ""),
+                fence=int(product.get("pipeline_fence") or 0),
+                policy=PipelinePolicy(),
+            )
+        product["_etsy_save_clicked"] = True
         await btn.click()
         
         print("  ⏳ Đang đợi Etsy xử lý lưu bản nháp...")
@@ -4734,6 +5973,235 @@ async def fill_listing(page, product, edit_url=None):
             pass
         return False, f"Exception: {str(e)[:100]}"
 
+
+def _verify_pipeline_image_selection(product: Mapping[str, Any], job: Mapping[str, Any]) -> None:
+    """Prove the images about to enter Etsy are the accepted manifest set.
+
+    This runs before the worker claims the draft job or reserves quota.  The
+    manifest stores paths in upload order; comparing both relative paths and
+    current hashes prevents a resolver/cache result from silently substituting
+    or reordering a different gallery.  ``complete_verified`` repeats the
+    hash check after Etsy readback as a second fence around the side effect.
+    """
+
+    accepted_manifest = job.get("manifest_evidence")
+    accepted_records = accepted_manifest.get("image_file_evidence") if isinstance(accepted_manifest, Mapping) else None
+    accepted_names = accepted_manifest.get("image_files") if isinstance(accepted_manifest, Mapping) else None
+    if not isinstance(accepted_records, list) or len(accepted_records) != 10:
+        raise JobStoreError("Pipeline draft chưa có evidence của đúng 10 ảnh")
+    if not isinstance(accepted_names, list) or len(accepted_names) != 10:
+        raise JobStoreError("Pipeline draft chưa có allowlist đúng 10 ảnh")
+    expected_names: list[str] = []
+    expected_hashes: list[str] = []
+    for raw_name, raw_record in zip(accepted_names, accepted_records):
+        name = str(raw_name or "").strip().replace("\\", "/")
+        if not name or not isinstance(raw_record, Mapping) or str(raw_record.get("path") or "").strip().replace("\\", "/") != name:
+            raise JobStoreError("Pipeline draft image evidence/path không hợp lệ")
+        digest = str(raw_record.get("sha256") or "").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise JobStoreError("Pipeline draft image evidence hash không hợp lệ")
+        expected_names.append(name)
+        expected_hashes.append(digest)
+
+    manifest_names = product.get("pipeline_image_files")
+    if not isinstance(manifest_names, (list, tuple)) or [
+        str(item or "").strip().replace("\\", "/") for item in manifest_names
+    ] != expected_names:
+        raise JobStoreError("Pipeline image selection không khớp allowlist đã chấp nhận")
+    image_paths = product.get("image_paths")
+    if not isinstance(image_paths, (list, tuple)) or len(image_paths) != 10:
+        raise JobStoreError("Pipeline product phải có đúng 10 ảnh trước khi claim")
+    asset_root_raw = str(product.get("asset_root") or "").strip()
+    if not asset_root_raw:
+        raise JobStoreError("Pipeline product thiếu asset_root để đối soát ảnh")
+    asset_root = Path(asset_root_raw).expanduser().resolve()
+    actual_names: list[str] = []
+    actual_hashes: list[str] = []
+    for raw_path in image_paths:
+        path = Path(str(raw_path)).expanduser()
+        if path.is_symlink() or not path.is_file():
+            raise JobStoreError(f"Pipeline image không tồn tại/an toàn: {path}")
+        try:
+            relative = path.resolve().relative_to(asset_root).as_posix()
+        except ValueError as exc:
+            raise JobStoreError(f"Pipeline image nằm ngoài asset_root: {path}") from exc
+        actual_names.append(relative)
+        actual_hashes.append(_sha256_file(path).lower())
+    if actual_names != expected_names:
+        raise JobStoreError("Pipeline image paths không khớp allowlist đã chấp nhận")
+    if actual_hashes != expected_hashes:
+        raise JobStoreError("Pipeline image hashes không khớp allowlist đã chấp nhận")
+
+
+def _prepare_pipeline_post(product: dict, shop_id: str, store: JobStore) -> tuple[str, int] | None:
+    """Claim the exact draft-writing job and hold today's quota slot."""
+    job_id = str(product.get("pipeline_job_id") or "").strip()
+    if not job_id:
+        return None
+    job = store.get_pipeline_job(job_id)
+    if job is None:
+        raise JobStoreError(f"Pipeline job không tồn tại: {job_id}")
+    # The strict product manifest carries these same identities.  Compare
+    # them before claiming the Etsy write so a folder cannot be paired with a
+    # different job/campaign/shop/product simply because it knows a valid job
+    # UUID.  ``read_products`` only sets these fields after a manifest has
+    # passed ``read_pipeline_product_manifest``.
+    required_bindings = (
+        ("pipeline_campaign_id", "campaign_id"),
+        ("pipeline_candidate_id", "candidate_id"),
+        ("pipeline_shop_id", "shop_id"),
+        ("pipeline_product_id", "product_id"),
+        ("pipeline_contract_version", "contract_version"),
+    )
+    for product_key, job_key in required_bindings:
+        supplied = str(product.get(product_key) or "").strip()
+        expected = str(job.get(job_key) or "").strip()
+        if not supplied:
+            raise JobStoreError(f"Pipeline manifest thiếu {product_key}")
+        if supplied != expected:
+            raise JobStoreError(
+                f"Pipeline manifest {product_key} không khớp JobStore {job_key}"
+            )
+    if str(job.get("shop_id")) != str(shop_id):
+        raise JobStoreError("Pipeline job shop không khớp phiên Etsy đang chạy")
+    if str(job.get("stage")) != "create-verified-draft":
+        raise JobStoreError("Chỉ stage create-verified-draft mới được poster ghi Etsy")
+    accepted_manifest = job.get("manifest_evidence")
+    if (
+        not str(job.get("manifest_sha256") or "").strip()
+        or not isinstance(accepted_manifest, dict)
+        or not accepted_manifest.get("customer_file_evidence")
+        or not accepted_manifest.get("image_file_evidence")
+    ):
+        raise JobStoreError("Pipeline draft chưa có manifest evidence được Dashboard chấp nhận")
+    _verify_pipeline_image_selection(product, job)
+    worker_id = _pipeline_worker_identity(product)
+    claimed = store.claim_pipeline_job(job_id, worker_id=worker_id)
+    if claimed is None:
+        raise JobStoreError(f"Pipeline job {job_id} chưa sẵn sàng claim (UNKNOWN cần đối soát trước)")
+    fence = int(claimed.get("fence") or 0)
+    product["pipeline_campaign_id"] = str(claimed.get("campaign_id") or "")
+    product["pipeline_shop_id"] = str(claimed.get("shop_id") or shop_id)
+    product["pipeline_product_id"] = str(claimed.get("product_id") or "")
+    product["pipeline_worker_id"] = worker_id
+    product["pipeline_fence"] = fence
+    reservation = store.reserve_pipeline_quota(
+        job_id,
+        shop_id=shop_id,
+        worker_id=worker_id,
+        fence=fence,
+    )
+    if not reservation.get("reserved"):
+        # Do not leave a running lease behind when quota admission fails.
+        store.transition_pipeline_job(
+            job_id,
+            PIPELINE_STATUS_FAILED,
+            worker_id=worker_id,
+            fence=fence,
+            error_code="QUOTA_UNAVAILABLE",
+            error_message=str(reservation.get("reason") or "quota unavailable"),
+        )
+        raise JobStoreError(f"Không giữ được quota draft: {reservation.get('reason')}")
+    # Existing held reservations may have been created before midnight.  Do a
+    # non-side-effecting rollover check now, then repeat it immediately before
+    # the browser Save click in ``fill_listing``.
+    try:
+        store.prepare_pipeline_write(
+            job_id,
+            worker_id=worker_id,
+            fence=fence,
+            policy=PipelinePolicy(),
+        )
+    except JobStoreError:
+        store.transition_pipeline_job(
+            job_id,
+            PIPELINE_STATUS_FAILED,
+            worker_id=worker_id,
+            fence=fence,
+            error_code="QUOTA_UNAVAILABLE",
+            error_message="Current-day quota changed before Etsy write",
+        )
+        raise
+    return worker_id, fence
+
+
+def _record_pipeline_post_result(
+    product: dict,
+    shop_id: str,
+    result: object,
+    store: JobStore | None,
+) -> str:
+    """Persist browser evidence into JobStore and return a display outcome."""
+    if store is None or not product.get("pipeline_job_id"):
+        return "legacy"
+    job_id = str(product["pipeline_job_id"])
+    worker_id = str(product.get("pipeline_worker_id") or "")
+    fence = int(product.get("pipeline_fence") or 0)
+    if result == UNVERIFIED_DRAFT_URL_SENTINEL:
+        store.mark_pipeline_unknown(
+            job_id,
+            worker_id=worker_id,
+            fence=fence,
+            reason="Etsy save completed but listing readback was not verified",
+        )
+        return "unknown"
+    if isinstance(result, str) and result.startswith("http"):
+        try:
+            receipt = _pipeline_verified_receipt(product, result, worker_id=worker_id, fence=fence)
+            store.complete_verified(job_id, worker_id=worker_id, fence=fence, receipt=receipt)
+            return "verified"
+        except (PipelineContractError, JobStoreError, OSError) as exc:
+            # The browser may already have created a draft. Preserve the quota
+            # slot and force an operator reconciliation instead of retrying.
+            store.mark_pipeline_unknown(
+                job_id,
+                worker_id=worker_id,
+                fence=fence,
+                reason=f"Draft readback evidence incomplete: {exc}",
+            )
+            return "unknown"
+    if result is True:
+        # A bare True has no listing identity and is never a verified draft.
+        store.mark_pipeline_unknown(
+            job_id,
+            worker_id=worker_id,
+            fence=fence,
+            reason="Poster returned success without a listing readback URL",
+        )
+        return "unknown"
+    if isinstance(result, tuple) and result and result[0] is False:
+        store.transition_pipeline_job(
+            job_id,
+            PIPELINE_STATUS_FAILED,
+            worker_id=worker_id,
+            fence=fence,
+            error_code="POST_FAILED",
+            error_message=str(result[1] if len(result) > 1 else "poster failed"),
+        )
+        store.release_pipeline_quota(job_id)
+        return "failed"
+    if isinstance(result, str) and result == "DUPLICATE":
+        store.transition_pipeline_job(
+            job_id,
+            PIPELINE_STATUS_BLOCKED,
+            worker_id=worker_id,
+            fence=fence,
+            error_code="DUPLICATE_DRAFT",
+            error_message="Existing draft found; no new draft was created",
+        )
+        store.release_pipeline_quota(job_id)
+        return "blocked"
+    store.transition_pipeline_job(
+        job_id,
+        PIPELINE_STATUS_FAILED,
+        worker_id=worker_id,
+        fence=fence,
+        error_code="POST_FAILED",
+        error_message="Poster did not produce a recognized result",
+    )
+    store.release_pipeline_quota(job_id)
+    return "failed"
+
 def _is_etsy_signin_page(url: str, content: str) -> bool:
     url_lower = (url or "").lower()
     content_lower = (content or "").lower()
@@ -4745,9 +6213,10 @@ async def _navigate_to_shop_manager(page) -> None:
 
     A warmed-up authenticated Chrome/CDP session can occasionally exceed the
     default 30-second Playwright navigation timeout even though the page is
-    still usable. Retry that same navigation a bounded number of times, while
-    letting every non-timeout error propagate unchanged. Authentication and
-    shop identity are deliberately checked by the caller after this helper.
+    still usable. Retry that same navigation a bounded number of times for
+    timeouts and the specific transient network-change error. Other errors
+    propagate unchanged. Authentication and shop identity are deliberately
+    checked by the caller after this helper.
     """
     last_timeout: PlaywrightTimeoutError | None = None
     for attempt in range(SHOP_MANAGER_NAVIGATION_ATTEMPTS):
@@ -4762,6 +6231,12 @@ async def _navigate_to_shop_manager(page) -> None:
             last_timeout = exc
             if attempt + 1 >= SHOP_MANAGER_NAVIGATION_ATTEMPTS:
                 break
+            await page.wait_for_timeout(SHOP_MANAGER_NAVIGATION_RETRY_DELAY_MS)
+        except PlaywrightError as exc:
+            if not _is_network_changed_error(exc):
+                raise
+            if attempt + 1 >= SHOP_MANAGER_NAVIGATION_ATTEMPTS:
+                raise
             await page.wait_for_timeout(SHOP_MANAGER_NAVIGATION_RETRY_DELAY_MS)
 
     raise RuntimeError(
@@ -4802,8 +6277,29 @@ async def _assert_shop_manager_identity(page, shop_id: str) -> None:
     )
 
 
-def _exit_code_for_failed_products(failed_count: int) -> int:
-    return 1 if failed_count > 0 else 0
+def _exit_code_for_failed_products(failed_count: int, pending_reconciliation: int = 0) -> int:
+    # Unknown external outcomes are actionable failures for automation even
+    # though they are not proof that Etsy rejected the draft.
+    return 1 if failed_count > 0 or pending_reconciliation > 0 else 0
+
+
+def _format_status_error(exc: Exception) -> str:
+    """Keep persisted product errors readable without discarding diagnostics."""
+    message = str(exc).strip()
+    limit = 500
+    if len(message) <= limit:
+        return message
+
+    marker = "..."
+    retained = limit - len(marker)
+    head_length = (retained + 1) // 2
+    tail_length = retained - head_length
+    return f"{message[:head_length]}{marker}{message[-tail_length:]}"
+
+
+def _format_product_error_status(exc: Exception) -> str:
+    """Build the exact bounded failure status persisted for a product."""
+    return f"❌ Lỗi: {_format_status_error(exc)}"
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
@@ -4888,6 +6384,10 @@ async def main():
         langs = ", ".join(n for _, n, _ in LANGUAGES)
         print(f"\n  🌐 Dịch sang: {langs}")
 
+    pipeline_store: JobStore | None = None
+    if any(str(product.get("pipeline_job_id") or "").strip() for product in products):
+        pipeline_store = JobStore(PIPELINE_JOB_DB)
+
     BROWSER_DIR = resolve_browser_session_dir(
         args.shop,
         config=SHOPS,
@@ -4902,73 +6402,125 @@ async def main():
         ctx, page, owns_context = await _open_poster_context(
             pw, args.shop, BROWSER_DIR
         )
+        try:
+            # Kiểm tra đăng nhập
+            await _navigate_to_shop_manager(page)
+            await page.wait_for_timeout(4000)
+            if _is_etsy_signin_page(page.url, await page.content()):
+                raise RuntimeError(
+                    "❌ Cần đăng nhập Etsy trước khi post. "
+                    "Profile hiện tại đang ở trang đăng nhập, không thể tiếp tục đăng listing."
+                )
+            await _assert_shop_manager_identity(page, args.shop)
 
-        # Kiểm tra đăng nhập
-        await _navigate_to_shop_manager(page)
-        await page.wait_for_timeout(4000)
-        if _is_etsy_signin_page(page.url, await page.content()):
-            raise RuntimeError(
-                "❌ Cần đăng nhập Etsy trước khi post. "
-                "Profile hiện tại đang ở trang đăng nhập, không thể tiếp tục đăng listing."
-            )
-        await _assert_shop_manager_identity(page, args.shop)
+            print("  ✅ Đã vào Shop Manager!\n")
 
-        print("  ✅ Đã vào Shop Manager!\n")
-
-        success = failed = skipped = 0
-        for i, product in enumerate(products, 1):
-            print(f"\n[{i}/{len(products)}]", end="")
-            try:
-                ok = await fill_listing(page, product, edit_url=args.edit_url)
-                if ok == "DUPLICATE":
-                    skipped += 1
-                    save_status(wb, ws, product["row"], "✅ Đã đăng draft")
-                    print(f"  ↩️  Bỏ qua (đã có draft trên Etsy) — cập nhật Excel")
-                elif ok == UNVERIFIED_DRAFT_URL_SENTINEL:
-                    success += 1
-                    save_status(wb, ws, product["row"], "✅ Đã đăng draft (URL chưa xác minh)")
-                    mark_product_asset_operation_success(product)
-                elif isinstance(ok, str) and ok.startswith("http"):
-                    success += 1
-                    save_status(wb, ws, product["row"], "✅ Đã đăng draft", url=ok)
-                    mark_product_asset_operation_success(product)
-                elif ok is True:
-                    success += 1
-                    save_status(wb, ws, product["row"], "✅ Đã đăng draft")
-                    mark_product_asset_operation_success(product)
-                elif isinstance(ok, tuple) and ok[0] is False:
+            success = failed = skipped = pending_reconciliation = 0
+            for i, product in enumerate(products, 1):
+                print(f"\n[{i}/{len(products)}]", end="")
+                pipeline_outcome = "legacy"
+                try:
+                    if pipeline_store is not None and product.get("pipeline_job_id"):
+                        _prepare_pipeline_post(product, args.shop, pipeline_store)
+                    ok = await fill_listing(
+                        page,
+                        product,
+                        edit_url=args.edit_url,
+                        pipeline_store=pipeline_store,
+                    )
+                    pipeline_outcome = _record_pipeline_post_result(product, args.shop, ok, pipeline_store)
+                    if ok == "DUPLICATE":
+                        skipped += 1
+                        save_status(
+                            wb,
+                            ws,
+                            product["row"],
+                            "⚠️ Draft trùng cần xem xét" if pipeline_outcome == "blocked" else "✅ Đã đăng draft",
+                        )
+                        print(f"  ↩️  Bỏ qua (đã có draft trên Etsy) — cập nhật Excel")
+                    elif ok == UNVERIFIED_DRAFT_URL_SENTINEL:
+                        # A Save click without a read-back listing id is an
+                        # external side-effect with unknown outcome.  Keep the
+                        # quota slot and force reconciliation; never report it
+                        # as a verified success or run a second post blindly.
+                        pending_reconciliation += 1
+                        save_status(wb, ws, product["row"], "⚠️ Draft cần đối soát")
+                        print("  ⚠️ Đã lưu nhưng chưa xác minh draft — chuyển UNKNOWN/RECONCILING")
+                    elif (
+                        isinstance(ok, str)
+                        and ok.startswith("http")
+                        and pipeline_outcome in {"verified", "legacy"}
+                    ):
+                        success += 1
+                        save_status(wb, ws, product["row"], "✅ Đã đăng draft", url=ok)
+                        mark_product_asset_operation_success(product)
+                    elif isinstance(ok, str) and ok.startswith("http") and pipeline_outcome == "unknown":
+                        pending_reconciliation += 1
+                        save_status(wb, ws, product["row"], "⚠️ Draft cần đối soát", url=ok)
+                        print("  ⚠️ Có URL nhưng receipt chưa đủ — chuyển UNKNOWN/RECONCILING")
+                    elif ok is True and pipeline_outcome == "legacy":
+                        success += 1
+                        save_status(wb, ws, product["row"], "✅ Đã đăng draft")
+                        mark_product_asset_operation_success(product)
+                    elif ok is True and pipeline_outcome == "unknown":
+                        pending_reconciliation += 1
+                        save_status(wb, ws, product["row"], "⚠️ Draft cần đối soát")
+                    elif isinstance(ok, tuple) and ok[0] is False:
+                        failed += 1
+                        err_reason = ok[1]
+                        save_status(wb, ws, product["row"], f"❌ Lỗi: {err_reason}")
+                    else:
+                        failed += 1
+                        save_status(wb, ws, product["row"], "❌ Lỗi")
+                except Exception as e:
+                    print(f"  ❌ {e}")
                     failed += 1
-                    err_reason = ok[1]
-                    save_status(wb, ws, product["row"], f"❌ Lỗi: {err_reason}")
-                else:
-                    failed += 1
-                    save_status(wb, ws, product["row"], "❌ Lỗi")
-            except Exception as e:
-                print(f"  ❌ {e}")
-                failed += 1
-                save_status(wb, ws, product["row"], f"❌ Lỗi: {str(e)[:100]}")
+                    if pipeline_store is not None and product.get("pipeline_job_id"):
+                        job_id = str(product.get("pipeline_job_id"))
+                        worker_id = str(product.get("pipeline_worker_id") or "")
+                        fence = int(product.get("pipeline_fence") or 0)
+                        try:
+                            if product.get("_etsy_save_clicked"):
+                                pipeline_store.mark_pipeline_unknown(job_id, worker_id=worker_id, fence=fence, reason=str(e))
+                            else:
+                                pipeline_store.transition_pipeline_job(
+                                    job_id,
+                                    PIPELINE_STATUS_FAILED,
+                                    worker_id=worker_id,
+                                    fence=fence,
+                                    error_code="POST_EXCEPTION",
+                                    error_message=str(e),
+                                )
+                                pipeline_store.release_pipeline_quota(job_id)
+                        except Exception as pipeline_exc:
+                            print(f"  ⚠ Không ghi được lifecycle pipeline: {pipeline_exc}")
+                    save_status(wb, ws, product["row"], _format_product_error_status(e))
 
-            # Delay giữa các sản phẩm (tránh bị Etsy block)
-            if i < len(products):
-                wait_sec = 8
-                print(f"\n  ⏳ Nghỉ {wait_sec}s trước sản phẩm tiếp theo...")
-                await asyncio.sleep(wait_sec)
+                # Delay giữa các sản phẩm (tránh bị Etsy block)
+                if i < len(products):
+                    wait_sec = 8
+                    print(f"\n  ⏳ Nghỉ {wait_sec}s trước sản phẩm tiếp theo...")
+                    await asyncio.sleep(wait_sec)
 
-        print(f"\n{'='*55}")
-        print(f"  ✅ Thành công : {success}/{len(products)}")
-        print(f"  ↩️  Bỏ qua (trùng): {skipped}/{len(products)}")
-        print(f"  ❌ Thất bại  : {failed}/{len(products)}")
-        remaining = total - args.skip - len(products)
-        if remaining > 0:
-            next_skip = args.skip + len(products)
-            print(f"\n  📌 Còn {remaining} sản phẩm. Lần sau chạy:")
-            print(f"     python3 etsy_auto_post.py --batch {args.batch} --skip {next_skip}")
-        print(f"{'='*55}\n")
-        if owns_context:
-            await ctx.close()
-        else:
-            await page.close()
-        return _exit_code_for_failed_products(failed)
+            print(f"\n{'='*55}")
+            print(f"  ✅ Thành công : {success}/{len(products)}")
+            print(f"  ↩️  Bỏ qua (trùng): {skipped}/{len(products)}")
+            print(f"  ⚠️ Cần đối soát : {pending_reconciliation}/{len(products)}")
+            print(f"  ❌ Thất bại  : {failed}/{len(products)}")
+            remaining = total - args.skip - len(products)
+            if remaining > 0:
+                next_skip = args.skip + len(products)
+                print(f"\n  📌 Còn {remaining} sản phẩm. Lần sau chạy:")
+                print(f"     python3 etsy_auto_post.py --batch {args.batch} --skip {next_skip}")
+            print(f"{'='*55}\n")
+            return _exit_code_for_failed_products(failed, pending_reconciliation)
+        finally:
+            if owns_context:
+                await ctx.close()
+            else:
+                await page.close()
+            if pipeline_store is not None:
+                pipeline_store.close()
 
 if __name__ == "__main__":
     sys.exit(asyncio.run(main()))

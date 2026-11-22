@@ -1,10 +1,10 @@
 """
 together_qwen.py
 ─────────────────
-Module để gọi Qwen3.7-Max API qua Together.ai
+Module để gọi DeepSeek-V4.1-Flash API qua Together.ai
 
 Together API docs: https://docs.together.ai/reference/chat-completions
-Model: Qwen/Qwen3.7-Max
+Model: deepseek-ai/DeepSeek-V4.1-Flash
 """
 import json
 import urllib.request
@@ -14,12 +14,12 @@ import os
 # ─── Config ────────────────────────────────────────────────────────────────────
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
 TOGETHER_API_URL = "https://api.together.xyz/v1/chat/completions"
-MODEL_NAME = "Qwen/Qwen3.7-Max"
+MODEL_NAME = "deepseek-ai/DeepSeek-V4.1-Flash"
 
-# ─── Qwen API Client ────────────────────────────────────────────────────────────
+# ─── Together API Client ────────────────────────────────────────────────────────
 def call_qwen(prompt: str, system_prompt: str = "", max_tokens: int = 2000, temperature: float = 0.2) -> str:
     """
-    Gọi Qwen3.7-Max API qua Together.ai
+    Gọi DeepSeek-V4.1-Flash API qua Together.ai
     
     Args:
         prompt: User prompt
@@ -137,7 +137,7 @@ def generate_seo_description(title: str, features: list[str] | None = None) -> s
 # ─── Test ───────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     print("=" * 60)
-    print("Testing Qwen3.7-Max via Together.ai API")
+    print("Testing DeepSeek-V4.1-Flash via Together.ai API")
     print("=" * 60)
     
     # Test API key

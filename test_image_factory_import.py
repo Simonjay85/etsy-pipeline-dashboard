@@ -33,6 +33,17 @@ def _make_factory_source(root: Path, name: str, keyword: str = "Product") -> Pat
     return source
 
 
+def _make_product_layout_source(root: Path, name: str, keyword: str = "Product") -> Path:
+    source = root / name
+    image_dir = source / "images"
+    file_dir = source / "files"
+    image_dir.mkdir(parents=True, exist_ok=True)
+    file_dir.mkdir(parents=True, exist_ok=True)
+    _write_image(image_dir / "01_hero_image.png")
+    (file_dir / f"{keyword}.zip").write_bytes(b"source")
+    return source
+
+
 def _make_workbook(path: Path, rows=()):
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -110,6 +121,69 @@ class ImageFactoryImportTests(unittest.TestCase):
             self.assertNotIn("_asset_quarantine", [f["name"] for f in folders])
             self.assertNotIn("_failed_local_imports", [f["name"] for f in folders])
 
+    def test_scan_matches_nested_source_split_archive_parts_to_existing_catalog_file_set(self):
+        with tempfile.TemporaryDirectory() as temp:
+            _, source, excel = self._source_root(temp)
+            _make_workbook(excel, [(4, "product-40", "Different keyword")])
+
+            catalog = source / "product-40" / "files"
+            catalog.mkdir(parents=True)
+            (catalog / "Exact Product.zip").write_bytes(b"catalog-part0")
+            (catalog / "Exact Product.zip.001").write_bytes(b"catalog-part1")
+            (catalog / "Exact Product.zip.002").write_bytes(b"catalog-part2")
+
+            source_folder = source / "Nested-Input"
+            source_folder.mkdir()
+            _write_image(source_folder / "etsy-images-chatgpt-final" / "01_hero_image.png")
+            source_zip = source_folder / "source-zip"
+            source_zip.mkdir(parents=True)
+            (source_zip / "Exact Product.zip").write_bytes(b"incoming-part0")
+            (source_zip / "Exact Product.zip.001").write_bytes(b"incoming-part1")
+            (source_zip / "Exact Product.zip.002").write_bytes(b"incoming-part2")
+
+            folders = dashboard_app._scan_factory_folders(source, source, excel)
+            self.assertEqual([item["name"] for item in folders], ["Nested-Input"])
+            self.assertTrue(folders[0]["already_imported"])
+            self.assertEqual(folders[0]["imported_folder"], "product-40")
+            self.assertEqual(folders[0]["matched_by"], "download_file_set")
+
+    def test_scan_includes_direct_product_layout_not_mapped(self):
+        with tempfile.TemporaryDirectory() as temp:
+            _, source, excel = self._source_root(temp)
+            _make_workbook(
+                excel,
+                [(4, "product-01", "Mapped product keyword")],
+            )
+            _make_factory_source(source, "A-Nested-Input", "Nested Product")
+
+            # This mapped product should not be re-import-candidate even if it matches
+            # the expected direct product layout.
+            mapped = source / "product-01"
+            (mapped / "images").mkdir(parents=True)
+            (mapped / "files").mkdir()
+            _write_image(mapped / "images" / "01_hero_image.png")
+            (mapped / "files" / "Mapped Product.zip").write_bytes(b"mapped")
+
+            # New direct product-* folder with valid files should be discovered.
+            _make_product_layout_source(source, "product-99", "Direct New Product")
+
+            folders = dashboard_app._scan_factory_folders(source, source, excel)
+            self.assertEqual([item["name"] for item in folders], ["A-Nested-Input", "product-99"])
+            self.assertEqual({item["already_imported"] for item in folders}, {False})
+
+    def test_scan_accepts_direct_product_pdf_file(self):
+        with tempfile.TemporaryDirectory() as temp:
+            _, source, excel = self._source_root(temp)
+            _make_workbook(excel)
+            (source / "product-77" / "images").mkdir(parents=True)
+            _write_image(source / "product-77" / "images" / "01_hero_image.png")
+            (source / "product-77" / "files").mkdir(parents=True)
+            (source / "product-77" / "files" / "Product Manual.pdf").write_bytes(b"pdf")
+
+            folders = dashboard_app._scan_factory_folders(source, source, excel)
+            self.assertEqual([item["name"] for item in folders], ["product-77"])
+            self.assertEqual(folders[0]["file_count"], 1)
+
     def test_scan_treats_polluted_target_file_set_as_pending(self):
         with tempfile.TemporaryDirectory() as temp:
             _, source, excel = self._source_root(temp)
@@ -157,7 +231,7 @@ class ImageFactoryImportTests(unittest.TestCase):
     def test_scan_reports_aggregate_only_catalog_exclusion_counts(self):
         with tempfile.TemporaryDirectory() as temp:
             _, source, excel = self._source_root(temp)
-            _make_workbook(excel)
+            _make_workbook(excel, [(4, "product-01", "Keyword"), (5, "product-02", "Keyword")])
             _make_factory_source(source, "Ready-For-Import", "Ready Product")
             (source / "product-01").mkdir()
             (source / "product-02").mkdir()
@@ -327,6 +401,202 @@ class ImageFactoryImportTests(unittest.TestCase):
             self.assertTrue(result["results"][0]["already_imported"])
             self.assertEqual(result["results"][0]["imported_folder"], "product-40")
             self.assertEqual(sorted(p.name for p in source.iterdir()), ["Etsy_SEO_Generator.xlsx", "Kawaii-Planner", "product-40"])
+
+    def test_import_direct_product_folder_registers_existing_product_directory(self):
+        with tempfile.TemporaryDirectory() as temp:
+            _, source, excel = self._source_root(temp)
+            _make_workbook(excel)
+            _make_product_layout_source(source, "product-19", "Existing Direct Product")
+
+            with (
+                patch.object(dashboard_app, "_factory_shop_dir", return_value=source),
+                patch.object(dashboard_app, "_factory_excel_file", return_value=excel),
+                patch.object(dashboard_app, "_active_shop_id", "templystudios"),
+            ):
+                result = asyncio.run(dashboard_app.import_from_factory(_request({
+                    "folders": ["product-19"],
+                    "auto_seo": False,
+                })))
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["imported"], 1)
+            self.assertEqual(result["results"][0]["folder"], "product-19")
+            self.assertTrue((source / "product-19" / "images" / "01_hero_image.png").is_file())
+            self.assertTrue((source / "product-19" / "files" / "Existing Direct Product.zip").is_file())
+
+            wb = openpyxl.load_workbook(excel, data_only=True)
+            ws = wb["Listings"]
+            self.assertEqual("product-19", ws["B4"].value)
+            self.assertEqual("Existing Direct Product", ws["C4"].value)
+            self.assertEqual(dashboard_app._new_import_status("⏳ Chờ đăng"), ws["N4"].value)
+            wb.close()
+
+            self.assertFalse((source / "product-20").exists())
+
+    def test_import_direct_product_idempotent_after_initial_import_even_when_keyword_and_split_parts_change(self):
+        with tempfile.TemporaryDirectory() as temp:
+            _, source, excel = self._source_root(temp)
+            source_product = source / "product-19"
+            source_files = source_product / "files"
+            source_files.mkdir(parents=True)
+            _write_image(source_product / "images" / "01_hero_image.png")
+            (source_files / "Original Direct Product.zip").write_bytes(b"part0")
+            (source_files / "Original Direct Product.zip.001").write_bytes(b"part1")
+            (source_files / "Original Direct Product.zip.002").write_bytes(b"part2")
+            _make_workbook(excel)
+
+            with (
+                patch.object(dashboard_app, "_factory_shop_dir", return_value=source),
+                patch.object(dashboard_app, "_factory_excel_file", return_value=excel),
+                patch.object(dashboard_app, "_active_shop_id", "templystudios"),
+            ):
+                first = asyncio.run(dashboard_app.import_from_factory(_request({
+                    "folders": ["product-19"],
+                    "auto_seo": False,
+                })))
+
+                (source_files / "Original Direct Product.zip").unlink()
+                (source_files / "Original Direct Product.zip.001").unlink()
+                (source_files / "Original Direct Product.zip.002").unlink()
+                (source_files / "Changed Direct Product.pdf").write_bytes(b"part0")
+                (source_files / "Changed Direct Product.pdf.001").write_bytes(b"part1")
+                second = asyncio.run(dashboard_app.import_from_factory(_request({
+                    "folders": ["product-19"],
+                    "auto_seo": False,
+                })))
+
+            self.assertEqual(1, first["imported"])
+            self.assertEqual(0, second["imported"])
+            self.assertTrue(second["results"][0]["already_imported"])
+            self.assertEqual("product-19", second["results"][0]["imported_folder"])
+            self.assertEqual("product-19", second["results"][0]["folder"])
+
+            wb = openpyxl.load_workbook(excel, data_only=True)
+            ws = wb["Listings"]
+            product_rows = [row for row in range(4, ws.max_row + 1) if str(ws.cell(row, 2).value).startswith("product-")]
+            self.assertEqual([4], product_rows)
+            self.assertEqual("product-19", ws.cell(row=4, column=2).value)
+            self.assertEqual("Original Direct Product", ws.cell(row=4, column=3).value)
+            wb.close()
+
+            self.assertFalse((source / "product-20").exists())
+
+    def test_import_direct_layout_failure_does_not_cleanup_or_mutate_source(self):
+        with tempfile.TemporaryDirectory() as temp:
+            _, source, excel = self._source_root(temp)
+            source_product = source / "product-19"
+            _make_product_layout_source(source, "product-19", "Original Direct Product")
+
+            source_image = source_product / "images" / "01_hero_image.png"
+            source_file = source_product / "files" / "Original Direct Product.zip"
+            original_image_bytes = source_image.read_bytes()
+            original_file_bytes = source_file.read_bytes()
+
+            for failure in (ValueError, OSError):
+                with self.subTest(failure=failure.__name__):
+                    with (
+                        patch.object(dashboard_app, "_factory_shop_dir", return_value=source),
+                        patch.object(dashboard_app, "_factory_excel_file", return_value=excel),
+                        patch.object(dashboard_app, "_active_shop_id", "templystudios"),
+                        patch.object(dashboard_app, "_factory_import_match", return_value=None),
+                        patch.object(
+                            dashboard_app,
+                            "_factory_source_archive_name",
+                            side_effect=failure("direct import prep failure"),
+                        ),
+                    ):
+                        _make_workbook(excel)
+                        result = asyncio.run(dashboard_app.import_from_factory(_request({
+                            "folders": ["product-19"],
+                            "auto_seo": False,
+                        })))
+
+                    self.assertTrue(result["ok"])
+                    self.assertEqual(0, result["imported"])
+                    self.assertEqual(1, result["failed"])
+                    self.assertFalse(result["results"][0]["ok"])
+                    self.assertIn("Could not copy product assets", result["results"][0]["error"])
+
+                    # Source folder must remain untouched for direct-layout failures.
+                    self.assertTrue(source_product.exists())
+                    self.assertTrue(source_image.is_file())
+                    self.assertTrue(source_file.is_file())
+                    self.assertEqual(original_image_bytes, source_image.read_bytes())
+                    self.assertEqual(original_file_bytes, source_file.read_bytes())
+
+                    self.assertFalse((source / "product-20").exists())
+                    wb = openpyxl.load_workbook(excel, data_only=True)
+                    ws = wb["Listings"]
+                    product_rows = [
+                        row for row in range(4, ws.max_row + 1)
+                        if str(ws.cell(row, 2).value).startswith("product-")
+                    ]
+                    self.assertEqual([], product_rows)
+                    wb.close()
+
+    def test_scan_image_factory_rejects_symlinked_shop_root(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            shop_root = base / "shops"
+            shop_root.mkdir(parents=True)
+            source = shop_root / "templystudios"
+            real_root = shop_root / "real-temply"
+            real_root.mkdir()
+            _make_workbook(real_root / "Etsy_SEO_Generator.xlsx")
+            source.symlink_to(real_root)
+
+            with (
+                patch.object(dashboard_app, "BASE_DIR", base),
+                patch.object(dashboard_app, "_active_shop_id", "templystudios"),
+                patch.object(dashboard_app, "SHOPS", {"templystudios": {"name": "Temply"}}),
+            ):
+                result = asyncio.run(dashboard_app.scan_image_factory())
+
+            self.assertFalse(result["ok"])
+            self.assertIn("không được là symlink", result["error"])
+
+    def test_factory_thumb_rejects_symlinked_shop_root(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            shop_root = base / "shops"
+            shop_root.mkdir(parents=True)
+            source = shop_root / "templystudios"
+            real_root = shop_root / "real-temply"
+            real_root.mkdir()
+            _make_workbook(real_root / "Etsy_SEO_Generator.xlsx")
+            source.symlink_to(real_root)
+
+            with (
+                patch.object(dashboard_app, "BASE_DIR", base),
+                patch.object(dashboard_app, "_active_shop_id", "templystudios"),
+                patch.object(dashboard_app, "SHOPS", {"templystudios": {"name": "Temply"}}),
+            ):
+                with self.assertRaises(dashboard_app.HTTPException):
+                    asyncio.run(dashboard_app.factory_thumb("sample", "01-hero_image.png"))
+
+    def test_import_rejects_symlinked_shop_root_before_import(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            shop_root = base / "shops"
+            shop_root.mkdir(parents=True)
+            source = shop_root / "templystudios"
+            real_root = shop_root / "real-temply"
+            real_root.mkdir()
+            _make_workbook(real_root / "Etsy_SEO_Generator.xlsx")
+            source.symlink_to(real_root)
+
+            with (
+                patch.object(dashboard_app, "BASE_DIR", base),
+                patch.object(dashboard_app, "_active_shop_id", "templystudios"),
+                patch.object(dashboard_app, "SHOPS", {"templystudios": {"name": "Temply"}}),
+            ):
+                result = asyncio.run(dashboard_app.import_from_factory(_request({
+                    "folders": ["product-19"],
+                    "auto_seo": False,
+                })))
+
+            self.assertFalse(result["ok"])
+            self.assertIn("không được là symlink", result["error"])
 
     def test_daisy_import_uses_own_source_and_cannot_import_temply_source(self):
         with tempfile.TemporaryDirectory() as temp:

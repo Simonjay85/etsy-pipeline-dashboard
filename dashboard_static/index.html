@@ -6,7 +6,8 @@
 <title>Etsy Pipeline Dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/style.css?v=20260814-status-summary-click-01">
+<link rel="stylesheet" href="/static/style.css?v=20260904-new-import-filter-01&pipeline=20260916-auto-hide-01&status-menu=20260922-01">
+<link rel="stylesheet" href="/static/financials.css?v=20261002-provisional-01">
 </head>
 <body>
 
@@ -24,30 +25,40 @@
       </div>
     </div>
   </div>
-  <div class="services" id="services">
-    <div class="svc" id="svc-vertex"><span class="dot"></span>Vertex App</div>
-    <div class="svc" id="svc-mlx"><span class="dot"></span>MLX AI</div>
-    <div class="svc" id="svc-watcher"><span class="dot"></span>Watcher</div>
-  </div>
+  <details class="service-details" id="service-details">
+    <summary><span id="service-summary" aria-live="polite">Dịch vụ 0/4</span></summary>
+    <div class="services" id="services">
+      <div class="svc" id="svc-together"><span class="dot"></span>Together AI</div>
+      <div class="svc" id="svc-image-studio"><span class="dot"></span>Image Studio</div>
+      <div class="svc" id="svc-mlx"><span class="dot"></span>MLX AI</div>
+      <div class="svc" id="svc-watcher"><span class="dot"></span>Watcher</div>
+    </div>
+  </details>
   <div class="runtime-health" id="runtime-health">
     <span class="runtime-health-dot"></span>
     <span class="runtime-health-text">Runtime: checking...</span>
     <span class="runtime-health-meta" id="runtime-health-meta">cwd unknown</span>
   </div>
   <div class="header-actions">
-    <button class="btn btn-success" onclick="createNewFolder()" title="Tạo folder sản phẩm mới">📁 Tạo Folder Mới</button>
-    <button class="btn btn-ghost" onclick="startWatcher()">▶ Start Watcher</button>
-    <button class="btn btn-etsy-login" id="btn-etsy-login" onclick="openEtsyPostingLogin()" title="Mở đúng Chrome profile Etsy mà nút Post sử dụng">🔐 Đăng nhập Etsy cho Post</button>
+    <a class="btn btn-ghost" id="btn-shop4-price-studio" href="/price-studio/shop4/" title="Giá nhập, giá bán, ship và lợi nhuận riêng Shop 4 — không đổi shop đang chọn">💰 Chi phí Shop 4</a>
+    <button class="btn btn-success" id="btn-create-folder" onclick="createNewFolder()" title="Tạo folder sản phẩm mới">📁 Tạo Folder Mới</button>
+    <button class="btn btn-etsy-login" id="btn-etsy-login" onclick="openEtsyPostingLogin()" title="Mở đúng Chrome profile Etsy mà nút Post sử dụng">🔐 Đăng nhập Etsy</button>
     <button class="btn btn-sync" id="btn-etsy-sync" onclick="syncEtsyShop()" title="Quét Etsy Shop Manager rồi cập nhật link/status vào dashboard">🔄 Đồng bộ Etsy Shop</button>
-    <button class="btn btn-warning" onclick="openRepairModal()" title="Sửa lỗi Tab/Description/Tags trên Etsy">🛠 Sửa lỗi Etsy</button>
-    <button class="btn btn-danger" onclick="cleanDuplicates()" title="Tìm và xoá các bản nháp bị trùng lặp tiêu đề trên Etsy Shop Manager">🧹 Dọn trùng Drafts</button>
-    <button class="btn btn-seo" onclick="openSocialBulkModal()" title="Đăng bài tự động hàng loạt lên Pinterest, Twitter/X, Medium...">📢 Auto Post Hàng Loạt</button>
-    <button class="btn btn-ghost" onclick="openImportCSV()" title="Import danh sách từ Etsy CSV">📥 Import CSV</button>
-    <button class="btn btn-factory" onclick="openFactoryImport()" title="Import ảnh từ Image Factory">🖼 Import từ Factory</button>
-    <button class="btn btn-seo" onclick="batchGenerateSEO()">🤖 Generate Missing SEO</button>
-    <button class="btn btn-primary" onclick="runAllPending()">⚡ Run All Pending</button>
-    <button class="btn btn-ghost job-center-toggle" id="job-center-toggle" onclick="toggleJobCenter()" aria-expanded="false" aria-controls="job-center-drawer" title="Mở Job Center durable">📬 Jobs <span id="job-center-count" class="job-center-count" aria-live="polite">0</span></button>
-    <button class="btn btn-danger" onclick="stopAll()" title="Dừng tất cả poster đang chạy">🛑 Stop All</button>
+    <button class="btn btn-factory" id="btn-import-factory" onclick="openFactoryImport()" title="Import ảnh từ Image Factory">🖼 Import từ Factory</button>
+    <button class="btn btn-primary" id="btn-run-all-pending" onclick="runAllPending()" title="Chạy các mục đang chờ hoặc lỗi">⚡ Chạy mục chờ/lỗi</button>
+    <button class="btn btn-ghost job-center-toggle" id="job-center-toggle" onclick="toggleJobCenter()" aria-expanded="false" aria-controls="job-center-drawer" title="Mở Job Center durable">📬 Công việc <span id="job-center-count" class="job-center-count" aria-live="polite">0</span></button>
+    <button class="btn btn-danger" id="btn-stop-all" onclick="stopAll()" title="Dừng tất cả poster đang chạy">🛑 Dừng tất cả</button>
+    <details class="header-tools" id="header-tools">
+      <summary>Công cụ khác</summary>
+      <div class="header-secondary-actions">
+        <button class="btn btn-ghost" id="btn-start-watcher" onclick="startWatcher()" title="Bật watcher theo dõi folder">▶ Bật Watcher</button>
+        <button class="btn btn-warning" id="btn-open-repair" onclick="openRepairModal()" title="Sửa lỗi Tab/Description/Tags trên Etsy">🛠 Sửa lỗi Etsy</button>
+        <button class="btn btn-danger" id="btn-clean-duplicates" onclick="cleanDuplicates()" title="Tìm và xoá các bản nháp bị trùng lặp tiêu đề trên Etsy Shop Manager">🧹 Dọn trùng Drafts</button>
+        <button class="btn btn-seo" id="btn-auto-post" onclick="openSocialBulkModal()" title="Đăng bài tự động hàng loạt lên Pinterest, Twitter/X, Medium...">📢 Auto Post Hàng Loạt</button>
+        <button class="btn btn-ghost" id="btn-import-csv" onclick="openImportCSV()" title="Import danh sách từ Etsy CSV">📥 Import CSV</button>
+        <button class="btn btn-seo" id="btn-batch-generate-seo" onclick="batchGenerateSEO()">🤖 Tạo SEO còn thiếu</button>
+      </div>
+    </details>
   </div>
 </header>
 
@@ -65,6 +76,55 @@
   </div>
 </section>
 
+<!-- ── VERIFIED PRODUCT PIPELINE ── -->
+<section class="pipeline-workbench" id="pipeline-workbench" aria-labelledby="pipeline-workbench-title" hidden>
+  <div class="pipeline-workbench-head">
+    <div>
+      <span class="eyebrow">MULTI-SHOP DIGITAL PIPELINE</span>
+      <h2 id="pipeline-workbench-title">Research → sản phẩm → draft đã xác minh</h2>
+      <p id="pipeline-health-note" class="pipeline-health-note">Đang kiểm tra Hermes, ChatGPT và quota…</p>
+    </div>
+    <div class="pipeline-workbench-actions">
+      <button
+        class="pipeline-workbench-toggle btn btn-ghost btn-sm"
+        id="pipeline-workbench-toggle"
+        type="button"
+        aria-expanded="false"
+        aria-controls="pipeline-workbench-content"
+        onclick="togglePipelineWorkbench()"
+      ><span class="pipeline-workbench-toggle-icon" aria-hidden="true">▸</span><span id="pipeline-workbench-toggle-label">Mở pipeline</span></button>
+      <button class="btn btn-ghost btn-sm" type="button" onclick="loadPipelineWorkbench()">↻ Cập nhật</button>
+    </div>
+  </div>
+  <div class="pipeline-workbench-content" id="pipeline-workbench-content" hidden>
+    <div class="pipeline-tabs" role="tablist" aria-label="Pipeline views">
+      <button class="pipeline-tab active" type="button" role="tab" aria-selected="true" data-pipeline-view="research">🔎 Research</button>
+      <button class="pipeline-tab" type="button" role="tab" aria-selected="false" data-pipeline-view="pipeline">⚙ Pipeline</button>
+      <button class="pipeline-tab" type="button" role="tab" aria-selected="false" data-pipeline-view="draft-review">✅ Draft Review</button>
+    </div>
+    <div class="pipeline-view" id="pipeline-view-research" role="tabpanel">
+      <div class="pipeline-research-grid">
+        <div>
+          <h3>Giao brief cho Hermes</h3>
+          <p class="pipeline-muted">Tạo một candidate bền vững để research/Creative Fabrica trả kết quả về đúng shop.</p>
+          <div class="pipeline-inline-form">
+            <select id="pipeline-research-shop" aria-label="Shop cho research"></select>
+            <input id="pipeline-research-brief" type="text" maxlength="240" placeholder="Ví dụ: printable budget planner cho sinh viên…">
+            <button class="btn btn-primary btn-sm" type="button" onclick="createPipelineResearchJob()">Tạo research job</button>
+          </div>
+        </div>
+        <div class="pipeline-policy-card" id="pipeline-policy-card">Quota: đang tải…</div>
+      </div>
+    </div>
+    <div class="pipeline-view hidden" id="pipeline-view-pipeline" role="tabpanel">
+      <div class="pipeline-table-wrap"><table class="pipeline-table"><thead><tr><th>Candidate / shop</th><th>Bước</th><th>Trạng thái</th><th>Cập nhật</th></tr></thead><tbody id="pipeline-jobs-body"><tr><td colspan="4" class="pipeline-empty">Chưa có pipeline job.</td></tr></tbody></table></div>
+    </div>
+    <div class="pipeline-view hidden" id="pipeline-view-draft-review" role="tabpanel">
+      <div id="pipeline-review-list" class="pipeline-review-list"><div class="pipeline-empty">Chưa có draft verified cần duyệt.</div></div>
+    </div>
+  </div>
+</section>
+
 <!-- ── STATS BAR ── -->
 <div class="stats-bar" id="stats-bar">
   <button type="button" id="stat-card-total" class="stat-filter-btn stat-card" data-status-filter="" aria-label="Hiển thị tất cả sản phẩm" aria-pressed="false" onclick="onStatusSummaryClick('')">
@@ -78,6 +138,10 @@
   <button type="button" id="stat-card-pending" class="stat-filter-btn stat-card pending" title="Số mục trong view hiện tại có trạng thái Chờ đăng" data-status-filter="pending" aria-label="Lọc sản phẩm trạng thái chờ đăng" aria-pressed="false" onclick="onStatusSummaryClick('pending')">
     <div class="stat-num" id="stat-pending">–</div>
     <div class="stat-label" id="stat-pending-label">Trạng thái Chờ đăng</div>
+  </button>
+  <button type="button" id="stat-card-new-import" class="stat-filter-btn stat-card new-import" title="Số folder local được đánh dấu mới thêm vào catalog; bấm để lọc" data-status-filter="new_import" aria-label="Lọc sản phẩm mới thêm vào catalog" aria-pressed="false" onclick="onStatusSummaryClick('new_import')">
+    <div class="stat-num" id="stat-new-import">–</div>
+    <div class="stat-label" id="stat-new-import-label">🆕 Mới thêm</div>
   </button>
   <button type="button" id="stat-card-error" class="stat-filter-btn stat-card error" title="Số mục trong view hiện tại có trạng thái lỗi; không phải số Etsy Active" data-status-filter="error" aria-label="Lọc sản phẩm trạng thái lỗi" aria-pressed="false" onclick="onStatusSummaryClick('error')">
     <div class="stat-num" id="stat-error">–</div>
@@ -136,11 +200,18 @@
       <option value="pending">⏳ Chờ đăng</option>
       <option value="error">❌ Lỗi</option>
       <option value="other">📦 Khác</option>
-      <option value="new_import">🆕 Mới import</option>
+      <option value="new_import">🆕 Mới thêm</option>
       <option value="missing_title">⚠️ Thiếu Title</option>
       <option value="missing_description">⚠️ Thiếu Description</option>
       <option value="missing_tags">⚠️ Thiếu/Lỗi Tags</option>
       <option value="missing_seo">⚠️ Thiếu bất kỳ SEO</option>
+    </select>
+    <select class="filter-select" id="filter-profit-status" title="Lọc theo lợi nhuận dự kiến" onchange="filterProducts()">
+      <option value="">Mọi tình trạng lợi nhuận</option>
+      <option value="profit">Có lời</option><option value="loss">Đang lỗ</option><option value="incomplete">Chưa đủ dữ liệu</option>
+    </select>
+    <select class="filter-select" id="sort-profit" title="Sắp xếp theo lợi nhuận" onchange="filterProducts()">
+      <option value="">Sắp xếp mặc định</option><option value="profit-desc">Lợi nhuận cao → thấp</option><option value="profit-asc">Lợi nhuận thấp → cao</option>
     </select>
     <select class="filter-select cloud-status-filter" id="filter-cloud-status" title="Lọc theo trạng thái cloud" onchange="filterProducts()">
       <option value="all">☁️ Tất cả cloud</option>
@@ -254,6 +325,12 @@
         </div>
 
         <div class="form-group">
+          <label for="edit-category">Danh mục Etsy (Category)</label>
+          <textarea id="edit-category" rows="2" placeholder="Dán full breadcrumb Etsy hoặc tên danh mục cuối..." title="Danh mục Etsy" class="input-sm" autocomplete="off"></textarea>
+          <div class="hint">Có thể dán nguyên breadcrumb (ví dụ: A &gt; B &gt; C). Khi đăng, hệ thống dùng leaf cuối và vẫn kiểm tra khớp chính xác với lựa chọn trên Etsy.</div>
+        </div>
+
+        <div class="form-group">
           <label>Thông tin bổ sung (Gợi ý cho AI)</label>
           <textarea id="edit-extra" rows="2" placeholder="Ví dụ: Focus vào khách hàng nữ, màu hồng, phong cách cute..." class="input-sm"></textarea>
         </div>
@@ -302,6 +379,7 @@
   <div class="modal-footer modal-footer-compact">
     <button class="btn btn-ghost" onclick="closeModal('edit-modal')">Huỷ</button>
     <button class="btn btn-seo" onclick="regenSEO()">🤖 Tạo SEO</button>
+    <button class="btn btn-primary" id="finance-footer-save" onclick="saveProductFinancials()" hidden>💾 Lưu chi phí</button>
     <button class="btn btn-primary" id="edit-save-btn" onclick="saveEdit()">💾 Lưu</button>
   </div>
 </div>
@@ -453,6 +531,21 @@
     
     <label class="mt-15">Thông Tin Shop (AI sẽ lấy làm Context để viết SEO chuẩn hơn)</label>
     <textarea id="set-shop-info" rows="3" placeholder="Shop chuyên bán CV Template tối giản, Digital Planner..."></textarea>
+
+    <div class="mt-15" id="together-config-section">
+      <label for="set-together-api-key">Together AI (lưu bền vững bằng macOS Keychain)</label>
+      <p class="form-help">API key được lưu trong macOS Keychain. Không lưu vào cấu hình shop, localStorage hoặc trình duyệt. Để trống key nếu muốn lưu lại key đang dùng cùng Base URL và model mới.</p>
+      <input type="password" id="set-together-api-key" autocomplete="off" spellcheck="false" placeholder="TOGETHER_API_KEY">
+      <label for="set-together-base-url" class="mt-10">Base URL tùy chọn</label>
+      <input type="url" id="set-together-base-url" autocomplete="off" spellcheck="false" placeholder="https://api.together.xyz/v1">
+      <label for="set-together-model" class="mt-10">Model Together</label>
+      <input type="text" id="set-together-model" autocomplete="off" spellcheck="false" placeholder="deepseek-ai/DeepSeek-V4.1-Flash">
+      <div id="set-together-status" class="form-help" data-state="info" role="status" aria-live="polite">Chưa tải cấu hình Together</div>
+      <div class="flex-gap10 mt-10">
+        <button class="btn btn-secondary" id="save-together-config" type="button" onclick="saveTogetherConfig()">Lưu vào Keychain</button>
+        <button class="btn btn-ghost" id="clear-together-config" type="button" onclick="clearTogetherConfig()">Xoá key Keychain + runtime</button>
+      </div>
+    </div>
   </div>
   <div class="modal-footer">
     <button class="btn btn-ghost" onclick="closeModal('settings-modal')">Huỷ</button>
@@ -617,7 +710,7 @@
     <div class="flex-align-center-gap10">
       <span class="font-size-1-2rem">🖼</span>
       <h2 id="gen-modal-title">Generate Listing Images</h2>
-      <span id="gen-vertex-status" class="svc offline badge-compact"></span>
+      <span id="gen-image-studio-status" class="svc offline badge-compact"></span>
     </div>
     <button class="btn-close" onclick="closeModal('gen-modal')">✕</button>
   </div>
@@ -1001,8 +1094,9 @@
 </div>
 
 <script src="/static/catalog_sort.js?v=20260718-hide-missing-folders-01"></script>
-<script src="/static/edit_save.js?v=20260811-edit-save-02"></script>
+<script src="/static/edit_save.js?v=20260811-edit-save-02-category-20260830"></script>
 <script src="/static/batch_selection.js?v=20260819-cross-shop-batch-action-01"></script>
-<script src="/static/app.js?v=20260819-cloud-offload-preflight-01"></script>
+<script src="/static/app.js?v=20260922-together-provider-01&settings=20260922-02&pipeline=20260916-auto-hide-01&status-menu=20260922-01&keychain=20260922-together-keychain-01&finance=20261001-01"></script>
+<script src="/static/financials.js?v=20261002-price-save-guidance-01"></script>
 </body>
 </html>

@@ -4,17 +4,45 @@ venv/
 ENV/
 env/
 
-# Node modules
+# Node modules and test output
 node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+coverage/
+htmlcov/
+test-output/
+test-results/
 
-# Browser sessions & caches (from Chrome automation)
+# Browser sessions, authentication, and cookies
 .browser-session/
+.browser-sessions/
+.playwright/
+.playwright-cli/
+.etsy_browser_session*
+sessions/
+.sessions/
+**/sessions/
+auth/
+.auth/
+**/auth/
+**/.auth/
+credentials/
+**/credentials/
+cookies/
+.cookies/
+**/cookies/
+**/.cookies/
+*.cookie
+*.cookies
+*.cookie.json
+*cookies*.json
 
 # Python cache
 __pycache__/
 *.py[cod]
 *$py.class
-.pytest_cache/
 
 # VS Code configurations
 .vscode/
@@ -35,6 +63,12 @@ Thumbs.db
 # Logs & temp files
 *.log
 *.tmp
+*.pid
+*.pid.lock
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
 .~lock.*
 
 # Runtime state
@@ -76,8 +110,19 @@ master_products/
 .migration-backup-*/
 
 # Tool/automation artifacts
-.playwright-cli/
 .qoder/
+
+# Local test/cache and cloud-operation scratch
+.coverage
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.pytest_cache/
+.cloud-tmp/
+cloud-tmp/
+.cloud-cache/
+cloud-cache/
 
 # Generated output
 output/

@@ -4,12 +4,14 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 import inspect
+import subprocess
 import tempfile
 import types
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, Mock, patch
 
 import etsy_auto_post
+import openpyxl
 
 
 class _FakeStatusRadio:
@@ -84,6 +86,7 @@ class _FakeDraftPage:
         self.goto_calls: list[tuple[str, str | None]] = []
         self.wait_calls: list[int] = []
         self.check_calls: list[tuple[int, str, bool, int | None]] = []
+        self.evaluate_scripts: list[str] = []
 
     def locator(self, selector: str):
         if selector == 'input[name="item_status"]':
@@ -100,6 +103,7 @@ class _FakeDraftPage:
         self.wait_calls.append(ms)
 
     async def evaluate(self, script: str):
+        self.evaluate_scripts.append(script)
         if "__etsyDraftGridStateMarker" in script:
             return self.grid_state
         if 'listing-editor/edit/' in script:
@@ -547,6 +551,50 @@ class _FakeCategoryOptionLocator:
         return _FakeEmptyCategoryLocator(self.page)
 
 
+class _FakeCategoryBadge:
+    def __init__(self, text: str, *, unreadable: bool = False, hidden: bool = False):
+        self.text = text
+        self.unreadable = unreadable
+        self.hidden = hidden
+
+    async def is_visible(self):
+        if self.unreadable:
+            raise RuntimeError("badge detached during readback")
+        return not self.hidden
+
+    async def inner_text(self):
+        if self.unreadable:
+            raise RuntimeError("badge detached during readback")
+        return self.text
+
+
+class _FakeCategoryBadgeLocator:
+    def __init__(
+        self,
+        badges: list[str],
+        unreadable_indices: set[int] | None = None,
+        hidden_indices: set[int] | None = None,
+    ):
+        unreadable_indices = unreadable_indices or set()
+        hidden_indices = hidden_indices or set()
+        self.badges = [
+            _FakeCategoryBadge(
+                text,
+                unreadable=index in unreadable_indices,
+                hidden=index in hidden_indices,
+            )
+            for index, text in enumerate(badges)
+        ]
+
+    async def count(self):
+        return len(self.badges)
+
+    def nth(self, index: int):
+        if 0 <= index < len(self.badges):
+            return self.badges[index]
+        return _FakeCategoryBadge("", unreadable=True)
+
+
 class _FakeCategoryOption:
     def __init__(self, page: "_FakeCategoryPage", text: str):
         self.page = page
@@ -606,9 +654,19 @@ class _FakeCategoryPage:
         *,
         readback_text: str,
         clear_button_visible: bool = False,
+        committed_category_badges: list[str] | None = None,
+        committed_category_badge_unreadable_indices: set[int] | None = None,
+        committed_category_badge_hidden_indices: set[int] | None = None,
     ):
         self.option_texts = list(option_texts)
         self.readback_text = readback_text
+        self.committed_category_badges = list(committed_category_badges or [])
+        self.committed_category_badge_unreadable_indices = set(
+            committed_category_badge_unreadable_indices or set()
+        )
+        self.committed_category_badge_hidden_indices = set(
+            committed_category_badge_hidden_indices or set()
+        )
         self.input_value_state = ""
         self.input_clicked = False
         self.click_count = 0
@@ -621,6 +679,12 @@ class _FakeCategoryPage:
 
     def locator(self, selector: str):
         self.locator_calls.append(selector)
+        if selector == "#field-category .le-category-search__committed clg-signal":
+            return _FakeCategoryBadgeLocator(
+                self.committed_category_badges,
+                self.committed_category_badge_unreadable_indices,
+                self.committed_category_badge_hidden_indices,
+            )
         if selector == '[role="option"], li[class*="option"], li[class*="result"], div[role="option"]':
             return _FakeCategoryOptionLocator(self, self.option_texts)
         if "#category-field-search" in selector:
@@ -643,16 +707,86 @@ class _NoSaveListingPage:
     def __init__(self):
         self.url = "https://www.etsy.com/your/shops/me/listing-editor/edit/123"
         self.locator_calls = []
+        self.goto_calls = []
 
-    async def goto(self, url: str, wait_until: str | None = None):
+    class _SaveButton:
+        def __init__(self, page):
+            self.page = page
+
+        @property
+        def first(self):
+            return self
+
+        async def wait_for(self, *, state=None, timeout=None):
+            return None
+
+        async def click(self):
+            self.page.url = "https://www.etsy.com/your/shops/me/listing-editor/edit/999"
+
+    async def goto(
+        self,
+        url: str,
+        wait_until: str | None = None,
+        timeout: int | None = None,
+    ):
         self.url = url
+        self.goto_calls.append((url, wait_until))
 
     async def wait_for_timeout(self, _ms: int):
         return None
 
     def locator(self, selector: str):
         self.locator_calls.append(selector)
+        if "save" in selector.lower() or "publish" in selector.lower():
+            return self._SaveButton(self)
         return _FakeDigitalLocator(_FakeDigitalPage(), [])
+
+    async def evaluate(self, _script: str):
+        return []
+
+    async def title(self):
+        return ""
+
+    async def inner_text(self, _selector: str):
+        return ""
+
+
+class _EditorNavigationFailurePage:
+    def __init__(
+        self,
+        initial_url: str,
+        *,
+        title_text: str = "",
+        headline_text: str = "",
+        body_text: str = "",
+        redirect_to: str | None = None,
+    ):
+        self.url = initial_url
+        self.redirect_to = redirect_to
+        self.title_text = title_text
+        self.headline_text = headline_text
+        self.body_text = body_text
+        self.goto_calls: list[tuple[str, str | None]] = []
+
+    async def goto(self, url: str, wait_until: str | None = None, timeout: int | None = None):
+        self.url = self.redirect_to or url
+        self.goto_calls.append((url, wait_until))
+
+    async def wait_for_timeout(self, _ms: int):
+        return None
+
+    async def title(self):
+        return self.title_text
+
+    async def inner_text(self, selector: str):
+        if selector == "body":
+            return self.body_text
+        return ""
+
+    async def evaluate(self, _script: str):
+        if "querySelectorAll" in _script:
+            return self.headline_text
+        return ""
 
 
 class _NoOpDetailsPage:
@@ -660,6 +794,117 @@ class _NoOpDetailsPage:
         return None
 
     async def evaluate(self, _script: str):
+        return None
+
+
+class _FakeSectionOption:
+    def __init__(self, label: str, text: str | None = None):
+        self.label = label
+        self.text = text if text is not None else label
+
+    async def get_attribute(self, name: str):
+        return self.label if name == "label" else None
+
+    async def inner_text(self):
+        return self.text
+
+    async def count(self):
+        return 0
+
+    async def is_visible(self):
+        return False
+
+    async def is_editable(self):
+        return False
+
+
+class _FakeSectionOptions:
+    def __init__(self, options):
+        self.options = [_FakeSectionOption(*option) if isinstance(option, tuple) else _FakeSectionOption(option)
+                        for option in options]
+
+    async def count(self):
+        return len(self.options)
+
+    def nth(self, index: int):
+        if 0 <= index < len(self.options):
+            return self.options[index]
+        return _FakeSectionOption("")
+
+    @property
+    def first(self):
+        return self.nth(0)
+
+    async def is_visible(self):
+        return False
+
+    async def is_editable(self):
+        return False
+
+
+class _FakeSectionSelect:
+    def __init__(self, options):
+        self.options = _FakeSectionOptions(options)
+        self.select_calls = []
+
+    @property
+    def first(self):
+        return self
+
+    async def count(self):
+        return 1
+
+    async def is_visible(self):
+        return True
+
+    def locator(self, selector: str):
+        if selector == "option":
+            return self.options
+        return _FakeSectionOptions([])
+
+    async def select_option(self, **kwargs):
+        self.select_calls.append(kwargs)
+
+
+class _FakeSectionPage:
+    def __init__(self, options):
+        self.section_select = _FakeSectionSelect(options)
+        self.locator_calls = []
+
+    def locator(self, selector: str):
+        self.locator_calls.append(selector)
+        if selector in {
+            'select[name*="section" i]',
+            'select[id*="section" i]',
+            '[data-testid*="section"] select',
+        }:
+            return self.section_select
+        return _FakeSectionOptions([])
+
+    async def wait_for_timeout(self, _ms: int):
+        return None
+
+
+class _FakeDigitalContentPage(_FakeDigitalPage):
+    def __init__(self):
+        super().__init__()
+        self.locator_calls = []
+        self.created_by_me = _FakeDigitalElement(
+            self,
+            "radio",
+            value="created_by_me",
+            label="Created by me",
+        )
+        self.evaluate_scripts = []
+
+    def locator(self, selector: str):
+        self.locator_calls.append(selector)
+        if "created_by_me" in selector:
+            return _FakeDigitalLocator(self, [self.created_by_me])
+        return super().locator(selector)
+
+    async def evaluate(self, script: str, arg=None):
+        self.evaluate_scripts.append(script)
         return None
 
 
@@ -704,14 +949,25 @@ class _FailingDirectInputPage(_FakeDigitalPage):
 
 class TestCategoryInference(unittest.TestCase):
     def test_workbook_category_wins_over_inference(self):
+        category = "Paper & Party Supplies > Paper > Stationery > Design & Templates > Templates > Planner Templates"
         product = {
-            "category": "Paper & Party Supplies > Paper > Stationery > Design & Templates > Templates > Planner Templates",
+            "category": category,
             "title": "Wildflower SVG Bundle | Cricut Cut Files",
             "keywords": "kdp interiors, low content",
             "tags": "planner",
             "description": "Planner tracker bundle",
         }
-        self.assertEqual("Planner Templates", etsy_auto_post.resolve_listing_category(product))
+        self.assertEqual(category, etsy_auto_post.resolve_listing_category(product))
+
+    def test_generic_furniture_node_fails_taxonomy_preflight(self):
+        for category in ("Furniture", "Home & Living > Furniture"):
+            with self.subTest(category=category):
+                error = etsy_auto_post._listing_category_preflight_error(
+                    {"category": category}
+                )
+
+                self.assertIn("breadcrumb Etsy chính xác", error)
+                self.assertIn("không tự đoán danh mục", error)
 
     def test_product_07_like_infers_planner_templates_for_kdp_low_content_bundle(self):
         product = {
@@ -755,14 +1011,15 @@ class TestCategoryInference(unittest.TestCase):
         self.assertEqual("3D Printer Files", etsy_auto_post.resolve_listing_category(product))
 
     def test_workbook_category_still_wins_over_3d_inference(self):
+        category = "Craft Supplies & Tools > Patterns & How To > Planner Templates"
         product = {
-            "category": "Craft Supplies & Tools > Patterns & How To > Planner Templates",
+            "category": category,
             "title": "Halloween Kawaii Friends STL Bundle",
             "keywords": "3D model, 3D print, STL",
             "tags": "3d printer files",
             "description": "Digital STL model bundle.",
         }
-        self.assertEqual("Planner Templates", etsy_auto_post.resolve_listing_category(product))
+        self.assertEqual(category, etsy_auto_post.resolve_listing_category(product))
 
     def test_unqualified_3d_mention_fails_closed_without_download_evidence(self):
         product = {
@@ -776,6 +1033,33 @@ class TestCategoryInference(unittest.TestCase):
 
 
 class TestCategoryOptionMatching(unittest.TestCase):
+    def test_newline_breadcrumb_uses_leaf_and_ignores_only_leading_homepage(self):
+        target = (
+            "Homepage\nHome & Living\nFurniture\nLiving Room Furniture\n"
+            "Coffee & End Tables"
+        )
+
+        self.assertEqual("Coffee & End Tables", etsy_auto_post.extract_category_leaf(target))
+        self.assertTrue(
+            etsy_auto_post.category_option_matches(
+                target,
+                "Home & Living > Furniture > Living Room Furniture > Coffee & End Tables",
+            )
+        )
+        self.assertFalse(etsy_auto_post.category_option_matches(target, "Coffee & End Tables"))
+        self.assertFalse(
+            etsy_auto_post.category_option_matches(
+                target,
+                "Home & Living > Dining & Entertaining > Coffee & End Tables",
+            )
+        )
+        self.assertFalse(
+            etsy_auto_post.category_option_matches(
+                "Home & Living\nHomepage\nFurniture\nLiving Room Furniture\nCoffee & End Tables",
+                "Home & Living > Furniture > Living Room Furniture > Coffee & End Tables",
+            )
+        )
+
     def test_exact_match_for_category_option(self):
         self.assertTrue(
             etsy_auto_post.category_option_matches(
@@ -824,6 +1108,205 @@ class TestCategoryOptionMatching(unittest.TestCase):
             )
         )
 
+    def test_full_breadcrumb_target_does_not_match_same_leaf_in_other_tree(self):
+        target = "Paper & Party Supplies > Paper > Stationery > Design & Templates > Templates > Planner Templates"
+        self.assertTrue(
+            etsy_auto_post.category_option_matches(
+                target,
+                target,
+            )
+        )
+        self.assertFalse(
+            etsy_auto_post.category_option_matches(
+                target,
+                "Craft Supplies & Tools > Patterns & How To > Planner Templates",
+            )
+        )
+
+    def test_simple_leaf_fallback_accepts_terminal_metadata_forms(self):
+        target = "Homepage > Home & Living > Furniture > Living Room Furniture > Coffee & End Tables"
+        for option_text in (
+            "Coffee & End Tables",
+            "Coffee & End Tables Physical",
+            "Coffee & End Tables (Physical)",
+            "Coffee & End Tables Digital",
+            "Coffee & End Tables (Digital)",
+            "Coffee & End Tables Physical or digital",
+            "Coffee & End Tables (Physical or digital)",
+            "Coffee & End Tables\nPhysical",
+            "+ Coffee & End Tables Physical",
+            "+ Coffee & End Tables\nPhysical",
+        ):
+            with self.subTest(option_text=option_text):
+                self.assertTrue(
+                    etsy_auto_post._is_exact_simple_leaf_category_option(target, option_text)
+                )
+
+    def test_simple_leaf_fallback_rejects_hierarchy_or_wrong_leaf_labels(self):
+        target = "Homepage > Home & Living > Furniture > Living Room Furniture > Coffee & End Tables"
+        for option_text in (
+            "Home & Living > Coffee & End Tables",
+            "Coffee & End Tables > Physical",
+            "Coffee & End Tables / Physical",
+            "Coffee & End Tables\\Physical",
+            "Coffee Tables Physical",
+            "Coffee & End Tables\nPhysical\nDigital",
+        ):
+            with self.subTest(option_text=option_text):
+                self.assertFalse(
+                    etsy_auto_post._is_exact_simple_leaf_category_option(target, option_text)
+                )
+
+    def test_full_target_stays_strict_against_bare_or_metadata_leaf(self):
+        target = "Homepage > Home & Living > Furniture > Living Room Furniture > Coffee & End Tables"
+        for option_text in ("Coffee & End Tables", "Coffee & End Tables\nPhysical"):
+            with self.subTest(option_text=option_text):
+                self.assertFalse(etsy_auto_post.category_option_matches(target, option_text))
+
+
+class TestCategorySelectionTarget(unittest.IsolatedAsyncioTestCase):
+    async def test_production_coffee_end_tables_suggestion_with_metadata_selects_unique_leaf(self):
+        selected_option = "Coffee & End Tables\nPhysical"
+        targets = (
+            "Homepage > Home & Living > Furniture > Living Room Furniture > Coffee & End Tables",
+            "Homepage\nHome & Living\nFurniture\nLiving Room Furniture\nCoffee & End Tables",
+        )
+        readbacks = (
+            "Coffee & End Tables",
+            selected_option,
+            "Home & Living > Furniture > Living Room Furniture > Coffee & End Tables",
+        )
+        for target in targets:
+            for readback_text in readbacks:
+                with self.subTest(target=target, readback_text=readback_text):
+                    page = _FakeCategoryPage(
+                        [
+                            selected_option,
+                            "Coffee Tables\nPhysical",
+                            "End Tables\nPhysical",
+                            "Living Room Furniture\nPhysical",
+                            "Art & Photography Books\nPhysical or digital",
+                        ],
+                        readback_text=readback_text,
+                    )
+
+                    selected = await etsy_auto_post._select_category_with_exact_readback(
+                        page,
+                        "Coffee & End Tables",
+                        target_category=target,
+                    )
+
+                    self.assertEqual(selected_option, selected)
+                    self.assertEqual(readback_text, page.input_value_state)
+                    self.assertEqual(1, page.click_count)
+
+    async def test_unique_simple_leaf_option_selects_and_reads_back_full_path_target(self):
+        target = (
+            "Homepage\nHome & Living\nFurniture\nLiving Room Furniture\n"
+            "Coffee & End Tables"
+        )
+        search_term = etsy_auto_post.extract_category_leaf(target)
+        page = _FakeCategoryPage(
+            ["Coffee & End Tables"],
+            readback_text="Coffee & End Tables",
+        )
+
+        selected = await etsy_auto_post._select_category_with_exact_readback(
+            page,
+            search_term,
+            target_category=target,
+        )
+
+        self.assertEqual("Coffee & End Tables", search_term)
+        self.assertEqual("Coffee & End Tables", selected)
+        self.assertEqual("Coffee & End Tables", page.input_value_state)
+        self.assertEqual(1, page.click_count)
+
+    async def test_duplicate_leaf_only_options_fail_closed(self):
+        target = (
+            "Homepage\nHome & Living\nFurniture\nLiving Room Furniture\n"
+            "Coffee & End Tables"
+        )
+        ambiguous_options = [
+            ["Coffee & End Tables", "Coffee & End Tables"],
+            ["Coffee & End Tables\nPhysical", "Coffee & End Tables\nDigital"],
+            ["Coffee & End Tables", "Coffee & End Tables\nPhysical"],
+            [
+                "Coffee & End Tables",
+                "Home & Living > Dining & Entertaining > Coffee & End Tables",
+            ],
+        ]
+
+        for options in ambiguous_options:
+            with self.subTest(options=options):
+                page = _FakeCategoryPage(
+                    options,
+                    readback_text="Coffee & End Tables",
+                )
+
+                with self.assertRaisesRegex(RuntimeError, "mơ hồ"):
+                    await etsy_auto_post._select_category_with_exact_readback(
+                        page,
+                        etsy_auto_post.extract_category_leaf(target),
+                        target_category=target,
+                    )
+
+                self.assertEqual(0, page.click_count)
+
+    async def test_unique_leaf_selection_still_requires_matching_readback(self):
+        target = (
+            "Homepage\nHome & Living\nFurniture\nLiving Room Furniture\n"
+            "Coffee & End Tables"
+        )
+        page = _FakeCategoryPage(
+            ["Coffee & End Tables"],
+            readback_text="Coffee Tables",
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "Không xác nhận được danh mục"):
+            await etsy_auto_post._select_category_with_exact_readback(
+                page,
+                etsy_auto_post.extract_category_leaf(target),
+                target_category=target,
+            )
+
+        self.assertEqual(1, page.click_count)
+
+    async def test_unique_leaf_selection_rejects_full_wrong_branch_readback(self):
+        target = "Homepage > Home & Living > Furniture > Living Room Furniture > Coffee & End Tables"
+        page = _FakeCategoryPage(
+            ["Coffee & End Tables\nPhysical"],
+            readback_text="Home & Living > Dining & Entertaining > Coffee & End Tables",
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "Không xác nhận được danh mục"):
+            await etsy_auto_post._select_category_with_exact_readback(
+                page,
+                "Coffee & End Tables",
+                target_category=target,
+            )
+
+        self.assertEqual(1, page.click_count)
+
+    async def test_searches_by_leaf_but_selects_and_reads_back_full_breadcrumb(self):
+        target = "Paper & Party Supplies > Paper > Stationery > Design & Templates > Templates > Planner Templates"
+        page = _FakeCategoryPage(
+            [
+                "Craft Supplies & Tools > Patterns & How To > Planner Templates",
+                target,
+            ],
+            readback_text=target,
+        )
+
+        selected = await etsy_auto_post._select_category_with_exact_readback(
+            page,
+            "Planner Templates",
+            target_category=target,
+        )
+
+        self.assertEqual(target, selected)
+        self.assertEqual(target, page.input_value_state)
+
     def test_unrelated_option_is_rejected(self):
         self.assertFalse(
             etsy_auto_post.category_option_matches(
@@ -855,6 +1338,93 @@ class TestCategoryOptionMatching(unittest.TestCase):
                 self.assertFalse(
                     etsy_auto_post._category_option_is_digital_only_metadata(option_text)
                 )
+
+    def test_category_physical_metadata_requires_terminal_physical_only_marker(self):
+        for option_text in (
+            "+ Coffee & End Tables Physical",
+            "No Sew Patterns Physical",
+            "Coffee & End Tables (Physical)",
+            "Coffee & End Tables\nPhysical",
+            "Coffee & End Tables\n(Physical)",
+            "Home & Living > Furniture > Coffee & End Tables (Physical)",
+            "Home & Living > Furniture > Coffee & End Tables\nPhysical",
+        ):
+            with self.subTest(option_text=option_text):
+                self.assertTrue(
+                    etsy_auto_post._category_option_is_physical_only_metadata(option_text)
+                )
+
+    def test_category_physical_metadata_rejects_ambiguous_or_hierarchical_labels(self):
+        for option_text in (
+            "Physical",
+            "+ Physical",
+            "+ (Physical)",
+            "Coffee & End Tables",
+            "Coffee & End Tables Physical or digital",
+            "Coffee & End Tables (Digital)",
+            "Coffee & End Tables not physical",
+            "No Physical",
+            "Coffee & End Tables nonphysical",
+            "Coffee & End Tables > Physical",
+            "Coffee & End Tables / Physical",
+            "Coffee & End Tables\\Physical",
+            "Home & Living > Furniture > Coffee & End Tables > Physical",
+        ):
+            with self.subTest(option_text=option_text):
+                self.assertFalse(
+                    etsy_auto_post._category_option_is_physical_only_metadata(option_text)
+                )
+
+
+class TestListingTypeResolution(unittest.TestCase):
+    def test_furniture_section_is_physical(self):
+        product = {
+            "category": "Home & Living > Furniture",
+            "section": "",
+            "pdf_paths": [],
+        }
+        self.assertEqual("physical", etsy_auto_post.resolve_listing_type(product))
+
+    def test_furniture_category_is_physical(self):
+        product = {
+            "category": "",
+            "section": "Furniture",
+            "pdf_paths": [],
+        }
+        self.assertEqual("physical", etsy_auto_post.resolve_listing_type(product))
+
+    def test_default_non_digital_products_are_physical(self):
+        product = {
+            "category": "",
+            "section": "",
+            "pdf_paths": [],
+        }
+        self.assertEqual("physical", etsy_auto_post.resolve_listing_type(product))
+
+    def test_products_with_customer_files_are_digital(self):
+        product = {
+            "category": "",
+            "section": "",
+            "pdf_paths": ["/tmp/guide.pdf"],
+        }
+        self.assertEqual("digital", etsy_auto_post.resolve_listing_type(product))
+
+    def test_legacy_furniture_label_remains_physical_even_with_archive(self):
+        product = {
+            "category": "Home & Living > Furniture",
+            "section": "Furniture",
+            "pdf_paths": ["/tmp/design-bundle.zip"],
+        }
+        self.assertEqual("physical", etsy_auto_post.resolve_listing_type(product))
+
+    def test_explicit_digital_metadata_can_override_furniture_scope(self):
+        product = {
+            "category": "Home & Living > Furniture",
+            "section": "Furniture",
+            "listing_type": "digital",
+            "pdf_paths": ["/tmp/design-bundle.zip"],
+        }
+        self.assertEqual("digital", etsy_auto_post.resolve_listing_type(product))
 
 
 class TestFillCategoryTab(unittest.IsolatedAsyncioTestCase):
@@ -1110,12 +1680,170 @@ class TestFillCategoryTab(unittest.IsolatedAsyncioTestCase):
                 with patch.object(etsy_auto_post, "click_tab", AsyncMock()), \
                         patch.object(
                             etsy_auto_post,
+                            "resolve_listing_type",
+                            lambda _product: "digital",
+                        ), \
+                        patch.object(
+                            etsy_auto_post,
+                            "_select_category_with_exact_readback",
+                            AsyncMock(return_value=option_text),
+                        ), \
+                        patch.object(
+                            etsy_auto_post,
                             "_select_digital_listing_type_dropdown_if_present",
                             AsyncMock(return_value=False),
                         ):
                     await etsy_auto_post.fill_category_tab(page, product)
 
                 self.assertEqual(expected_flag, product.get("_digital_listing_type_verified"))
+
+    async def test_fill_category_tab_records_physical_proof_from_option_and_committed_badge(self):
+        target = "Homepage > Home & Living > Furniture > Living Room Furniture > Coffee & End Tables"
+        selected_option = "Coffee & End Tables\nPhysical"
+        page = _FakeCategoryPage(
+            [
+                selected_option,
+                "Coffee Tables\nPhysical",
+                "End Tables\nPhysical",
+                "Living Room Furniture\nPhysical",
+                "Art & Photography Books\nPhysical or digital",
+            ],
+            readback_text="Coffee & End Tables",
+            committed_category_badges=["Physical"],
+        )
+        product = {
+            "category": target,
+            "title": "Physical furniture category proof",
+            "keywords": "coffee table",
+            "tags": "furniture",
+            "description": "Physical furniture listing",
+            "pdf_paths": [],
+        }
+
+        with patch.object(etsy_auto_post, "click_tab", AsyncMock()), patch.object(
+            etsy_auto_post,
+            "_select_physical_listing_type_dropdown_if_present",
+            AsyncMock(return_value=False),
+        ):
+            await etsy_auto_post.fill_category_tab(page, product)
+
+        self.assertEqual("category_physical_metadata", product.get("_digital_listing_type_verified"))
+
+    async def test_fill_category_tab_requires_one_exact_physical_badge_for_physical_proof(self):
+        selected_option = "Coffee & End Tables\nPhysical"
+        cases = (
+            (None, set(), set()),
+            (["Digital"], set(), set()),
+            (["Physical / Digital"], set(), set()),
+            (["Physical or digital"], set(), set()),
+            (["Physical", "Physical"], set(), set()),
+            (["Physical", "Physical"], {1}, set()),
+            (["Physical"], set(), {0}),
+        )
+        for committed_category_badges, unreadable_indices, hidden_indices in cases:
+            with self.subTest(
+                committed_category_badges=committed_category_badges,
+                unreadable_indices=unreadable_indices,
+                hidden_indices=hidden_indices,
+            ):
+                page = _FakeCategoryPage(
+                    [selected_option],
+                    readback_text="Coffee & End Tables",
+                    committed_category_badges=committed_category_badges,
+                    committed_category_badge_unreadable_indices=unreadable_indices,
+                    committed_category_badge_hidden_indices=hidden_indices,
+                )
+                product = {
+                    "category": "Home & Living > Furniture > Living Room Furniture > Coffee & End Tables",
+                    "title": "Physical category badge gate",
+                    "keywords": "coffee table",
+                    "tags": "furniture",
+                    "description": "Physical furniture listing",
+                }
+
+                with patch.object(etsy_auto_post, "click_tab", AsyncMock()), patch.object(
+                    etsy_auto_post,
+                    "_select_category_with_exact_readback",
+                    AsyncMock(return_value=selected_option),
+                ), patch.object(
+                    etsy_auto_post,
+                    "_select_physical_listing_type_dropdown_if_present",
+                    AsyncMock(return_value=False),
+                ):
+                    await etsy_auto_post.fill_category_tab(page, product)
+
+                self.assertNotIn("_digital_listing_type_verified", product)
+
+    async def test_fill_category_tab_control_proof_takes_precedence_over_category_badge(self):
+        selected_option = "Coffee & End Tables\nPhysical"
+        page = _FakeCategoryPage(
+            [selected_option],
+            readback_text="Coffee & End Tables",
+            committed_category_badges=["Digital"],
+        )
+        product = {
+            "category": "Home & Living > Furniture > Living Room Furniture > Coffee & End Tables",
+            "title": "Physical category control proof",
+            "keywords": "coffee table",
+            "tags": "furniture",
+            "description": "Physical furniture listing",
+        }
+
+        with patch.object(etsy_auto_post, "click_tab", AsyncMock()), patch.object(
+            etsy_auto_post,
+            "_select_category_with_exact_readback",
+            AsyncMock(return_value=selected_option),
+        ), patch.object(
+            etsy_auto_post,
+            "_select_physical_listing_type_dropdown_if_present",
+            AsyncMock(return_value=True),
+        ), patch.object(
+            etsy_auto_post,
+            "select_and_verify_physical_listing_type",
+            AsyncMock(return_value="dropdown"),
+        ) as physical_verify:
+            await etsy_auto_post.fill_category_tab(page, product)
+
+        self.assertEqual("dropdown", product.get("_digital_listing_type_verified"))
+        physical_verify.assert_awaited_once_with(page)
+
+    async def test_physical_category_proof_excludes_customer_files_and_digital_products(self):
+        selected_option = "Coffee & End Tables\nPhysical"
+        for product_overrides in (
+            {"pdf_paths": ["/tmp/customer-file.zip"]},
+            {"_resolved_listing_type": "digital"},
+        ):
+            with self.subTest(product_overrides=product_overrides):
+                page = _FakeCategoryPage(
+                    [selected_option],
+                    readback_text="Coffee & End Tables",
+                    committed_category_badges=["Physical"],
+                )
+                product = {
+                    "category": "Home & Living > Furniture > Living Room Furniture > Coffee & End Tables",
+                    "title": "Physical proof exclusion",
+                    "keywords": "coffee table",
+                    "tags": "furniture",
+                    "description": "Physical furniture listing",
+                    **product_overrides,
+                }
+
+                with patch.object(etsy_auto_post, "click_tab", AsyncMock()), patch.object(
+                    etsy_auto_post,
+                    "_select_category_with_exact_readback",
+                    AsyncMock(return_value=selected_option),
+                ), patch.object(
+                    etsy_auto_post,
+                    "_select_physical_listing_type_dropdown_if_present",
+                    AsyncMock(return_value=False),
+                ), patch.object(
+                    etsy_auto_post,
+                    "resolve_listing_type",
+                    lambda current: current.get("_resolved_listing_type", "physical"),
+                ):
+                    await etsy_auto_post.fill_category_tab(page, product)
+
+                self.assertNotIn("_digital_listing_type_verified", product)
 
     async def test_fill_category_tab_skips_digital_prime_when_surface_is_already_visible(self):
         page = _FakeCategoryPage(
@@ -1486,7 +2214,248 @@ class TestExitCodeContract(unittest.TestCase):
         self.assertEqual(0, etsy_auto_post._exit_code_for_failed_products(0))
 
 
+class TestMainOutcomeHandling(unittest.IsolatedAsyncioTestCase):
+    class _Page:
+        url = "https://www.etsy.com/your/shops/me/tools/listings"
+
+        async def wait_for_timeout(self, _ms: int):
+            return None
+
+        async def content(self):
+            return ""
+
+        async def close(self):
+            return None
+
+    class _PlaywrightContext:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *_args):
+            return None
+
+    class _PipelineStore:
+        def __init__(self, _path):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    def _workbook_fixture(self, tmp_path):
+        shop_dir = tmp_path / "shops" / "templystudios"
+        shop_dir.mkdir(parents=True)
+        workbook_path = shop_dir / "Etsy_SEO_Generator.xlsx"
+        workbook = openpyxl.Workbook()
+        worksheet = workbook.active
+        worksheet.title = "Listings"
+        worksheet.cell(row=9, column=2, value="product-06")
+        worksheet.cell(row=9, column=8, value="Coffee End Tables")
+        workbook.save(workbook_path)
+        return workbook, worksheet, workbook_path, shop_dir
+
+    async def _run_main(self, tmp_path, product, result, *, pipeline_outcome=None):
+        workbook, worksheet, workbook_path, shop_dir = self._workbook_fixture(tmp_path)
+        page = self._Page()
+        original_base_dir = etsy_auto_post.BASE_DIR
+        original_shop_dir = etsy_auto_post.SHOP_DIR
+        original_excel_file = etsy_auto_post.EXCEL_FILE
+        save_mock = Mock(wraps=etsy_auto_post.save_status)
+        asset_success_mock = Mock()
+        fill_mock = AsyncMock(return_value=result)
+        record_mock = patch.object(
+            etsy_auto_post,
+            "_record_pipeline_post_result",
+            return_value=pipeline_outcome,
+        ) if pipeline_outcome is not None else patch.object(
+            etsy_auto_post,
+            "_record_pipeline_post_result",
+            wraps=etsy_auto_post._record_pipeline_post_result,
+        )
+        with patch.object(etsy_auto_post, "BASE_DIR", tmp_path), \
+                patch.object(etsy_auto_post, "SHOP_DIR", shop_dir), \
+                patch.object(etsy_auto_post, "EXCEL_FILE", workbook_path), \
+                patch.object(etsy_auto_post, "read_products", return_value=([product], workbook, worksheet, 1)), \
+                patch.object(etsy_auto_post, "resolve_browser_session_dir", return_value=tmp_path), \
+                patch.object(etsy_auto_post, "async_playwright", return_value=self._PlaywrightContext()), \
+                patch.object(etsy_auto_post, "_open_poster_context", AsyncMock(return_value=(object(), page, False))), \
+                patch.object(etsy_auto_post, "_navigate_to_shop_manager", AsyncMock()), \
+                patch.object(etsy_auto_post, "_assert_shop_manager_identity", AsyncMock()), \
+                patch.object(etsy_auto_post, "_is_etsy_signin_page", return_value=False), \
+                patch.object(etsy_auto_post, "fill_listing", fill_mock), \
+                patch.object(etsy_auto_post, "save_status", save_mock), \
+                patch.object(etsy_auto_post, "mark_product_asset_operation_success", asset_success_mock), \
+                patch.object(etsy_auto_post, "FILL_TRANSLATIONS", False), \
+                patch.object(etsy_auto_post, "_prepare_pipeline_post", lambda *_args: None), \
+                patch.object(etsy_auto_post.asyncio, "sleep", AsyncMock()), \
+                record_mock, patch.object(etsy_auto_post, "JobStore", self._PipelineStore), patch.object(
+                    etsy_auto_post.sys,
+                    "argv",
+                    ["etsy_auto_post.py", "--product", str(product["folder"])],
+                ):
+            exit_code = await etsy_auto_post.main()
+        saved_workbook = openpyxl.load_workbook(workbook_path, data_only=True)
+        saved_sheet = saved_workbook["Listings"]
+        saved_values = (saved_sheet.cell(row=9, column=14).value, saved_sheet.cell(row=9, column=16).value)
+        saved_workbook.close()
+        globals_restored = (
+            etsy_auto_post.BASE_DIR == original_base_dir
+            and etsy_auto_post.SHOP_DIR == original_shop_dir
+            and etsy_auto_post.EXCEL_FILE == original_excel_file
+        )
+        return exit_code, save_mock, asset_success_mock, saved_values, globals_restored
+
+    async def test_legacy_url_is_saved_as_success_and_assets_are_marked(self):
+        listing_url = "https://www.etsy.com/listing/4579118163"
+        product = {
+            "folder": "product-06",
+            "row": 9,
+            "title": "Coffee End Tables",
+            "image_paths": [f"image-{i}.png" for i in range(10)],
+            "pdf_paths": [],
+        }
+
+        with tempfile.TemporaryDirectory() as temp_root:
+            exit_code, save_mock, asset_success_mock, saved_values, globals_restored = await self._run_main(
+                Path(temp_root), product, listing_url
+            )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(("✅ Đã đăng draft", listing_url), saved_values)
+        self.assertTrue(globals_restored)
+        save_mock.assert_called_once_with(
+            ANY,
+            ANY,
+            9,
+            "✅ Đã đăng draft",
+            url=listing_url,
+        )
+        asset_success_mock.assert_called_once_with(product)
+
+    async def test_unknown_pipeline_url_reconciles_and_does_not_mark_assets(self):
+        listing_url = "https://www.etsy.com/listing/4579118163"
+        product = {
+            "folder": "product-06",
+            "row": 9,
+            "title": "Coffee End Tables",
+            "image_paths": [f"image-{i}.png" for i in range(10)],
+            "pdf_paths": [],
+            "pipeline_job_id": "job-06",
+        }
+
+        with tempfile.TemporaryDirectory() as temp_root:
+            exit_code, save_mock, asset_success_mock, saved_values, globals_restored = await self._run_main(
+                Path(temp_root), product, listing_url, pipeline_outcome="unknown"
+            )
+
+        self.assertEqual(1, exit_code)
+        self.assertEqual(("⚠️ Draft cần đối soát", listing_url), saved_values)
+        self.assertTrue(globals_restored)
+        save_mock.assert_called_once_with(
+            ANY,
+            ANY,
+            9,
+            "⚠️ Draft cần đối soát",
+            url=listing_url,
+        )
+        asset_success_mock.assert_not_called()
+
+
 class TestDigitalListingTypeSelection(unittest.IsolatedAsyncioTestCase):
+    async def test_item_details_native_section_selects_one_exact_normalized_option(self):
+        page = _FakeSectionPage([
+            ("Other", "Other"),
+            ("Digital Planner", "Digital Planner"),
+        ])
+        product = {
+            "title": "Native section exact match",
+            "description": "Description",
+            "tags": "",
+            "section": " digital planner ",
+            "pdf_paths": [],
+            "_digital_listing_type_verified": "dropdown",
+        }
+
+        with patch.object(etsy_auto_post, "dismiss_alerts", AsyncMock()), patch.object(
+            etsy_auto_post,
+            "_click_verified_item_details_tab",
+            AsyncMock(return_value=True),
+        ), patch.object(etsy_auto_post, "smart_fill", AsyncMock(return_value=False)):
+            await etsy_auto_post.fill_item_details_tab(page, product)
+
+        self.assertEqual(
+            [{"index": 1, "timeout": 3000}],
+            page.section_select.select_calls,
+        )
+        self.assertFalse(any("button" in selector for selector in page.locator_calls))
+
+    async def test_item_details_native_section_missing_or_duplicate_exact_label_skips_without_custom_fallback(self):
+        for options in (
+            [("Digital Planners", "Digital Planners"), ("Planner Templates", "Planner Templates")],
+            [("Digital Planner", "Digital Planner"), ("Digital Planner", "Digital Planner")],
+        ):
+            with self.subTest(options=options):
+                page = _FakeSectionPage(options)
+                product = {
+                    "title": "Native section bounded mismatch",
+                    "description": "Description",
+                    "tags": "",
+                    "section": "Digital Planner",
+                    "pdf_paths": [],
+                    "_digital_listing_type_verified": "dropdown",
+                }
+
+                with patch.object(etsy_auto_post, "dismiss_alerts", AsyncMock()), patch.object(
+                    etsy_auto_post,
+                    "_click_verified_item_details_tab",
+                    AsyncMock(return_value=True),
+                ), patch.object(etsy_auto_post, "smart_fill", AsyncMock(return_value=False)):
+                    await etsy_auto_post.fill_item_details_tab(page, product)
+
+                self.assertEqual([], page.section_select.select_calls)
+                self.assertFalse(any("button" in selector for selector in page.locator_calls))
+
+    async def test_item_options_created_by_me_probe_is_digital_only(self):
+        for listing_type, should_probe in (("digital", True), ("physical", False)):
+            with self.subTest(listing_type=listing_type):
+                page = _FakeDigitalContentPage()
+                product = {
+                    "title": "Listing type content probe",
+                    "description": "Description",
+                    "tags": "",
+                    "section": "",
+                    "pdf_paths": [],
+                    "_resolved_listing_type": listing_type,
+                    "_digital_listing_type_verified": "dropdown",
+                }
+
+                with patch.object(etsy_auto_post, "click_tab", AsyncMock()), patch(
+                    "builtins.print"
+                ) as print_mock:
+                    await etsy_auto_post.fill_item_options_tab(page, product)
+
+                created_by_me_probes = [
+                    selector
+                    for selector in page.locator_calls
+                    if "created_by_me" in selector
+                    or "value*=" in selector and any(
+                        token in selector for token in ("human", "manually")
+                    )
+                    or "Created by me" in selector
+                    or "I created this" in selector
+                ]
+                self.assertEqual(should_probe, bool(created_by_me_probes))
+                output = " ".join(str(call.args[0]) for call in print_mock.call_args_list)
+                self.assertEqual(should_probe, "Digital content: Created by me" in output)
+
+    async def test_current_dropdown_selects_and_verifies_physical(self):
+        page = _FakeDigitalPage(dropdown=True, dropdown_button_label="Digital", dropdown_options=["Digital", "Physical"])
+
+        mode = await etsy_auto_post.select_and_verify_physical_listing_type(page)
+
+        self.assertEqual("dropdown", mode)
+        self.assertEqual("Physical", page.button.text)
+        self.assertFalse(page.listbox_open)
+
     async def test_current_dropdown_selects_and_verifies_digital(self):
         page = _FakeDigitalPage(dropdown=True)
 
@@ -1675,7 +2644,7 @@ class TestDigitalListingTypeSelection(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(etsy_auto_post.DigitalListingTypeError) as error:
             await etsy_auto_post.select_and_verify_digital_listing_type(page)
 
-        self.assertIn("không giữ trạng thái Digital", str(error.exception))
+        self.assertIn("không giữ trạng thái", str(error.exception).lower())
 
     async def test_digital_files_region_is_required_when_checked(self):
         await etsy_auto_post._verify_digital_files_region(
@@ -1827,21 +2796,67 @@ class TestDigitalListingTypeSelection(unittest.IsolatedAsyncioTestCase):
                 ) as exact_tab_mock, \
                 patch.object(
                     etsy_auto_post,
-                    "select_and_verify_digital_listing_type",
+                    "select_and_verify_physical_listing_type",
                     AsyncMock(return_value="dropdown"),
-                ) as digital_type_mock, \
+                ) as physical_type_mock, \
                 patch.object(etsy_auto_post, "click_tab", AsyncMock()) as broad_tab_mock, \
                 patch.object(etsy_auto_post, "smart_fill", AsyncMock(return_value=False)):
             await etsy_auto_post.fill_item_details_tab(page, product)
 
         exact_tab_mock.assert_awaited_once_with(page)
-        digital_type_mock.assert_awaited_once_with(page)
+        physical_type_mock.assert_awaited_once_with(page)
         self.assertEqual("dropdown", product["_digital_listing_type_verified"])
         broad_tab_mock.assert_not_awaited()
         self.assertNotIn(
             'click_tab(page, "Item Details", "Details")',
             inspect.getsource(etsy_auto_post.fill_item_details_tab),
         )
+
+    async def test_category_physical_proof_skips_missing_downstream_listing_type_control(self):
+        category_page = _FakeCategoryPage(
+            ["Coffee & End Tables\nPhysical"],
+            readback_text="Coffee & End Tables",
+            committed_category_badges=["Physical"],
+        )
+        product = {
+            "category": "Home & Living > Furniture > Living Room Furniture > Coffee & End Tables",
+            "title": "Physical proof downstream gate",
+            "keywords": "coffee table",
+            "tags": "furniture",
+            "description": "Physical furniture listing",
+            "pdf_paths": [],
+        }
+
+        with patch.object(etsy_auto_post, "click_tab", AsyncMock()), patch.object(
+            etsy_auto_post,
+            "_select_category_with_exact_readback",
+            AsyncMock(return_value="Coffee & End Tables\nPhysical"),
+        ), patch.object(
+            etsy_auto_post,
+            "_select_physical_listing_type_dropdown_if_present",
+            AsyncMock(return_value=False),
+        ):
+            await etsy_auto_post.fill_category_tab(category_page, product)
+
+        self.assertEqual("category_physical_metadata", product.get("_digital_listing_type_verified"))
+
+        with patch.object(etsy_auto_post, "dismiss_alerts", AsyncMock()), patch.object(
+            etsy_auto_post,
+            "_click_verified_item_details_tab",
+            AsyncMock(return_value=True),
+        ), patch.object(
+            etsy_auto_post,
+            "select_and_verify_physical_listing_type",
+            AsyncMock(side_effect=AssertionError("downstream verifier must be skipped")),
+        ) as physical_verify, patch.object(
+            etsy_auto_post,
+            "smart_fill",
+            AsyncMock(return_value=False),
+        ), patch.object(etsy_auto_post, "click_tab", AsyncMock()):
+            await etsy_auto_post.fill_item_details_tab(_NoOpDetailsPage(), product)
+            await etsy_auto_post.fill_item_options_tab(_NoOpDetailsPage(), product)
+
+        physical_verify.assert_not_awaited()
 
     async def test_listing_type_is_selected_on_item_details_and_not_reselected_in_options(self):
         page = _NoOpDetailsPage()
@@ -1858,8 +2873,8 @@ class TestDigitalListingTypeSelection(unittest.IsolatedAsyncioTestCase):
             events.append("item_details")
             return True
 
-        async def select_digital(_page):
-            events.append("select_digital")
+        async def select_physical(_page):
+            events.append("select_physical")
             return "dropdown"
 
         async def open_item_options(_page, *_labels):
@@ -1873,15 +2888,15 @@ class TestDigitalListingTypeSelection(unittest.IsolatedAsyncioTestCase):
                 ), \
                 patch.object(
                     etsy_auto_post,
-                    "select_and_verify_digital_listing_type",
-                    side_effect=select_digital,
+                    "select_and_verify_physical_listing_type",
+                    side_effect=select_physical,
                 ) as select_mock, \
                 patch.object(etsy_auto_post, "click_tab", side_effect=open_item_options), \
                 patch.object(etsy_auto_post, "smart_fill", AsyncMock(return_value=False)):
             await etsy_auto_post.fill_item_details_tab(page, product)
             await etsy_auto_post.fill_item_options_tab(page, product)
 
-        self.assertEqual(["item_details", "select_digital", "item_options"], events)
+        self.assertEqual(["item_details", "select_physical", "item_options"], events)
         select_mock.assert_awaited_once_with(page)
         self.assertEqual("dropdown", product["_digital_listing_type_verified"])
 
@@ -2085,32 +3100,172 @@ class TestDigitalListingTypeSelection(unittest.IsolatedAsyncioTestCase):
 
     async def test_selection_failure_aborts_fill_listing_before_save(self):
         page = _NoSaveListingPage()
-        product = {
-            "folder": "product-test",
-            "title": "Digital listing contract test",
-            "image_paths": [],
-            "pdf_paths": [],
-            "price": 4.99,
-        }
+        with tempfile.NamedTemporaryFile(suffix=".pdf") as customer_file:
+            product = {
+                "folder": "product-test",
+                "title": "Digital listing contract test",
+                "image_paths": [],
+                "pdf_paths": [customer_file.name],
+                "price": 4.99,
+            }
 
-        with patch.object(etsy_auto_post, "detect_form_type", AsyncMock(return_value="tabs")), \
-                patch.object(etsy_auto_post, "fill_photo_tab", AsyncMock()), \
-                patch.object(etsy_auto_post, "fill_category_tab", AsyncMock()), \
-                patch.object(etsy_auto_post, "fill_item_details_tab", AsyncMock()), \
-                patch.object(etsy_auto_post, "fill_pricing_tab", AsyncMock()), \
-                patch.object(etsy_auto_post, "click_tab", AsyncMock()), \
-                patch.object(
-                    etsy_auto_post,
-                    "select_and_verify_digital_listing_type",
-                    AsyncMock(side_effect=etsy_auto_post.DigitalListingTypeError("Digital missing")),
-                ):
-            with self.assertRaises(etsy_auto_post.DigitalListingTypeError):
-                await etsy_auto_post.fill_listing(
+            with patch.object(etsy_auto_post, "detect_form_type", AsyncMock(return_value="tabs")), \
+                    patch.object(etsy_auto_post, "fill_photo_tab", AsyncMock()), \
+                    patch.object(etsy_auto_post, "fill_category_tab", AsyncMock()), \
+                    patch.object(etsy_auto_post, "fill_item_details_tab", AsyncMock()), \
+                    patch.object(etsy_auto_post, "fill_pricing_tab", AsyncMock()), \
+                    patch.object(etsy_auto_post, "click_tab", AsyncMock()), \
+                    patch.object(
+                        etsy_auto_post,
+                        "check_duplicate_draft",
+                        AsyncMock(return_value=None),
+                    ) as duplicate_check, \
+                    patch.object(
+                        etsy_auto_post,
+                        "select_and_verify_digital_listing_type",
+                        AsyncMock(side_effect=etsy_auto_post.DigitalListingTypeError("Digital missing")),
+                    ):
+                with self.assertRaises(etsy_auto_post.DigitalListingTypeError):
+                    await etsy_auto_post.fill_listing(
+                        page,
+                        product,
+                        edit_url="https://www.etsy.com/your/shops/me/listing-editor/edit/123",
+                    )
+
+        duplicate_check.assert_not_awaited()
+        self.assertFalse(any("Save" in selector for selector in page.locator_calls))
+
+    async def test_fill_listing_does_not_reprobe_verified_digital_type_after_tabs_unmount_control(self):
+        page = _NoSaveListingPage()
+        with tempfile.NamedTemporaryFile(suffix=".pdf") as customer_file:
+            product = {
+                "folder": "product-verified-digital",
+                "title": "Verified digital listing contract test",
+                "image_paths": [],
+                "pdf_paths": [customer_file.name],
+                "price": 4.99,
+            }
+
+            async def mark_digital(_page, target):
+                target["_digital_listing_type_verified"] = "digital_files"
+                target["_digital_files_uploaded"] = True
+
+            with patch.object(etsy_auto_post, "detect_form_type", AsyncMock(return_value="tabs")), \
+                    patch.object(etsy_auto_post, "fill_photo_tab", AsyncMock()), \
+                    patch.object(
+                        etsy_auto_post,
+                        "fill_category_tab",
+                        AsyncMock(side_effect=mark_digital),
+                    ), \
+                    patch.object(etsy_auto_post, "fill_item_details_tab", AsyncMock()), \
+                    patch.object(etsy_auto_post, "fill_item_options_tab", AsyncMock()), \
+                    patch.object(etsy_auto_post, "fill_pricing_tab", AsyncMock()), \
+                    patch.object(etsy_auto_post, "fill_translations", AsyncMock()), \
+                    patch.object(
+                        etsy_auto_post,
+                        "select_and_verify_digital_listing_type",
+                        AsyncMock(side_effect=etsy_auto_post.DigitalListingTypeError(
+                            "listing type control was unmounted"
+                        )),
+                    ) as select_mock, \
+                    patch.object(
+                        etsy_auto_post,
+                        "_verify_saved_draft_digital_files",
+                        AsyncMock(),
+                    ) as saved_readback_mock, \
+                    patch.object(
+                        etsy_auto_post,
+                        "get_newly_created_listing_url",
+                        AsyncMock(return_value="https://www.etsy.com/listing/999"),
+                    ) as listing_url_mock:
+                result = await etsy_auto_post.fill_listing(
                     page,
                     product,
                     edit_url="https://www.etsy.com/your/shops/me/listing-editor/edit/123",
                 )
 
+        self.assertEqual("https://www.etsy.com/listing/999", result)
+        select_mock.assert_not_awaited()
+        saved_readback_mock.assert_awaited_once_with(page, product)
+        listing_url_mock.assert_awaited_once_with(page, product)
+        self.assertTrue(any("save" in selector.lower() for selector in page.locator_calls))
+
+    async def test_fill_listing_does_not_reprobe_verified_physical_type_after_tabs_unmount_control(self):
+        page = _NoSaveListingPage()
+        product = {
+            "folder": "product-verified-physical",
+            "title": "Verified physical listing contract test",
+            "listing_type": "physical",
+            "image_paths": [],
+            "pdf_paths": [],
+            "price": 4.99,
+        }
+
+        async def mark_physical(_page, target):
+            target["_digital_listing_type_verified"] = "dropdown"
+
+        with patch.object(etsy_auto_post, "detect_form_type", AsyncMock(return_value="tabs")), \
+                patch.object(etsy_auto_post, "fill_photo_tab", AsyncMock()), \
+                patch.object(
+                    etsy_auto_post,
+                    "fill_category_tab",
+                    AsyncMock(side_effect=mark_physical),
+                ) as category_mock, \
+                patch.object(etsy_auto_post, "fill_item_details_tab", AsyncMock()), \
+                patch.object(etsy_auto_post, "fill_item_options_tab", AsyncMock()), \
+                patch.object(etsy_auto_post, "fill_pricing_tab", AsyncMock()), \
+                patch.object(etsy_auto_post, "fill_translations", AsyncMock()), \
+                patch.object(
+                    etsy_auto_post,
+                    "select_and_verify_physical_listing_type",
+                    AsyncMock(side_effect=AssertionError(
+                        "physical listing type was re-probed after its control unmounted"
+                    )),
+                ) as select_mock, \
+                patch.object(
+                    etsy_auto_post,
+                    "get_newly_created_listing_url",
+                    AsyncMock(return_value="https://www.etsy.com/listing/999"),
+                ) as listing_url_mock:
+            result = await etsy_auto_post.fill_listing(
+                page,
+                product,
+                edit_url="https://www.etsy.com/your/shops/me/listing-editor/edit/123",
+            )
+
+        self.assertEqual("https://www.etsy.com/listing/999", result)
+        self.assertEqual("dropdown", product["_digital_listing_type_verified"])
+        category_mock.assert_awaited_once_with(page, product)
+        select_mock.assert_not_awaited()
+        listing_url_mock.assert_awaited_once_with(page, product)
+        self.assertTrue(any("save" in selector.lower() for selector in page.locator_calls))
+
+    async def test_fill_listing_rejects_missing_listing_type_evidence_before_save(self):
+        page = _NoSaveListingPage()
+        with tempfile.NamedTemporaryFile(suffix=".pdf") as customer_file:
+            product = {
+                "folder": "product-missing-digital-evidence",
+                "title": "Missing digital evidence contract test",
+                "image_paths": [],
+                "pdf_paths": [customer_file.name],
+                "price": 4.99,
+            }
+
+            with patch.object(etsy_auto_post, "detect_form_type", AsyncMock(return_value="tabs")), \
+                    patch.object(etsy_auto_post, "fill_photo_tab", AsyncMock()), \
+                    patch.object(etsy_auto_post, "fill_category_tab", AsyncMock()), \
+                    patch.object(etsy_auto_post, "fill_item_details_tab", AsyncMock()), \
+                    patch.object(etsy_auto_post, "fill_item_options_tab", AsyncMock()), \
+                    patch.object(etsy_auto_post, "fill_pricing_tab", AsyncMock()), \
+                    patch.object(etsy_auto_post, "fill_translations", AsyncMock()):
+                with self.assertRaises(etsy_auto_post.DigitalListingTypeError) as error:
+                    await etsy_auto_post.fill_listing(
+                        page,
+                        product,
+                        edit_url="https://www.etsy.com/your/shops/me/listing-editor/edit/123",
+                    )
+
+        self.assertIn("Chưa xác minh được listing", str(error.exception))
         self.assertFalse(any("Save" in selector for selector in page.locator_calls))
 
     async def test_upload_failure_aborts_tabs_form_before_save(self):
@@ -2142,6 +3297,11 @@ class TestDigitalListingTypeSelection(unittest.IsolatedAsyncioTestCase):
                     patch.object(etsy_auto_post, "click_tab", AsyncMock()), \
                     patch.object(
                         etsy_auto_post,
+                        "check_duplicate_draft",
+                        AsyncMock(return_value=None),
+                    ) as duplicate_check, \
+                    patch.object(
+                        etsy_auto_post,
                         "_click_verified_item_details_tab",
                         AsyncMock(return_value=True),
                     ) as details_tab_mock, \
@@ -2157,6 +3317,7 @@ class TestDigitalListingTypeSelection(unittest.IsolatedAsyncioTestCase):
                         edit_url="https://www.etsy.com/your/shops/me/listing-editor/edit/123",
                     )
 
+            duplicate_check.assert_not_awaited()
             details_tab_mock.assert_awaited_once_with(page)
             upload_mock.assert_awaited_once_with(page, product)
 
@@ -2178,7 +3339,12 @@ class TestDigitalListingTypeSelection(unittest.IsolatedAsyncioTestCase):
                         etsy_auto_post,
                         "select_and_verify_digital_listing_type",
                         AsyncMock(return_value="legacy_radio"),
-                    ):
+                    ), \
+                    patch.object(
+                        etsy_auto_post,
+                        "check_duplicate_draft",
+                        AsyncMock(return_value=None),
+                    ) as duplicate_check:
                 with self.assertRaises(etsy_auto_post.DigitalListingTypeError) as error:
                     await etsy_auto_post.fill_listing(
                         page,
@@ -2186,8 +3352,245 @@ class TestDigitalListingTypeSelection(unittest.IsolatedAsyncioTestCase):
                         edit_url="https://www.etsy.com/your/shops/me/listing-editor/edit/123",
                     )
 
+        duplicate_check.assert_not_awaited()
         self.assertIn("trang dài", str(error.exception))
         self.assertFalse(any("Save" in selector for selector in page.locator_calls))
+
+    async def test_generic_furniture_preflight_stops_before_navigation_and_photo_upload(self):
+        page = _NoSaveListingPage()
+        product = {
+            "folder": "product-generic-furniture",
+            "title": "Generic furniture category preflight",
+            "category": "Home & Living > Furniture",
+            "section": "Furniture",
+            "image_paths": ["/tmp/should-not-upload.jpg"],
+            "pdf_paths": [],
+            "price": 4.99,
+        }
+
+        self.assertEqual("physical", etsy_auto_post.resolve_listing_type(product))
+        with patch.object(
+            etsy_auto_post,
+            "check_duplicate_draft",
+            AsyncMock(return_value=False),
+        ) as duplicate_mock, patch.object(
+            etsy_auto_post,
+            "fill_photo_tab",
+            AsyncMock(),
+        ) as photo_mock, patch.object(
+            etsy_auto_post,
+            "fill_category_tab",
+            AsyncMock(),
+        ) as category_mock:
+            result = await etsy_auto_post.fill_listing(page, product)
+
+        self.assertFalse(result[0])
+        self.assertIn("Home & Living > Furniture", result[1])
+        self.assertIn("Physical", result[1])
+        self.assertIn("breadcrumb Etsy chính xác", result[1])
+        duplicate_mock.assert_not_awaited()
+        photo_mock.assert_not_awaited()
+        category_mock.assert_not_awaited()
+        self.assertEqual([], page.goto_calls)
+
+    async def test_fill_listing_runs_duplicate_check_only_for_create_flow(self):
+        page = _NoSaveListingPage()
+        product = {
+            "folder": "product-create-dup-check",
+            "title": "Create flow duplicate check test",
+            "image_paths": [],
+            "pdf_paths": [],
+            "price": 4.99,
+        }
+
+        with patch.object(
+            etsy_auto_post,
+            "check_duplicate_draft",
+            AsyncMock(return_value=etsy_auto_post.DRAFT_DUPLICATE_CHECK_FAILED_SENTINEL),
+        ) as duplicate_check:
+            result = await etsy_auto_post.fill_listing(
+                page,
+                product,
+                edit_url=None,
+            )
+
+        self.assertFalse(result[0])
+        self.assertIn("trùng lặp draft", result[1])
+        duplicate_check.assert_awaited_once_with(page, product)
+        self.assertEqual(
+            "https://www.etsy.com/your/shops/me/listing-editor/edit/123",
+            page.url,
+        )
+        self.assertEqual([], page.goto_calls)
+
+    async def test_nonduplicate_create_checks_drafts_before_opening_editor(self):
+        page = _NoSaveListingPage()
+        product = {
+            "folder": "product-create-nonduplicate",
+            "title": "Create flow nonduplicate check test",
+            "image_paths": [],
+            "pdf_paths": [],
+            "price": 4.99,
+        }
+        events = []
+
+        async def duplicate_check(check_page, _product):
+            events.append(("duplicate", check_page.url))
+            return False
+
+        async def open_editor(url, *, wait_until=None):
+            events.append(("goto", url))
+            page.url = url
+            page.goto_calls.append((url, wait_until))
+
+        async def mark_physical_type(_page, target):
+            events.append(("category",))
+            target["_digital_listing_type_verified"] = "dropdown"
+
+        async def fill_photo(_page, _target, **_kwargs):
+            events.append(("photo",))
+
+        page.goto = open_editor
+
+        with patch.object(
+            etsy_auto_post,
+            "check_duplicate_draft",
+            AsyncMock(side_effect=duplicate_check),
+        ) as duplicate_mock, patch.object(
+            etsy_auto_post,
+            "detect_form_type",
+            AsyncMock(return_value="tabs"),
+        ), patch.object(
+            etsy_auto_post,
+            "fill_photo_tab",
+            AsyncMock(side_effect=fill_photo),
+        ), patch.object(
+            etsy_auto_post,
+            "fill_category_tab",
+            AsyncMock(side_effect=mark_physical_type),
+        ), patch.object(
+            etsy_auto_post,
+            "fill_item_details_tab",
+            AsyncMock(),
+        ), patch.object(
+            etsy_auto_post,
+            "fill_item_options_tab",
+            AsyncMock(),
+        ), patch.object(
+            etsy_auto_post,
+            "fill_pricing_tab",
+            AsyncMock(),
+        ), patch.object(
+            etsy_auto_post,
+            "select_and_verify_physical_listing_type",
+            AsyncMock(return_value="dropdown"),
+        ), patch.object(
+            etsy_auto_post,
+            "fill_translations",
+            AsyncMock(),
+        ):
+            result = await etsy_auto_post.fill_listing(page, product)
+
+        duplicate_mock.assert_awaited_once_with(page, product)
+        self.assertEqual(
+            ["duplicate", "goto", "category", "photo"],
+            [event[0] for event in events],
+        )
+        self.assertEqual("duplicate", events[0][0])
+        self.assertEqual("goto", events[1][0])
+        self.assertEqual(
+            "https://www.etsy.com/your/shops/me/listing-editor/create",
+            events[1][1],
+        )
+        self.assertEqual(
+            "https://www.etsy.com/your/shops/me/listing-editor/edit/999",
+            page.url,
+        )
+        self.assertEqual(
+            ("https://www.etsy.com/your/shops/me/listing-editor/create", "domcontentloaded"),
+            page.goto_calls[0],
+        )
+        self.assertEqual("https://www.etsy.com/listing/999", result)
+
+    async def test_nonduplicate_create_redirected_to_dashboard_reports_dashboard_diagnosis(self):
+        page = _EditorNavigationFailurePage(
+            "https://www.etsy.com/your/shops/me/dashboard",
+            redirect_to="https://www.etsy.com/your/shops/me/dashboard",
+            title_text="Etsy Shop Dashboard",
+            headline_text="Shop Manager",
+            body_text="Welcome back to shop manager dashboard",
+        )
+        product = {
+            "folder": "product-create-dashboard-redirect",
+            "title": "Create flow dashboard redirect",
+            "image_paths": [],
+            "pdf_paths": [],
+            "price": 4.99,
+        }
+
+        async def duplicate_check(_check_page, _product):
+            return False
+
+        with patch.object(
+            etsy_auto_post,
+            "check_duplicate_draft",
+            AsyncMock(side_effect=duplicate_check),
+        ):
+            result = await etsy_auto_post.fill_listing(page, product)
+
+        self.assertFalse(result[0])
+        self.assertEqual(
+            "Etsy redirect về Dashboard sau khi mở listing-editor/create. "
+            "URL hiện tại: https://www.etsy.com/your/shops/me/dashboard. "
+            "Evidence: title: Etsy Shop Dashboard; "
+            "headline: Shop Manager; "
+            "body: Welcome back to shop manager dashboard",
+            result[1],
+        )
+
+    async def test_nonduplicate_create_other_redirect_keeps_generic_editor_error(self):
+        page = _EditorNavigationFailurePage(
+            "https://www.etsy.com/more-info/error",
+            redirect_to="https://www.etsy.com/more-info/error",
+            title_text="Some Unknown Page",
+            headline_text="Unexpected flow",
+            body_text="Unknown error page details.",
+        )
+        product = {
+            "folder": "product-create-unknown-redirect",
+            "title": "Create flow unknown redirect",
+            "image_paths": [],
+            "pdf_paths": [],
+            "price": 4.99,
+        }
+
+        async def duplicate_check(_check_page, _product):
+            return False
+
+        with patch.object(
+            etsy_auto_post,
+            "check_duplicate_draft",
+            AsyncMock(side_effect=duplicate_check),
+        ):
+            result = await etsy_auto_post.fill_listing(page, product)
+
+        self.assertFalse(result[0])
+        self.assertIn("Không vào được Etsy listing editor.", result[1])
+        self.assertIn("https://www.etsy.com/more-info/error", result[1])
+        self.assertIn("headline: Unexpected flow", result[1])
+
+    async def test_collect_editor_navigation_evidence_extracts_title_headline_and_body(self):
+        page = _EditorNavigationFailurePage(
+            "https://www.etsy.com/your/shops/me/listing-editor/create",
+            title_text="Etsy Listing Editor",
+            headline_text="Create a new listing",
+            body_text="Draft form is loading right now",
+        )
+
+        evidence = await etsy_auto_post._collect_editor_navigation_evidence(page)
+        self.assertIn("title: Etsy Listing Editor", evidence)
+        self.assertIn("headline: Create a new listing", evidence)
+        self.assertIn("body: Draft form is loading right now", evidence)
 
     def test_no_positional_listing_type_selector_remains(self):
         posting_paths = (
@@ -2352,6 +3755,18 @@ class _FakeUploadResponse:
         }
 
 
+class _NamedUploadResponse:
+    status = 200
+    url = "https://www.etsy.com/api/v3/ajax/shop/35505785/mission-control/listing-editor/files"
+    request = types.SimpleNamespace(method="POST")
+
+    def __init__(self, payload):
+        self.payload = payload
+
+    async def json(self):
+        return self.payload
+
+
 class _FakeResponseContext:
     def __init__(self, response):
         self.info = types.SimpleNamespace(value=_FakeAwaitableValue(response))
@@ -2408,6 +3823,31 @@ class _FakeUploadPage:
 
     async def wait_for_timeout(self, _ms):
         self.wait_calls.append(_ms)
+
+
+class _SequentialUploadPage(_FakeUploadPage):
+    """Fake page whose response is selected per singleton set_files call."""
+
+    def __init__(self, responses):
+        super().__init__([])
+        self.responses = list(responses)
+        self.response_contexts = 0
+
+    def expect_file_chooser(self, **_kwargs):
+        page = self
+
+        class Chooser:
+            async def set_files(self, paths):
+                paths = [Path(path) for path in paths]
+                page.received.append((paths, [path.exists() for path in paths]))
+
+        return _FakeChooserContext(Chooser())
+
+    def expect_response(self, _predicate, **_kwargs):
+        index = self.response_contexts
+        self.response_contexts += 1
+        payload = self.responses[index] if index < len(self.responses) else {}
+        return _FakeResponseContext(_NamedUploadResponse(payload))
 
 
 class _FakeSurfaceLocator:
@@ -2531,6 +3971,161 @@ class TestEtsyCustomerFileUploadIntegration(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(1507965829724, receipt["fileId"])
             self.assertEqual("uploaded-customer-file.zip", receipt["name"])
             self.assertEqual(200, receipt["status"])
+
+    async def test_multi_file_chooser_submits_singletons_and_binds_receipts_by_invocation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first = Path(tmp) / "first source.pdf"
+            second = Path(tmp) / "second source.zip"
+            first.write_bytes(b"first")
+            second.write_bytes(b"second")
+            page = _SequentialUploadPage([
+                {"fileId": 11, "name": "server-second-name.bin"},
+                {"fileId": 22, "name": "server-first-name.bin"},
+            ])
+            product = {"pdf_paths": [str(first), str(second)]}
+            surface = {"locator": _FakeSurfaceLocator(True)}
+            readback_paths = []
+
+            async def wait_readback(_page, expected_paths, **_kwargs):
+                readback_paths.append([Path(path).name for path in expected_paths])
+                return {
+                    "count": len(expected_paths),
+                    "names": [Path(path).name for path in expected_paths],
+                    "hasRegion": True,
+                    "pending": False,
+                    "failed": False,
+                    "completedCount": len(expected_paths),
+                }
+
+            with patch.object(
+                etsy_auto_post,
+                "_find_exact_add_file_affordance",
+                AsyncMock(side_effect=lambda *_args, **_kwargs: _FakeUploadButton()),
+            ), patch.object(
+                etsy_auto_post,
+                "_wait_for_uploaded_digital_files",
+                side_effect=wait_readback,
+            ):
+                await etsy_auto_post.upload_digital_files(
+                    page,
+                    product,
+                    verified_surface=surface,
+                )
+
+            self.assertEqual(2, len(page.received))
+            self.assertEqual(1, len(page.received[0][0]))
+            self.assertEqual(1, len(page.received[1][0]))
+            self.assertEqual(2, len(readback_paths))
+            self.assertEqual(1, len(readback_paths[0]))
+            self.assertEqual(2, len(readback_paths[1]))
+            receipts = product["_digital_file_upload_receipts"]
+            self.assertEqual([11, 22], [receipt["fileId"] for receipt in receipts])
+            self.assertEqual([0, 1], [receipt["_source_index"] for receipt in receipts])
+            self.assertIn("serversecondnamebin", product["_digital_file_alias_groups"][0]["aliases"])
+            self.assertIn("serverfirstnamebin", product["_digital_file_alias_groups"][1]["aliases"])
+
+    async def test_multi_file_direct_input_submits_singletons_and_requeries_input(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first = Path(tmp) / "direct-first.pdf"
+            second = Path(tmp) / "direct-second.zip"
+            first.write_bytes(b"first")
+            second.write_bytes(b"second")
+            page = _SequentialUploadPage([
+                {"fileId": 31, "name": "direct-first-server.pdf"},
+                {"fileId": 32, "name": "direct-second-server.zip"},
+            ])
+            product = {"pdf_paths": [str(first), str(second)]}
+            surface = {"locator": _FakeSurfaceLocator(True)}
+            received = []
+
+            class DirectInput:
+                async def set_input_files(self, paths, timeout=None):
+                    received.append(([Path(path) for path in paths], timeout))
+
+            async def find_input(_page, *, container=None):
+                return [(len(received), DirectInput())]
+
+            async def wait_readback(_page, expected_paths, **_kwargs):
+                return {
+                    "count": len(expected_paths),
+                    "names": [Path(path).name for path in expected_paths],
+                    "hasRegion": True,
+                    "pending": False,
+                    "failed": False,
+                    "completedCount": len(expected_paths),
+                }
+
+            with patch.object(
+                etsy_auto_post,
+                "_find_exact_add_file_affordance",
+                AsyncMock(return_value=None),
+            ), patch.object(
+                etsy_auto_post,
+                "_find_scoped_customer_file_inputs",
+                side_effect=find_input,
+            ), patch.object(
+                etsy_auto_post,
+                "_wait_for_uploaded_digital_files",
+                side_effect=wait_readback,
+            ):
+                await etsy_auto_post.upload_digital_files(
+                    page,
+                    product,
+                    verified_surface=surface,
+                )
+
+            self.assertEqual(2, len(received))
+            self.assertEqual([1, 1], [len(paths) for paths, _timeout in received])
+            self.assertEqual([first.name, second.name], [paths[0].name for paths, _timeout in received])
+            self.assertEqual([31, 32], [receipt["fileId"] for receipt in product["_digital_file_upload_receipts"]])
+
+    async def test_multi_file_second_receipt_missing_fails_closed_without_resend(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first = Path(tmp) / "partial-first.pdf"
+            second = Path(tmp) / "partial-second.zip"
+            first.write_bytes(b"first")
+            second.write_bytes(b"second")
+            page = _SequentialUploadPage([
+                {"fileId": 41, "name": "partial-first.pdf"},
+                {},
+            ])
+            surface = {"locator": _FakeSurfaceLocator(True)}
+            direct_mock = AsyncMock()
+            product = {"pdf_paths": [str(first), str(second)]}
+
+            async def wait_readback(_page, expected_paths, **_kwargs):
+                return {
+                    "count": len(expected_paths),
+                    "names": [Path(path).name for path in expected_paths],
+                    "hasRegion": True,
+                    "pending": False,
+                    "failed": False,
+                    "completedCount": len(expected_paths),
+                }
+
+            with patch.object(
+                etsy_auto_post,
+                "_find_exact_add_file_affordance",
+                AsyncMock(side_effect=lambda *_args, **_kwargs: _FakeUploadButton()),
+            ), patch.object(
+                etsy_auto_post,
+                "_find_scoped_customer_file_inputs",
+                direct_mock,
+            ), patch.object(
+                etsy_auto_post,
+                "_wait_for_uploaded_digital_files",
+                side_effect=wait_readback,
+            ):
+                with self.assertRaises(etsy_auto_post.DigitalListingTypeError) as error:
+                    await etsy_auto_post.upload_digital_files(
+                        page,
+                        product,
+                        verified_surface=surface,
+                    )
+
+            self.assertEqual(2, len(page.received))
+            direct_mock.assert_not_awaited()
+            self.assertIn("fileId", str(error.exception))
 
     async def test_saved_draft_readback_rejects_missing_digital_files(self):
         page = _FakeUploadReadbackPage([{
@@ -2739,7 +4334,22 @@ class TestEtsyCustomerFileUploadIntegration(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("servergeneratednamepdf", mapped[0]["aliases"])
 
-    def test_receipt_order_maps_non_equivalent_names_when_count_is_unambiguous(self):
+    def test_multi_file_unrelated_renames_fail_closed_without_source_index(self):
+        groups = etsy_auto_post._customer_file_alias_groups(
+            ["/tmp/first.pdf", "/tmp/second.zip"],
+            ["/tmp/first.pdf", "/tmp/second.zip"],
+        )
+
+        with self.assertRaises(etsy_auto_post.DigitalListingTypeError):
+            etsy_auto_post._add_customer_receipt_aliases(
+                groups,
+                [
+                    {"fileId": 1, "name": "server-first.bin"},
+                    {"fileId": 2, "name": "server-second.bin"},
+                ],
+            )
+
+    def test_multi_file_source_index_maps_receipts_even_when_arrival_order_is_reversed(self):
         groups = etsy_auto_post._customer_file_alias_groups(
             ["/tmp/first.pdf", "/tmp/second.zip"],
             ["/tmp/first.pdf", "/tmp/second.zip"],
@@ -2748,8 +4358,8 @@ class TestEtsyCustomerFileUploadIntegration(unittest.IsolatedAsyncioTestCase):
         mapped = etsy_auto_post._add_customer_receipt_aliases(
             groups,
             [
-                {"fileId": 1, "name": "server-first.bin"},
-                {"fileId": 2, "name": "server-second.bin"},
+                {"fileId": 2, "name": "server-second.bin", "_source_index": 1},
+                {"fileId": 1, "name": "server-first.bin", "_source_index": 0},
             ],
         )
 
@@ -3357,7 +4967,113 @@ class TestResolveBrowserSessionDir(unittest.TestCase):
             self.assertEqual(home / ".etsy_browser_session_newshop123", resolved)
 
 
+class TestOpenPosterContextCdpFallback(unittest.IsolatedAsyncioTestCase):
+    async def test_open_poster_context_uses_no_defaults_fallback_for_protocol_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            browser_dir = Path(tmp) / "etsy-browser"
+            browser_dir.mkdir()
+            session = types.SimpleNamespace(
+                profile_dir=browser_dir,
+                cdp_url="ws://127.0.0.1:9222/devtools/browser/test",
+                debug_port=9222,
+            )
+            fake_page = {"ok": True}
+            fake_ctx = types.SimpleNamespace(new_page=AsyncMock(return_value=fake_page))
+            fake_browser = types.SimpleNamespace(contexts=[fake_ctx])
+
+            connect_over_cdp = AsyncMock()
+            connect_over_cdp.side_effect = [
+                RuntimeError("Browser.setDownloadBehavior: Browser context management is not supported."),
+                fake_browser,
+            ]
+            fake_playwright = types.SimpleNamespace(chromium=types.SimpleNamespace(connect_over_cdp=connect_over_cdp))
+
+            with patch.object(
+                etsy_auto_post,
+                "resolve_etsy_session",
+                return_value=session,
+            ), patch.object(
+                etsy_auto_post,
+                "is_etsy_session_ready",
+                return_value=True,
+            ):
+                ctx, page, from_existing = await etsy_auto_post._open_poster_context(
+                    fake_playwright, "katie", browser_dir
+                )
+
+        self.assertIs(fake_ctx, ctx)
+        self.assertIs(fake_page, page)
+        self.assertFalse(from_existing)
+        self.assertEqual(2, connect_over_cdp.await_count)
+        self.assertEqual(session.profile_dir, browser_dir)
+        first_call = connect_over_cdp.await_args_list[0]
+        second_call = connect_over_cdp.await_args_list[1]
+        self.assertEqual("ws://127.0.0.1:9222/devtools/browser/test", first_call.args[0])
+        self.assertEqual({"timeout": etsy_auto_post.CDP_CONNECT_TIMEOUT_MS}, first_call.kwargs)
+        self.assertEqual(
+            {"timeout": etsy_auto_post.CDP_CONNECT_TIMEOUT_MS, "no_defaults": True},
+            second_call.kwargs,
+        )
+
+    async def test_open_poster_context_retries_after_failed_no_defaults_attempt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            browser_dir = Path(tmp) / "etsy-browser"
+            browser_dir.mkdir()
+            session = types.SimpleNamespace(
+                profile_dir=browser_dir,
+                cdp_url="ws://127.0.0.1:9333/devtools/browser/fallback-fail",
+                debug_port=9333,
+            )
+            fake_page = {"ok": True}
+            fake_ctx = types.SimpleNamespace(new_page=AsyncMock(return_value=fake_page))
+            fake_browser = types.SimpleNamespace(contexts=[fake_ctx])
+
+            connect_over_cdp = AsyncMock()
+            connect_over_cdp.side_effect = [
+                RuntimeError("Browser.setDownloadBehavior: Browser context management is not supported."),
+                RuntimeError("timeout while retrying protocol fallback"),
+                fake_browser,
+            ]
+            fake_playwright = types.SimpleNamespace(chromium=types.SimpleNamespace(connect_over_cdp=connect_over_cdp))
+            sleep_calls = []
+
+            async def capture_sleep(seconds: float):
+                sleep_calls.append(seconds)
+
+            with patch.object(
+                etsy_auto_post,
+                "resolve_etsy_session",
+                return_value=session,
+            ), patch.object(
+                etsy_auto_post,
+                "is_etsy_session_ready",
+                return_value=True,
+            ), patch.object(etsy_auto_post.asyncio, "sleep", side_effect=capture_sleep):
+                ctx, page, from_existing = await etsy_auto_post._open_poster_context(
+                    fake_playwright, "katie", browser_dir
+                )
+
+        self.assertIs(fake_ctx, ctx)
+        self.assertIs(fake_page, page)
+        self.assertFalse(from_existing)
+        self.assertEqual(3, connect_over_cdp.await_count)
+        self.assertEqual(
+            {"timeout": etsy_auto_post.CDP_CONNECT_TIMEOUT_MS, "no_defaults": True},
+            connect_over_cdp.await_args_list[1].kwargs,
+        )
+        self.assertEqual(
+            {"timeout": etsy_auto_post.CDP_CONNECT_TIMEOUT_MS},
+            connect_over_cdp.await_args_list[2].kwargs,
+        )
+        self.assertEqual([etsy_auto_post.CDP_CONNECT_RETRY_DELAYS[0]], sleep_calls)
+
+
 class TestForceDraftFilter(unittest.IsolatedAsyncioTestCase):
+    def test_draft_url_uses_current_query_format(self):
+        self.assertIn("?state=draft", etsy_auto_post.DRAFT_LISTINGS_URL)
+        self.assertIn("page=1", etsy_auto_post.DRAFT_LISTINGS_URL)
+        self.assertNotIn("page:1,state:draft", etsy_auto_post.DRAFT_LISTINGS_URL)
+
     async def test_no_click_when_draft_already_checked_but_disabled(self):
         page = _FakeDraftPage([
             ("draft", True, True),
@@ -3369,6 +5085,29 @@ class TestForceDraftFilter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(0, len(page.check_calls))
         self.assertEqual((etsy_auto_post.DRAFT_LISTINGS_URL, "domcontentloaded"), page.goto_calls[-1])
         self.assertTrue(page.radios[0].checked)
+
+    async def test_network_changed_retries_draft_listings_route(self):
+        class _NetworkChangedOncePage(_FakeDraftPage):
+            def __init__(self):
+                super().__init__([("draft", True, True)])
+                self.fail_once = True
+
+            async def goto(self, url: str, wait_until: str | None = None):
+                if self.fail_once:
+                    self.fail_once = False
+                    raise etsy_auto_post.PlaywrightError("Page.goto: net::ERR_NETWORK_CHANGED")
+                await super().goto(url, wait_until=wait_until)
+
+        page = _NetworkChangedOncePage()
+
+        await etsy_auto_post._force_draft_filter(page)
+
+        self.assertEqual(1, len(page.goto_calls))
+        self.assertEqual(etsy_auto_post.DRAFT_LISTINGS_URL, page.goto_calls[0][0])
+        self.assertEqual(
+            [etsy_auto_post.SHOP_MANAGER_NAVIGATION_RETRY_DELAY_MS],
+            page.wait_calls,
+        )
 
     async def test_multiple_draft_radios_selects_enabled_draft(self):
         page = _FakeDraftPage([
@@ -3387,6 +5126,37 @@ class TestForceDraftFilter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(etsy_auto_post.DRAFT_FILTER_CHECK_TIMEOUT_MS, clicked_timeout)
         self.assertTrue(page.radios[1].checked)
         self.assertFalse(page.radios[2].checked)
+
+    async def test_missing_filter_on_draft_url_recovers_via_listings_fallback(self):
+        class _RecoveringDraftPage(_FakeDraftPage):
+            async def goto(self, url: str, wait_until: str | None = None):
+                await super().goto(url, wait_until=wait_until)
+                if len(self.goto_calls) == 2:
+                    self.radios = [
+                        _FakeStatusRadio(self, 0, "draft", checked=False, disabled=False),
+                        _FakeStatusRadio(self, 1, "active", checked=True, disabled=False),
+                    ]
+
+        page = _RecoveringDraftPage([])
+
+        await etsy_auto_post._force_draft_filter(page)
+
+        self.assertEqual(2, len(page.goto_calls))
+        self.assertEqual(etsy_auto_post.DRAFT_LISTINGS_URL, page.goto_calls[0][0])
+        self.assertEqual(etsy_auto_post.SHOP_MANAGER_LISTINGS_URL, page.goto_calls[1][0])
+        self.assertTrue(page.radios[0].checked)
+        self.assertFalse(page.radios[1].checked)
+
+    async def test_missing_filter_after_fallback_fails_with_diagnostics(self):
+        page = _FakeDraftPage([])
+
+        with self.assertRaises(RuntimeError) as raised:
+            await etsy_auto_post._force_draft_filter(page)
+
+        message = str(raised.exception)
+        self.assertIn("sau retry", message)
+        self.assertIn("radio_count=0", message)
+        self.assertIn(etsy_auto_post.SHOP_MANAGER_LISTINGS_URL, message)
 
     async def test_active_checked_still_gets_forced_to_draft(self):
         page = _FakeDraftPage([
@@ -3453,6 +5223,46 @@ class TestForceDraftFilter(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertGreaterEqual(page.calls, 4)
+
+    async def test_wait_for_draft_grid_stable_accepts_visible_empty_state_marker(self):
+        states = [
+            {"loading": False, "ids": [], "emptyState": False},
+            {"loading": False, "ids": [], "emptyState": True},
+            {"loading": False, "ids": [], "emptyState": True},
+        ]
+
+        class _SequenceDraftPage:
+            def __init__(self):
+                self.calls = 0
+                self.evaluate_scripts = []
+
+            async def wait_for_timeout(self, ms: int):
+                return None
+
+            async def evaluate(self, script: str):
+                if "__etsyDraftGridStateMarker" in script:
+                    self.evaluate_scripts.append(script)
+                    index = min(self.calls, len(states) - 1)
+                    self.calls += 1
+                    return states[index]
+                return {"loading": False, "ids": [], "emptyState": False}
+
+        page = _SequenceDraftPage()
+
+        await etsy_auto_post._wait_for_draft_grid_stable(
+            page,
+            max_wait_ms=2000,
+            pause_ms=0,
+            min_settle_ms=0,
+            empty_stable_repeats=2,
+        )
+
+        self.assertGreaterEqual(page.calls, 3)
+        state_scripts = page.evaluate_scripts
+        self.assertTrue(state_scripts)
+        script = state_scripts[0]
+        self.assertIn(".list-region .empty-state", script)
+        self.assertIn("no listings matched these filters", script.lower())
 
     def test_force_draft_filter_uses_check_not_default_click_timeout(self):
         source = inspect.getsource(etsy_auto_post._force_draft_filter)
@@ -3527,6 +5337,79 @@ class TestDraftUrlBaselineVerification(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual("303", discovered)
 
+    async def test_multiple_new_drafts_select_exact_semantic_title_over_polluted_anchor(self):
+        product = {
+            "title": "Brand New Printable",
+            "sku": "",
+            "_draft_ids_before_create": ["101"],
+        }
+
+        async def _noop_timeout(_ms):
+            return None
+
+        page = types.SimpleNamespace(
+            url="https://www.etsy.com/your/shops/me/tools/listings",
+            wait_for_timeout=_noop_timeout,
+        )
+        cards = [
+            {
+                "id": "202",
+                "title": "Brand New Printable",
+                "anchor_text": "Brand New Printable Draft 7 in stock $4.99 Updated yesterday",
+                "status": "draft",
+            },
+            {
+                "id": "303",
+                "title": "Another Printable",
+                "anchor_text": "Another Printable Draft 2 in stock $3.99 Updated today",
+                "status": "draft",
+            },
+        ]
+
+        with patch.object(etsy_auto_post, "_collect_draft_cards", return_value=cards):
+            discovered = await etsy_auto_post._discover_new_draft_id(page, product)
+
+        self.assertEqual("202", discovered)
+
+    async def test_collection_script_prefers_semantic_card_title_before_anchor_fallback(self):
+        page = _FakeDraftPage(
+            [("draft", True, False)],
+            cards=[
+                {
+                    "id": "202",
+                    "title": "Brand New Printable",
+                    "anchor_text": "Brand New Printable Draft 7 in stock $4.99 Updated yesterday",
+                    "status": "draft",
+                }
+            ],
+            grid_state={"loading": False, "ids": ["202"], "emptyState": False},
+        )
+
+        cards = await etsy_auto_post._collect_draft_cards(page)
+
+        self.assertEqual("Brand New Printable", cards[0]["title"])
+        collection_script = next(
+            script for script in page.evaluate_scripts if "readSemanticCardTitle" in script
+        )
+        self.assertIn("h2.card-title", collection_script)
+        self.assertIn("getAttribute('title')", collection_script)
+        self.assertLess(
+            collection_script.index("readSemanticCardTitle(row)"),
+            collection_script.index("cleanText(a)"),
+        )
+        parsed = subprocess.run(
+            [
+                "node",
+                "-e",
+                "new Function('return (' + process.argv[1] + ')')",
+                collection_script,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(0, parsed.returncode, parsed.stderr)
+
     async def test_duplicate_check_records_pre_create_draft_ids(self):
         product = {"title": "Brand New Printable", "sku": "NEW-394"}
         cards = [
@@ -3594,6 +5477,274 @@ class TestDraftUrlBaselineVerification(unittest.IsolatedAsyncioTestCase):
             result = await etsy_auto_post.get_newly_created_listing_url(page, product)
 
         self.assertEqual(etsy_auto_post.UNVERIFIED_DRAFT_URL_SENTINEL, result)
+
+
+class PhotoUploadReadDiagnosticUnitTests(unittest.IsolatedAsyncioTestCase):
+    async def test_evaluate_failure_has_safe_distinct_diagnostic(self):
+        class _BrokenPage:
+            async def evaluate(self, _script):
+                raise RuntimeError("private page content must not escape")
+
+        state = await etsy_auto_post._read_pending_photo_uploads(_BrokenPage())
+
+        self.assertEqual({
+            "readable": False,
+            "pending": False,
+            "pendingCount": 0,
+            "diagnostic": "evaluate_error",
+            "evidence": [],
+        }, state)
+
+
+class PhotoUploadStateTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self._playwright = None
+        self._browser = None
+        try:
+            self._playwright = await etsy_auto_post.async_playwright().start()
+            launch_options = {"headless": True}
+            system_chrome = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+            if system_chrome.is_file():
+                launch_options["executable_path"] = str(system_chrome)
+            self._browser = await self._playwright.chromium.launch(**launch_options)
+        except Exception as exc:
+            if self._playwright is not None:
+                await self._playwright.stop()
+                self._playwright = None
+            self.skipTest(f"local Chromium unavailable: {exc}")
+
+    async def asyncTearDown(self):
+        if self._browser is not None:
+            await self._browser.close()
+        if self._playwright is not None:
+            await self._playwright.stop()
+
+    async def _read_state(self, status_markup: str = ""):
+        page = await self._browser.new_page()
+        try:
+            await page.set_content(
+                '<div class="form-field">'
+                '<label aria-label="Add photos"><span>Add photos</span>'
+                '<input type="file" name="listing-media-upload" accept="image/*" '
+                'style="display:none"></label>'
+                f'{status_markup}'
+                '</div>'
+            )
+            return await etsy_auto_post._read_pending_photo_uploads(page)
+        finally:
+            await page.close()
+
+    async def test_hidden_photo_input_generic_wrapper_without_marker_is_readable_and_settled(self):
+        state = await self._read_state('<div class="upload-status" aria-live="polite"></div>')
+
+        self.assertEqual({
+            "readable": True,
+            "pending": False,
+            "pendingCount": 0,
+            "diagnostic": "ok",
+            "evidence": [],
+        }, state)
+
+    async def test_hidden_photo_input_generic_wrapper_reads_visible_pending_marker(self):
+        state = await self._read_state(
+            '<div class="upload-status" aria-live="polite">Image is uploading</div>'
+        )
+
+        self.assertTrue(state["readable"])
+        self.assertTrue(state["pending"])
+        self.assertEqual(1, state["pendingCount"])
+        self.assertEqual(["Image is uploading"], state["evidence"])
+
+    async def test_unlabelled_hidden_photo_input_uses_its_bounded_visible_wrapper(self):
+        page = await self._browser.new_page()
+        try:
+            await page.set_content(
+                '<div class="photo-upload-control">'
+                '<input type="file" name="listing-media-upload" accept="image/*" '
+                'style="display:none">'
+                '<div class="upload-status" aria-live="polite">Image is uploading</div>'
+                '</div>'
+            )
+            state = await etsy_auto_post._read_pending_photo_uploads(page)
+        finally:
+            await page.close()
+
+        self.assertTrue(state["readable"])
+        self.assertEqual("ok", state["diagnostic"])
+        self.assertTrue(state["pending"])
+        self.assertEqual(1, state["pendingCount"])
+        self.assertEqual(["Image is uploading"], state["evidence"])
+
+    async def test_photo_input_inside_etsy_shared_multi_video_grid_stays_in_photo_scope(self):
+        page = await self._browser.new_page()
+        try:
+            await page.set_content(
+                '<div class="le-media-grid multi-video-component">'
+                '<div data-testid="empty-video-thumbnail">'
+                '<input type="file" name="listing-media-upload" '
+                'accept="video/mp4,image/png" style="display:none">'
+                '<div aria-live="polite">Uploading video</div></div>'
+                '<div data-testid="empty-photo-thumbnail">'
+                '<input type="file" name="listing-media-upload" '
+                'accept="video/mp4,image/png" style="display:none">'
+                '<div class="upload-status" aria-live="polite">Image is uploading</div>'
+                '</div></div>'
+            )
+            state = await etsy_auto_post._read_pending_photo_uploads(page)
+        finally:
+            await page.close()
+
+        self.assertTrue(state["readable"])
+        self.assertEqual("ok", state["diagnostic"])
+        self.assertTrue(state["pending"])
+        self.assertEqual(1, state["pendingCount"])
+        self.assertEqual(["Image is uploading"], state["evidence"])
+
+    async def test_unrelated_generic_video_file_surface_is_not_photo_surface(self):
+        page = await self._browser.new_page()
+        try:
+            await page.set_content(
+                '<div class="video-field">'
+                '<label aria-label="Add video"><span>Add video</span>'
+                '<input type="file" name="listing-media-upload" accept="video/*" '
+                'style="display:none"></label>'
+                '<div class="upload-status" aria-live="polite">Uploading video</div>'
+                '</div>'
+            )
+            state = await etsy_auto_post._read_pending_photo_uploads(page)
+        finally:
+            await page.close()
+
+        self.assertEqual({
+            "readable": False,
+            "pending": False,
+            "pendingCount": 0,
+            "diagnostic": "photo_surface_unreadable",
+            "evidence": [],
+        }, state)
+
+    async def test_visible_image_delete_tile_is_photo_surface_after_add_photos_control_disappears(self):
+        page = await self._browser.new_page()
+        try:
+            await page.set_content(
+                '<div class="listing-editor">'
+                '<div class="tile">'
+                '<img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==">'
+                '<div class="button-wrap">'
+                '<button data-testid="image-delete-button" aria-label="Remove photo"></button>'
+                '</div>'
+                '<div class="upload-status" aria-live="polite">Image is uploading</div>'
+                '</div></div>'
+            )
+            state = await etsy_auto_post._read_pending_photo_uploads(page)
+        finally:
+            await page.close()
+
+        self.assertTrue(state["readable"])
+        self.assertEqual("ok", state["diagnostic"])
+        self.assertTrue(state["pending"])
+        self.assertEqual(1, state["pendingCount"])
+        self.assertEqual(["Image is uploading"], state["evidence"])
+
+    async def test_exact_photo_pending_marker_outside_thumbnail_tile_remains_pending(self):
+        page = await self._browser.new_page()
+        try:
+            await page.set_content(
+                '<div class="editor">'
+                '<div data-testid="listing-media-section">'
+                '<div class="column"><div class="tile"><div class="button-wrap">'
+                '<button data-testid="image-delete-button" aria-label="Remove photo"></button>'
+                '</div></div></div>'
+                '<div class="status-region"><span>Image is uploading</span></div>'
+                '</div></div>'
+            )
+            state = await etsy_auto_post._read_pending_photo_uploads(page)
+        finally:
+            await page.close()
+
+        self.assertTrue(state["readable"])
+        self.assertTrue(state["pending"])
+        self.assertEqual(1, state["pendingCount"])
+        self.assertEqual(["Image is uploading"], state["evidence"])
+
+    async def test_exact_marker_in_separate_image_widget_is_ignored(self):
+        page = await self._browser.new_page()
+        try:
+            await page.set_content(
+                '<div class="editor">'
+                '<h2>Photos</h2>'
+                '<div class="tile"><button data-testid="image-delete-button" '
+                'aria-label="Remove photo"></button></div>'
+                '<div data-testid="profile-image-upload"><span>Image is uploading</span></div>'
+                '</div>'
+            )
+            state = await etsy_auto_post._read_pending_photo_uploads(page)
+        finally:
+            await page.close()
+
+        self.assertTrue(state["readable"])
+        self.assertFalse(state["pending"])
+        self.assertEqual(0, state["pendingCount"])
+        self.assertEqual([], state["evidence"])
+
+    async def test_photos_heading_section_scopes_marker_outside_thumbnail_tile(self):
+        page = await self._browser.new_page()
+        try:
+            await page.set_content(
+                '<div class="editor"><section><h2>Photos</h2>'
+                '<div class="column"><div class="tile"><div class="button-wrap">'
+                '<button data-testid="image-delete-button" aria-label="Remove photo"></button>'
+                '</div></div></div>'
+                '<div class="status-region"><span>Image is uploading</span></div>'
+                '</section></div>'
+            )
+            state = await etsy_auto_post._read_pending_photo_uploads(page)
+        finally:
+            await page.close()
+
+        self.assertTrue(state["readable"])
+        self.assertTrue(state["pending"])
+        self.assertEqual(1, state["pendingCount"])
+        self.assertEqual(["Image is uploading"], state["evidence"])
+
+    async def test_unclassified_exact_marker_keeps_photo_state_unreadable(self):
+        page = await self._browser.new_page()
+        try:
+            await page.set_content(
+                '<div class="editor">'
+                '<div class="neutral-section"><div class="column">'
+                '<div class="tile"><button data-testid="image-delete-button" '
+                'aria-label="Remove photo"></button></div>'
+                '</div><div class="status-region"><span>Image is uploading</span></div></div>'
+                '</div>'
+            )
+            state = await etsy_auto_post._read_pending_photo_uploads(page)
+        finally:
+            await page.close()
+
+        self.assertFalse(state["readable"])
+        self.assertEqual("photo_scope_ambiguous", state["diagnostic"])
+        self.assertFalse(state["pending"])
+
+    async def test_exact_marker_in_video_surface_does_not_mark_photo_pending(self):
+        page = await self._browser.new_page()
+        try:
+            await page.set_content(
+                '<div class="editor">'
+                '<div data-testid="listing-media-section">'
+                '<div class="tile"><button data-testid="image-delete-button" '
+                'aria-label="Remove photo"></button></div></div>'
+                '<div data-testid="video-upload-status"><span>Image is uploading</span></div>'
+                '</div>'
+            )
+            state = await etsy_auto_post._read_pending_photo_uploads(page)
+        finally:
+            await page.close()
+
+        self.assertTrue(state["readable"])
+        self.assertFalse(state["pending"])
+        self.assertEqual(0, state["pendingCount"])
+        self.assertEqual([], state["evidence"])
 
 
 class ImageThumbCountTests(unittest.IsolatedAsyncioTestCase):
@@ -3751,6 +5902,126 @@ class ImageThumbCountTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, len(upload_calls))
         self.assertEqual(paths[:5], upload_calls[0])
 
+    async def test_upload_until_count_fails_closed_on_settled_partial_batch(self):
+        upload_calls: list[list[str]] = []
+        counts = [0, 1]
+
+        async def fake_count(_page):
+            return counts.pop(0) if counts else 1
+
+        async def fake_upload(_page, paths):
+            upload_calls.append(list(paths))
+
+        async def fake_wait(_page, expected_count, exact=False, timeout_ms=180000, log_progress=False):
+            return False
+
+        async def fake_pending(_page):
+            return {"readable": True, "pending": False, "pendingCount": 0, "evidence": []}
+
+        paths = [f"img-{i}.png" for i in range(1, 11)]
+        with patch.object(etsy_auto_post, "_count_listing_image_thumbs", side_effect=fake_count), \
+                patch.object(etsy_auto_post, "_upload_listing_photos", side_effect=fake_upload), \
+                patch.object(etsy_auto_post, "_wait_for_expected_image_count", side_effect=fake_wait), \
+                patch.object(etsy_auto_post, "_read_pending_photo_uploads", side_effect=fake_pending):
+            with self.assertRaises(RuntimeError) as raised:
+                await etsy_auto_post._upload_listing_photos_until_count(
+                    object(),
+                    paths,
+                    expected_total=10,
+                    exact=True,
+                    batch_size=5,
+                )
+
+        status_error = etsy_auto_post._format_product_error_status(raised.exception)
+        self.assertTrue(status_error.startswith("❌ Lỗi: "))
+        self.assertIn("before=0", status_error)
+        self.assertIn("batch_size=5", status_error)
+        self.assertIn("target=5", status_error)
+        self.assertIn("actual=1", status_error)
+        self.assertRegex(status_error, r"settle|partial")
+        self.assertEqual(1, len(upload_calls))
+        self.assertEqual(paths[:5], upload_calls[0])
+        self.assertNotIn(paths[5:], upload_calls)
+
+    async def test_unreadable_photo_state_stops_before_second_submission(self):
+        upload_calls: list[list[str]] = []
+        counts = [0, 1]
+
+        async def fake_count(_page):
+            return counts.pop(0) if counts else 1
+
+        async def fake_upload(_page, paths):
+            upload_calls.append(list(paths))
+
+        async def fake_wait(_page, expected_count, exact=False, timeout_ms=180000, log_progress=False):
+            return False
+
+        async def fake_pending(_page):
+            return {
+                "readable": False,
+                "pending": False,
+                "pendingCount": 0,
+                "diagnostic": "photo_surface_unreadable",
+                "evidence": [],
+            }
+
+        paths = ["img-1.png", "img-2.png"]
+        with patch.object(etsy_auto_post, "_count_listing_image_thumbs", side_effect=fake_count), \
+                patch.object(etsy_auto_post, "_upload_listing_photos", side_effect=fake_upload), \
+                patch.object(etsy_auto_post, "_wait_for_expected_image_count", side_effect=fake_wait), \
+                patch.object(etsy_auto_post, "_read_pending_photo_uploads", side_effect=fake_pending):
+            with self.assertRaisesRegex(RuntimeError, "diagnostic=photo_surface_unreadable"):
+                await etsy_auto_post._upload_listing_photos_until_count(
+                    object(), paths, expected_total=2, exact=True, batch_size=1,
+                )
+
+        self.assertEqual([["img-1.png"]], upload_calls)
+
+    def test_format_status_error_bounds_length_and_preserves_head_and_tail(self):
+        message = f"start:{'x' * 600}end"
+        prefix = "❌ Lỗi: "
+
+        formatted = etsy_auto_post._format_product_error_status(RuntimeError(message))
+
+        self.assertLessEqual(len(formatted), len(prefix) + 500)
+        self.assertTrue(formatted.startswith(f"{prefix}start:"))
+        self.assertTrue(formatted.endswith("end"))
+        self.assertIn("...", formatted)
+
+    async def test_upload_until_count_continues_after_settled_reread_reaches_batch_target(self):
+        upload_calls: list[list[str]] = []
+        # Initial count, immediate settled reread, next-batch preflight, final count.
+        counts = [0, 5, 5, 10]
+        wait_results = [False, True]
+
+        async def fake_count(_page):
+            return counts.pop(0) if counts else 10
+
+        async def fake_upload(_page, paths):
+            upload_calls.append(list(paths))
+
+        async def fake_wait(_page, expected_count, exact=False, timeout_ms=180000, log_progress=False):
+            return wait_results.pop(0)
+
+        async def fake_pending(_page):
+            return {"readable": True, "pending": False, "pendingCount": 0, "evidence": []}
+
+        paths = [f"img-{i}.png" for i in range(1, 11)]
+        with patch.object(etsy_auto_post, "_count_listing_image_thumbs", side_effect=fake_count), \
+                patch.object(etsy_auto_post, "_upload_listing_photos", side_effect=fake_upload), \
+                patch.object(etsy_auto_post, "_wait_for_expected_image_count", side_effect=fake_wait), \
+                patch.object(etsy_auto_post, "_read_pending_photo_uploads", side_effect=fake_pending):
+            final = await etsy_auto_post._upload_listing_photos_until_count(
+                object(),
+                paths,
+                expected_total=10,
+                exact=True,
+                batch_size=5,
+            )
+
+        self.assertEqual(10, final)
+        self.assertEqual([paths[:5], paths[5:]], upload_calls)
+
     async def test_upload_until_count_passes_after_batch_settles_without_duplicate_topup(self):
         upload_calls: list[list[str]] = []
         counts = [0, 5, 10, 10]
@@ -3900,6 +6171,74 @@ class TestShopManagerNavigation(unittest.IsolatedAsyncioTestCase):
             [etsy_auto_post.SHOP_MANAGER_NAVIGATION_RETRY_DELAY_MS],
             page.wait_calls,
         )
+
+    async def test_network_changed_retries_same_listings_route_and_succeeds(self):
+        page = self._Page([
+            etsy_auto_post.PlaywrightError("Page.goto: net::ERR_NETWORK_CHANGED"),
+            None,
+        ])
+
+        await etsy_auto_post._navigate_to_shop_manager(page)
+
+        self.assertEqual(2, len(page.goto_calls))
+        self.assertTrue(all(call[0] == etsy_auto_post.SHOP_MANAGER_LISTINGS_URL for call in page.goto_calls))
+        self.assertEqual(
+            [etsy_auto_post.SHOP_MANAGER_NAVIGATION_RETRY_DELAY_MS],
+            page.wait_calls,
+        )
+
+    async def test_network_changed_exhaustion_propagates_without_extra_retry(self):
+        error = etsy_auto_post.PlaywrightError("Page.goto: net::ERR_NETWORK_CHANGED")
+        page = self._Page([error, error])
+
+        with self.assertRaises(etsy_auto_post.PlaywrightError) as raised:
+            await etsy_auto_post._navigate_to_shop_manager(page)
+
+        self.assertIs(raised.exception, error)
+        self.assertEqual(etsy_auto_post.SHOP_MANAGER_NAVIGATION_ATTEMPTS, len(page.goto_calls))
+        self.assertEqual(
+            [etsy_auto_post.SHOP_MANAGER_NAVIGATION_RETRY_DELAY_MS],
+            page.wait_calls,
+        )
+
+    async def test_mixed_timeout_then_network_change_stays_within_attempt_budget(self):
+        network_error = etsy_auto_post.PlaywrightError("Page.goto: net::ERR_NETWORK_CHANGED")
+        page = self._Page([
+            etsy_auto_post.PlaywrightTimeoutError("first attempt timed out"),
+            network_error,
+        ])
+
+        with self.assertRaises(etsy_auto_post.PlaywrightError) as raised:
+            await etsy_auto_post._navigate_to_shop_manager(page)
+
+        self.assertIs(raised.exception, network_error)
+        self.assertEqual(etsy_auto_post.SHOP_MANAGER_NAVIGATION_ATTEMPTS, len(page.goto_calls))
+        self.assertEqual(
+            [etsy_auto_post.SHOP_MANAGER_NAVIGATION_RETRY_DELAY_MS],
+            page.wait_calls,
+        )
+
+    async def test_network_change_text_on_non_playwright_error_fails_fast(self):
+        error = RuntimeError("net::ERR_NETWORK_CHANGED")
+        page = self._Page([error])
+
+        with self.assertRaises(RuntimeError) as raised:
+            await etsy_auto_post._navigate_to_shop_manager(page)
+
+        self.assertIs(raised.exception, error)
+        self.assertEqual(1, len(page.goto_calls))
+        self.assertEqual([], page.wait_calls)
+
+    async def test_network_change_code_suffix_does_not_match_exact_token(self):
+        error = etsy_auto_post.PlaywrightError("Page.goto: net::ERR_NETWORK_CHANGED_EXTRA")
+        page = self._Page([error])
+
+        with self.assertRaises(etsy_auto_post.PlaywrightError) as raised:
+            await etsy_auto_post._navigate_to_shop_manager(page)
+
+        self.assertIs(raised.exception, error)
+        self.assertEqual(1, len(page.goto_calls))
+        self.assertEqual([], page.wait_calls)
 
     async def test_non_timeout_error_propagates_without_retry(self):
         error = RuntimeError("CDP/page closed")

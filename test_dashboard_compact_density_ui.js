@@ -26,12 +26,13 @@ const compactMarker = css.indexOf('/* ── Compact desktop density ──');
 const desktopStart = css.indexOf('@media (min-width: 1201px)', compactMarker);
 const desktop = balancedBlock(css, desktopStart);
 
-assert.match(html, /style\.css\?v=20260813-compact-density-01/);
+assert.match(html, /style\.css\?v=20260904-new-import-filter-01/);
 assert.match(desktop, /\.topbar\s*\{[\s\S]*?display:\s*grid/);
 assert.match(desktop, /grid-template-areas:\s*"brand runtime services"\s*"actions actions actions"/);
 assert.match(desktop, /\.topbar \.brand > div\s*\{[^}]*display:\s*flex[^}]*align-items:\s*center/);
 assert.match(desktop, /\.topbar \.brand-meta\s*\{[^}]*margin-top:\s*0/);
-assert.match(desktop, /\.topbar \.runtime-health\s*\{[\s\S]*?overflow-x:\s*auto/);
+assert.match(desktop, /\.topbar \.runtime-health\s*\{[\s\S]*?overflow:\s*hidden/);
+assert.doesNotMatch(desktop, /\.topbar \.runtime-health\s*\{[^}]*overflow-x:\s*auto/);
 assert.match(desktop, /\.topbar \.header-actions\s*\{[\s\S]*?flex-wrap:\s*nowrap[\s\S]*?overflow-x:\s*auto/);
 assert.match(desktop, /\.operation-queue-dashboard\s*\{[\s\S]*?display:\s*grid[\s\S]*?grid-template-columns:\s*max-content minmax\(0, 1fr\)/);
 assert.match(desktop, /\.operation-queue-list\s*\{[^}]*min-width:\s*0/);

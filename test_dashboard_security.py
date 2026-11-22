@@ -68,10 +68,11 @@ class DashboardSecurityBoundaryTests(unittest.TestCase):
         self.assertEqual(403, response.status_code)
 
     def test_same_origin_read_request_is_accepted(self):
-        response = self.client.get(
-            "/api/products",
-            headers=_security_headers(origin="http://127.0.0.1:8090"),
-        )
+        with patch.object(dashboard_app, "products_from_excel", return_value=[]):
+            response = self.client.get(
+                "/api/products",
+                headers=_security_headers(origin="http://127.0.0.1:8090"),
+            )
         self.assertEqual(200, response.status_code)
         payload = response.json()
         self.assertIn("products", payload)

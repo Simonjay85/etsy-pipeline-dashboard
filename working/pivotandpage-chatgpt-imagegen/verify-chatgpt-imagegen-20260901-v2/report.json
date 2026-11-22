@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "run_id": "verify-chatgpt-imagegen-20260901-v2",
+  "shop_id": "shop3",
+  "tool_mode": "chatgpt-built-in-imagegen",
+  "canva_used": false,
+  "local_compositor_used": false,
+  "targets": 2,
+  "jobs": 20,
+  "mutated_shop_images": false,
+  "mutated_workbook": false,
+  "results": [
+    {
+      "product": "product-67",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/verify-chatgpt-imagegen-20260901-v2/product-67/generation-manifest.json",
+      "source_reference_count": 20
+    },
+    {
+      "product": "product-68",
+      "before": 10,
+      "generation_jobs": 10,
+      "manifest": "working/pivotandpage-chatgpt-imagegen/verify-chatgpt-imagegen-20260901-v2/product-68/generation-manifest.json",
+      "source_reference_count": 38
+    }
+  ]
+}

@@ -13,9 +13,10 @@ import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import dashboard_app
+import openpyxl
 
 
 class _JsonRequest:
@@ -154,6 +155,15 @@ class DashboardCloudAssetApiTests(unittest.IsolatedAsyncioTestCase):
         (self.shop_product / "files").mkdir()
         (self.shop_product / "images" / "hero.png").write_bytes(b"image")
         (self.shop_product / "files" / "source.zip").write_bytes(b"source")
+        catalog = self.root / "shops" / "templystudios" / "Etsy_SEO_Generator.xlsx"
+        catalog.parent.mkdir(parents=True, exist_ok=True)
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.title = "Listings"
+        sheet.cell(row=4, column=2, value="product-01")
+        sheet.cell(row=4, column=14, value="✅ Đã đăng")
+        workbook.save(catalog)
+        workbook.close()
         self.other_shop_product = self.root / "shops" / "other-shop" / "product-02"
         (self.other_shop_product / "images").mkdir(parents=True)
         (self.other_shop_product / "files").mkdir()
@@ -177,6 +187,11 @@ class DashboardCloudAssetApiTests(unittest.IsolatedAsyncioTestCase):
             "_JOB_STORE_PATH",
             self.root / ".etsy-dashboard-diagnostics" / "etsy_jobs.sqlite",
         )
+        self.diagnostics_patch = patch.object(
+            dashboard_app,
+            "_DIAGNOSTICS_DIR",
+            self.root / ".etsy-dashboard-diagnostics",
+        )
         self.old_job_store = dashboard_app._ETSY_JOB_STORE
         dashboard_app._ETSY_JOB_STORE = None
         self.base_patch.start()
@@ -184,6 +199,7 @@ class DashboardCloudAssetApiTests(unittest.IsolatedAsyncioTestCase):
         self.shops_patch.start()
         self.store_patch.start()
         self.job_store_path_patch.start()
+        self.diagnostics_patch.start()
         dashboard_app._CLOUD_ASSET_UPLOAD_SCHEDULES.clear()
         dashboard_app._CLOUD_ASSET_UPLOAD_QUEUE_BY_SHOP.clear()
         dashboard_app._CLOUD_ASSET_UPLOAD_WORKERS.clear()
@@ -214,6 +230,7 @@ class DashboardCloudAssetApiTests(unittest.IsolatedAsyncioTestCase):
             test_job_store.close()
         dashboard_app._ETSY_JOB_STORE = self.old_job_store
         self.job_store_path_patch.stop()
+        self.diagnostics_patch.stop()
         self.store_patch.stop()
         self.shops_patch.stop()
         self.shop_patch.stop()
@@ -229,6 +246,207 @@ class DashboardCloudAssetApiTests(unittest.IsolatedAsyncioTestCase):
         }
         payload.update(overrides)
         return payload
+
+    async def test_shop_upload_guard_rejects_pending_and_accepts_exact_posted_variants(self) -> None:
+        with patch.object(
+            dashboard_app,
+            "_shop_catalog_statuses",
+            return_value={"product-01": "⏳ Chờ đăng"},
+        ):
+            with self.assertRaises(dashboard_app.HTTPException) as raised:
+                await dashboard_app.cloud_assets_upload(_JsonRequest(self._payload()))
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertIn("đưa sản phẩm lên Đã đăng", raised.exception.detail)
+        self.assertEqual(self.store.calls, [])
+
+        for status in (
+            "✅ Đã đăng",
+            "🆕 Mới import · ✅ Đã đăng draft (URL chưa xác minh)",
+        ):
+            with self.subTest(status=status), patch.object(
+                dashboard_app,
+                "_shop_catalog_statuses",
+                return_value={"product-01": status},
+            ):
+                response = await dashboard_app.cloud_assets_upload(_JsonRequest(self._payload()))
+                self.assertTrue(response["ok"])
+
+        with patch.object(
+            dashboard_app,
+            "_shop_catalog_statuses",
+            return_value={"product-01": "Sản phẩm đã đăng"},
+        ):
+            with self.assertRaises(dashboard_app.HTTPException):
+                await dashboard_app.cloud_assets_upload(_JsonRequest(self._payload()))
+
+    def test_product_payload_exposes_total_local_asset_bytes(self) -> None:
+        nested = self.shop_product / "files" / "parts"
+        nested.mkdir()
+        (nested / "chunk.001").write_bytes(b"part")
+        (self.shop_product / "files" / ".hidden-deliverable").write_bytes(b"hidden")
+        (self.shop_product / "files" / ".DS_Store").write_bytes(b"finder")
+
+        products = dashboard_app.products_from_excel()
+        product = next(item for item in products if item["folder"] == "product-01")
+
+        self.assertEqual(product["local_asset_bytes"], len(b"image") + len(b"source") + len(b"part"))
+        self.assertEqual(product["local_asset_file_count"], 3)
+        self.assertEqual(product["local_file_bytes"], len(b"source") + len(b"part"))
+        self.assertEqual(product["local_file_count"], 2)
+        self.assertIsNone(product["local_asset_size_error"])
+
+    def test_enrichment_uses_listing_timestamp_and_not_snapshot_time(self) -> None:
+        product = {
+            "folder": "product-01",
+            "etsy_url": "https://www.etsy.com/listing/1234567890",
+            "status": "✅ Đã đăng",
+        }
+        snapshot = {
+            "snapshotAt": "2026-08-31T00:00:00",
+            "freshness": {"snapshotAt": "2026-08-31T00:00:00", "stale": False},
+            "listings": [{
+                "id": "1234567890",
+                "managerStatus": "active",
+                "posted_at": "2026-08-30T13:45:00Z",
+            }],
+        }
+
+        enriched = dashboard_app.enrich_products_with_etsy_manager([product], snapshot)[0]
+
+        self.assertEqual(enriched["etsy_posted_at"], "2026-08-30T13:45:00Z")
+        self.assertNotEqual(enriched["etsy_posted_at"], snapshot["snapshotAt"])
+
+        without_listing_timestamp = dashboard_app.enrich_products_with_etsy_manager(
+            [product],
+            {
+                **snapshot,
+                "listings": [{"id": "1234567890", "managerStatus": "active"}],
+            },
+        )[0]
+        self.assertIsNone(without_listing_timestamp["etsy_posted_at"])
+
+        formatted_state_date = dashboard_app.enrich_products_with_etsy_manager(
+            [product],
+            {
+                **snapshot,
+                "listings": [{
+                    "id": "1234567890",
+                    "managerStatus": "active",
+                    "formatted_state_date": "Aug 30, 2026",
+                    "state_date": 1788097500,
+                }],
+            },
+        )[0]
+        self.assertEqual("Aug 30, 2026", formatted_state_date["etsy_posted_at"])
+
+    async def test_auto_cloud_eligibility_waits_24_hours_and_persists_across_reconcile(self) -> None:
+        with patch.object(
+            dashboard_app,
+            "_shop_catalog_statuses",
+            side_effect=lambda shop: {"product-01": "✅ Đã đăng"} if shop == "templystudios" else {},
+        ), patch.object(
+            dashboard_app,
+            "_schedule_cloud_upload_verify_offload",
+            new_callable=AsyncMock,
+            return_value=({"command_id": "cmd-1"}, True),
+        ) as schedule:
+            first = await dashboard_app._reconcile_cloud_auto_eligibility(now=1_000)
+            self.assertEqual(schedule.await_count, 0)
+            self.assertEqual(
+                first["entries"]["shops/templystudios/product-01"]["eligible_at"],
+                1_000 + 24 * 60 * 60,
+            )
+            persisted = dashboard_app._load_cloud_auto_ledger()
+            self.assertEqual(
+                persisted["entries"]["shops/templystudios/product-01"]["state"],
+                "eligible_waiting",
+            )
+            await dashboard_app._reconcile_cloud_auto_eligibility(now=1_000 + 24 * 60 * 60 - 1)
+            self.assertEqual(schedule.await_count, 0)
+            await dashboard_app._reconcile_cloud_auto_eligibility(now=1_000 + 24 * 60 * 60)
+            self.assertEqual(schedule.await_count, 1)
+
+    async def test_queued_upload_rechecks_status_before_store_mutation(self) -> None:
+        status_reads = iter((
+            {"product-01": "✅ Đã đăng"},
+            {"product-01": "⏳ Chờ đăng"},
+        ))
+        dashboard_app._etsy_single_sync_busy_shops.add("templystudios")
+        try:
+            with patch.object(
+                dashboard_app,
+                "_shop_catalog_statuses",
+                side_effect=lambda _shop: next(status_reads),
+            ):
+                response = await dashboard_app.cloud_assets_schedule_upload_verify_offload(
+                    _JsonRequest(
+                        self._payload(
+                            delete_local=True,
+                            confirmed_product_key="shops/templystudios/product-01",
+                        )
+                    )
+                )
+                self.assertEqual(response.status_code, 202)
+                command_id = response.body.decode("utf-8") if hasattr(response, "body") else ""
+                del command_id
+                dashboard_app._etsy_single_sync_busy_shops.discard("templystudios")
+                for _ in range(100):
+                    command = next(
+                        (
+                            item
+                            for item in dashboard_app._OPERATION_QUEUE_COMMANDS.values()
+                            if item.get("operation") == "cloud-upload-verify-offload"
+                            and item.get("target") == "shops/templystudios/product-01"
+                        ),
+                        None,
+                    )
+                    if command and command.get("status") == "failed":
+                        break
+                    await asyncio.sleep(0.01)
+                self.assertIsNotNone(command)
+                self.assertEqual(command.get("status"), "failed")
+                self.assertEqual(self.store.calls, [])
+        finally:
+            dashboard_app._etsy_single_sync_busy_shops.discard("templystudios")
+
+    async def test_auto_cloud_reconcile_dedupes_active_and_cloud_only(self) -> None:
+        with patch.object(
+            dashboard_app,
+            "_shop_catalog_statuses",
+            side_effect=lambda shop: {"product-01": "✅ Đã đăng"} if shop == "templystudios" else {},
+        ), patch.object(
+            dashboard_app,
+            "_schedule_cloud_upload_verify_offload",
+            new_callable=AsyncMock,
+            return_value=({"command_id": "cmd-restart"}, True),
+        ) as schedule:
+            ledger = dashboard_app._load_cloud_auto_ledger()
+            ledger["entries"]["shops/templystudios/product-01"] = {
+                "shop_id": "templystudios",
+                "folder": "product-01",
+                "observed_status": "✅ Đã đăng",
+                "observed_at": 1,
+                "eligible_at": 100,
+                "state": "scheduled",
+            }
+            dashboard_app._save_cloud_auto_ledger(ledger)
+            dashboard_app._CLOUD_ASSET_UPLOAD_SCHEDULES[
+                "shops/templystudios/product-01"
+            ] = {"status": "queued"}
+            await dashboard_app._reconcile_cloud_auto_eligibility(now=100_000)
+            self.assertEqual(schedule.await_count, 0, "Active in-memory schedule must dedupe")
+            dashboard_app._CLOUD_ASSET_UPLOAD_SCHEDULES.clear()
+            await dashboard_app._reconcile_cloud_auto_eligibility(now=100_000)
+            self.assertEqual(schedule.await_count, 1, "Restart must re-admit non-cloud-only scheduled entry")
+
+            state_path = self.shop_product / ".cloud-assets.json"
+            state_path.write_text(
+                '{"schema": 1, "state": "CLOUD_ONLY", "current_revision": "rev-1", "history": []}',
+                encoding="utf-8",
+            )
+            dashboard_app._CLOUD_ASSET_UPLOAD_SCHEDULES.clear()
+            await dashboard_app._reconcile_cloud_auto_eligibility(now=200_000)
+            self.assertEqual(schedule.await_count, 1, "CLOUD_ONLY must skip re-admission")
 
     async def test_factory_is_lazy_and_uses_secret_free_config(self) -> None:
         config = SimpleNamespace(

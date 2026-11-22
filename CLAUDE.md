@@ -1,8 +1,8 @@
 # CLAUDE.md
 
-## Imported Claude Cowork project instructions
+## Instruction routing
 
-- At the start of each conversation, read this file before performing operations.
+- Read the sections relevant to the requested operation before changing files. Use the pipeline and queue rules below for Etsy/eBay/WordPress dashboard work; use `docs/TESTING.md` to select targeted checks for changed behavior.
 - This dashboard project manages Etsy + eBay/WordPress tooling and product pipelines.
 - Common tasks are already defined by the existing API routes in:
   - `dashboard_app.py` (Etsy pipeline, default port 8090)
@@ -18,15 +18,23 @@ This repo is the **only** canonical Etsy project root:
 | Role | Canonical path |
 |------|----------------|
 | Project root | `/Users/aaronnguyen/Developer/Etsy` |
-| Factory source | `/Users/aaronnguyen/Developer/Etsy/master_products` |
+| Archive/cloud scope | `/Users/aaronnguyen/Developer/Etsy/master_products` (optional; not a shop intake source) |
 | Shop data | `/Users/aaronnguyen/Developer/Etsy/shops` |
 | Backups | `/Users/aaronnguyen/Developer/Etsy/output/backup` |
 
-- Import Factory reads `master_products`. Asset-intake / image-factory output must land under `master_products` in this repo.
+- Import Factory is scoped to the active shop and reads `shops/<active_shop>/` only. Asset-intake / Image Factory output must land under that active shop folder.
+- `master_products` is an independent archive/cloud scope. It must not be used as an import source for any shop.
 - Resolve paths from the repo root (`Path(__file__).resolve().parent` for root-level scripts). Do not hardcode the obsolete tree.
 - `/Users/aaronnguyen/Documents/Claude/Projects/Etsy` is obsolete — never use it as source or destination.
 
-**Before claiming completion:** confirm generated `master_products/product-NN` folders exist in this repo and that the dashboard Import Factory scan can see them.
+**Before claiming completion:** confirm generated `shops/<active_shop>/...` folders exist in this repo and that the dashboard Import Factory scan reports that same active-shop path.
+
+## Model workflow for project changes
+
+- For every project change, GPT 6.1 Sol Medium (`gpt-6.1-sol`, `reasoning_effort=medium`) performs analysis, planning, and task assignment with explicit scope and acceptance checks.
+- GPT 6 Luna Max (`gpt-6-luna`, `reasoning_effort=max`) subagent implements scoped code or project changes and runs proportionate checks.
+- After implementation, GPT 6.1 Sol Medium independently reviews the actual diff and verification evidence. Planning and review alone do not count as implementation; delegation does not transfer external mutation authority.
+- If a required model or reasoning effort is unavailable in the current runtime, report the exact unavailable role and configuration; do not silently substitute another model or effort. Report any substitution explicitly, and never claim a requested model ran based on configuration alone.
 
 ## Operational notes
 
@@ -38,7 +46,9 @@ This repo is the **only** canonical Etsy project root:
 
 ## Testing & validation
 
-- Run tests: `.venv/bin/python -m pytest` (207 tests collected, all passing as of 2026-08-04)
+- Choose proportionate targeted checks for the changed behavior. Start with `docs/TESTING.md` and the test-to-module map below; run the full Python suite, safe JavaScript suite, or baseline gate when the change is broad or the testing docs require it.
+- For browser, live, or manual behavior, follow the relevant manual checks in `docs/TESTING.md`; excluded scripts are not CI tests.
+- GitHub Actions runs the Python and safe JavaScript checks on pushes and pull requests targeting `main`.
 - Config: `pytest.ini` at project root; `conftest.py` excludes non-test scripts.
 
 ### Test-to-module map (all tracked pytest modules)
@@ -71,9 +81,9 @@ This repo is the **only** canonical Etsy project root:
 
 `test_seo_fail.py`, `test_tag_pills.py`, `test_tags.py`, `test_translate.py` are manual/interactive scripts excluded via `conftest.py` (`collect_ignore`).
 
-### JavaScript test files (manual scripts — no automated runner)
+### JavaScript test files
 
-The `test_*.js` files at the repo root are **manual, standalone scripts** for the dashboard frontend layer (`dashboard_static/`), not automated test suites. Each is a plain Node script using `node:assert` (some drive a live browser via Playwright-style interaction) and must be run individually, e.g. `node test_image_lightbox.js`. There is **no automated JS test runner** configured — no `package.json`, no Jest/Mocha/Playwright-test setup — so these scripts are never collected or executed by any CI/test command in this repo.
+The `test_*.js` files at the repo root are standalone Node scripts for the dashboard frontend layer (`dashboard_static/`). The explicit local-only allowlist is run with `npm run test:safe` (or `node scripts/run_safe_js_tests.mjs`) and is documented in `docs/TESTING.md`. The runner never globs `test_*.js`: browser/live/manual scripts remain excluded and must not be pulled into CI without a separate safety review.
 
 | Script | Checks |
 |--------|--------|

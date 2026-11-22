@@ -341,6 +341,7 @@ class TestSelectedRouteCollision(TestCase):
                     patch.object(dashboard_app, "EXCEL_FILE", return_value=self.excel_path), \
                     patch.object(dashboard_app, "_active_shop_id", self.shop_id), \
                     patch.object(dashboard_app, "get_product_by_row", return_value={"folder": "product-369"}), \
+                    patch.object(dashboard_app, "is_etsy_session_ready", return_value=True), \
                     patch.object(dashboard_app, "_runtime_prefetch_import_check", new=AsyncMock(return_value=(True, "ok"))), \
                     patch.object(dashboard_app.asyncio, "create_subprocess_exec", new=AsyncMock(side_effect=fake_subprocess)), \
                     patch.object(dashboard_app, "save_to_excel", return_value=None):

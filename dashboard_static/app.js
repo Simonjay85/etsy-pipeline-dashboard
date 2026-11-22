@@ -26,7 +26,10 @@ let operationQueueTimer = null;
 let operationQueuePollInFlight = null;
 let operationQueueLastCommands = null;
 let operationQueueLastRefresh = null;
+let servicesSnapshotValid = false;
+let operationQueueSnapshotValid = false;
 let modalSeoGeneration = null;
+let pipelineWorkbenchTimer = null;
 const REGEN_SEO_REQUEST_TIMEOUT_MS = 195000;
 const selectedCatalogIds = new Set();
 const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -60,7 +63,7 @@ const INVALID_MUTATION_TOKEN_DETAIL = 'missing or invalid mutation token';
 let mutationTokenRefreshPromise = null;
 
 function _isMutationMethod(method = 'GET') {
-  return new Set(['POST', 'PATCH', 'DELETE']).has(String(method || '').toUpperCase());
+  return new Set(['POST', 'PATCH', 'PUT', 'DELETE']).has(String(method || '').toUpperCase());
 }
 
 function _isSameOriginRequest(targetUrl) {
@@ -245,24 +248,153 @@ function productEtsyLink(product) {
 
 // ── Init ───────────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
-  initShopSwitcher();
-  loadProducts();
+  void initializeDashboard();
   void hydrateActiveCloudUploadProgress();
   connectLogs();
   pollServices();
   pollRuntimeHealth();
   pollOperationQueue();
+  void loadPipelineWorkbench();
   setInterval(pollServices, 8000);
   setInterval(pollRuntimeHealth, 15000);
   operationQueueTimer = setInterval(pollOperationQueue, 3000);
+  pipelineWorkbenchTimer = setInterval(() => { void loadPipelineWorkbench(); }, 15000);
   setInterval(() => { void pollActiveCloudAssetStatuses(); }, 1500);
   createToastContainer();
+  setPipelineWorkbenchExpanded(false);
+  document.querySelectorAll('[data-pipeline-view]').forEach((tab) => {
+    tab.addEventListener('click', () => selectPipelineView(tab.dataset.pipelineView || 'research'));
+  });
   initModalOverlays();
   initScrollNavigation();
   initImageLightbox();
   loadJobCenter();
   jobCenterTimer = setInterval(loadJobCenter, 12000);
 });
+
+function setPipelineWorkbenchExpanded(expanded = false) {
+  const workbench = document.getElementById('pipeline-workbench');
+  const content = document.getElementById('pipeline-workbench-content');
+  const toggle = document.getElementById('pipeline-workbench-toggle');
+  const icon = document.querySelector('.pipeline-workbench-toggle-icon');
+  const label = document.getElementById('pipeline-workbench-toggle-label');
+  if (!content || !toggle) return false;
+  const isExpanded = Boolean(expanded);
+  content.hidden = !isExpanded;
+  workbench?.classList.toggle('is-expanded', isExpanded);
+  toggle.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+  if (icon) icon.textContent = isExpanded ? '▾' : '▸';
+  if (label) label.textContent = isExpanded ? 'Ẩn pipeline' : 'Mở pipeline';
+  return isExpanded;
+}
+
+function togglePipelineWorkbench() {
+  const content = document.getElementById('pipeline-workbench-content');
+  return setPipelineWorkbenchExpanded(Boolean(content?.hidden));
+}
+
+function selectPipelineView(view = 'research') {
+  const target = ['research', 'pipeline', 'draft-review'].includes(view) ? view : 'research';
+  document.querySelectorAll('[data-pipeline-view]').forEach((tab) => {
+    const active = tab.dataset.pipelineView === target;
+    tab.classList.toggle('active', active);
+    tab.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  document.querySelectorAll('.pipeline-view').forEach((panel) => {
+    panel.classList.toggle('hidden', panel.id !== `pipeline-view-${target}`);
+  });
+}
+
+function pipelineJobTimestamp(value) {
+  const numeric = Number(value || 0);
+  return numeric ? new Date(numeric * 1000).toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+}
+
+function renderPipelineJobs(jobs = []) {
+  const body = document.getElementById('pipeline-jobs-body');
+  const review = document.getElementById('pipeline-review-list');
+  if (!body || !review) return;
+  const normalized = Array.isArray(jobs) ? jobs : [];
+  body.innerHTML = normalized.length
+    ? normalized.map((job) => {
+      const status = String(job?.status || 'unknown').toLowerCase();
+      return `<tr>
+        <td><strong>${escHtml(job?.candidate_id || job?.product_id || job?.job_id || 'candidate')}</strong><span>${escHtml(job?.shop_id || '')}</span></td>
+        <td>${escHtml(job?.stage || '—')}</td>
+        <td><span class="pipeline-status ${escHtml(status)}">${escHtml(status)}</span>${job?.error_message ? `<small>${escHtml(job.error_message)}</small>` : ''}</td>
+        <td>${escHtml(pipelineJobTimestamp(job?.updated_at))}</td>
+      </tr>`;
+    }).join('')
+    : '<tr><td colspan="4" class="pipeline-empty">Chưa có pipeline job.</td></tr>';
+  const verified = normalized.filter((job) => String(job?.status || '').toLowerCase() === 'verified');
+  review.innerHTML = verified.length
+    ? verified.map((job) => `<div class="pipeline-review-card"><strong>${escHtml(job?.candidate_id || job?.product_id || job?.job_id || 'draft')}</strong> · ${escHtml(job?.shop_id || '')}<small>Đã read-back verified. Kiểm tra 10 hình, SEO và file giao khách trước khi anh duyệt xuất bản.</small></div>`).join('')
+    : '<div class="pipeline-empty">Chưa có draft verified cần duyệt.</div>';
+}
+
+function renderPipelineHealth(payload = {}) {
+  const note = document.getElementById('pipeline-health-note');
+  const policy = document.getElementById('pipeline-policy-card');
+  const shopSelect = document.getElementById('pipeline-research-shop');
+  const quota = payload?.quota || {};
+  const workers = payload?.workers || {};
+  if (note) {
+    const hermes = workers?.hermes?.gateway || 'unknown';
+    const chatgpt = workers?.chatgpt?.cdp || 'unknown';
+    note.textContent = `Hermes ${hermes} · ChatGPT UI ${chatgpt} · Anna registered/disabled · API $${Number(workers?.image_api?.budget_usd || 0).toFixed(2)}`;
+  }
+  if (policy) {
+    policy.innerHTML = `<strong>Quota hôm nay</strong><br>${Number(quota.used || 0)}/${Number(quota.max_total || 5)} draft · còn ${Number(quota.remaining || 0)}<br>WIP ${Number(payload?.jobs?.active || 0)}/${Number(payload?.policy?.max_inflight_jobs || 10)} · tối đa ${Number(quota.max_per_shop || 2)}/shop`;
+  }
+  if (shopSelect && Array.isArray(payload?.shops)) {
+    const current = shopSelect.value;
+    shopSelect.innerHTML = payload.shops.map((shop) => `<option value="${escHtml(shop.id)}">${escHtml(shop.name || shop.id)}</option>`).join('');
+    if (current && payload.shops.some((shop) => shop.id === current)) shopSelect.value = current;
+    else if (payload.active_shop) shopSelect.value = payload.active_shop;
+  }
+}
+
+async function loadPipelineWorkbench() {
+  try {
+    const [healthResponse, jobsResponse] = await Promise.all([
+      fetch('/api/pipeline/health', { cache: 'no-store' }),
+      fetch('/api/pipeline/jobs?limit=100', { cache: 'no-store' }),
+    ]);
+    if (!healthResponse.ok || !jobsResponse.ok) throw new Error(`HTTP ${healthResponse.status}/${jobsResponse.status}`);
+    const health = await healthResponse.json();
+    const jobs = await jobsResponse.json();
+    renderPipelineHealth(health);
+    renderPipelineJobs(jobs?.jobs || []);
+  } catch (error) {
+    const note = document.getElementById('pipeline-health-note');
+    if (note) note.textContent = `Pipeline chưa đọc được trạng thái: ${error?.message || error}`;
+  }
+}
+
+async function createPipelineResearchJob() {
+  const shop = String(document.getElementById('pipeline-research-shop')?.value || '').trim();
+  const brief = String(document.getElementById('pipeline-research-brief')?.value || '').trim();
+  if (!shop || !brief) {
+    toast('warning', 'Hãy chọn shop và nhập research brief.');
+    return;
+  }
+  try {
+    const response = await fetch('/api/pipeline/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shop_id: shop, stage: 'research', listing_type: 'digital', payload: { brief, worker: 'hermes-research', evidence_required: true } }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data?.detail || 'Không tạo được research job');
+    document.getElementById('pipeline-research-brief').value = '';
+    toast('success', data?.created ? 'Đã tạo research job bền vững.' : 'Research job đã tồn tại, không tạo trùng.');
+    selectPipelineView('pipeline');
+    setPipelineWorkbenchExpanded(false);
+    await loadPipelineWorkbench();
+  } catch (error) {
+    toast('error', `Research thất bại: ${error?.message || error}`);
+  }
+}
 
 // ── Global operation queue ────────────────────────────────────────────────────
 const OPERATION_QUEUE_LABELS = Object.freeze({
@@ -385,14 +517,18 @@ async function pollOperationQueue() {
       }
       operationQueueLastRefresh = new Date();
       operationQueueLastCommands = normalizeOperationQueueCommands(payload.commands);
+      operationQueueSnapshotValid = true;
       renderOperationQueue(operationQueueLastCommands, { refreshedAt: operationQueueLastRefresh });
+      updateStopButtonState();
     } catch (error) {
+      operationQueueSnapshotValid = operationQueueLastCommands !== null;
       renderOperationQueue(operationQueueLastCommands || [], {
         refreshedAt: new Date(),
         lastSuccessfulAt: operationQueueLastRefresh,
         hasSuccessfulSnapshot: operationQueueLastCommands !== null,
         error: error?.message || 'network error',
       });
+      updateStopButtonState();
     } finally {
       operationQueuePollInFlight = null;
     }
@@ -505,14 +641,96 @@ function scrollToListBottom() {
 }
 
 let currentShopsData = {};
+let shopContextReady = false;
+let shopContextInitializationPromise = null;
+let shopContextReloadScheduled = false;
+let shopContextDrifted = false;
+let shopContextSwitchInFlight = false;
+
+function currentShopContextId() {
+  return String(document.getElementById('shop-switcher')?.value || '').trim();
+}
+
+function disableShopScopedControls(reason = 'Shop context chưa được xác nhận') {
+  const selector = [
+    '[data-action-scope="live-etsy"]',
+    '[data-action-scope="local"]',
+    '[data-action-scope="content"]',
+    '[data-shop-scoped="true"]',
+    '.live-etsy-read',
+    '.live-etsy-write',
+    '.local-batch-action',
+    '.shop-batch-action',
+    '#btn-create-folder',
+    '#btn-import-factory',
+    '#btn-import-csv',
+    '#btn-etsy-login',
+    '#btn-etsy-sync',
+    '#btn-run-all-pending',
+    '#btn-start-watcher',
+    '#btn-open-repair',
+    '#btn-clean-duplicates',
+    '#btn-auto-post',
+    '#btn-batch-generate-seo',
+  ].join(', ');
+  document.querySelectorAll(selector).forEach((control) => {
+    if (!control || control.id === 'shop-switcher') return;
+    control.disabled = true;
+    control.dataset.shopContextDisabled = 'true';
+    control.title = reason;
+  });
+}
+
+function updateShopSelectorFromAuthoritativeId(shopId) {
+  const id = String(shopId || '').trim();
+  if (!id) return false;
+  const selector = document.getElementById('shop-switcher');
+  if (!selector) return false;
+  if (currentShopsData[id]) selector.value = id;
+  return selector.value === id;
+}
+
+function scheduleShopContextReload(message, authoritativeId = '') {
+  if (authoritativeId) updateShopSelectorFromAuthoritativeId(authoritativeId);
+  disableShopScopedControls(message);
+  if (typeof toast === 'function') toast('error', message);
+  if (shopContextReloadScheduled) return;
+  shopContextReloadScheduled = true;
+  if (typeof window !== 'undefined' && window.location && typeof window.location.reload === 'function') {
+    setTimeout(() => window.location.reload(), 0);
+  }
+}
+
+function handleShopContextDrift({ actualId = '', source = 'dashboard' } = {}) {
+  const id = String(actualId || '').trim();
+  shopContextDrifted = true;
+  const label = id
+    ? `⚠️ Context shop đã thay đổi (${source}: ${id}). Đang tải lại dashboard...`
+    : `⚠️ Không xác nhận được context shop (${source}). Đang tải lại dashboard...`;
+  scheduleShopContextReload(label, id);
+}
+
+function validateProductsShopIdentity(payload) {
+  const payloadShopId = String(payload?.active_shop?.id || '').trim();
+  const expectedShopId = String(
+    ((typeof shopContext !== 'undefined' && shopContext?.id) || currentShopContextId()),
+  ).trim();
+  return Boolean(payloadShopId && expectedShopId && payloadShopId === expectedShopId);
+}
 
 // ── Shop Switcher ──────────────────────────────────────────────────────────────
 async function initShopSwitcher() {
   const shopSwitcher = document.getElementById('shop-switcher');
+  if (!shopSwitcher) throw new Error('Không tìm thấy bộ chọn shop');
   try {
-    const res = await fetch('/api/shops');
+    const res = await fetch('/api/shops', { cache: 'no-store' });
     const data = await res.json();
+    if (!res.ok || !data || !Array.isArray(data.shops) || !String(data.active || '').trim()) {
+      throw new Error(data?.detail || data?.error || `Không tải được danh sách shop (HTTP ${res.status})`);
+    }
     currentShopsData = data.shops.reduce((acc, s) => ({...acc, [s.id]: s}), {});
+    const activeId = String(data.active).trim();
+    if (!currentShopsData[activeId]) throw new Error(`Backend trả về shop active không hợp lệ: ${activeId}`);
     
     shopSwitcher.innerHTML = '';
     data.shops.forEach(shop => {
@@ -521,25 +739,67 @@ async function initShopSwitcher() {
       opt.textContent = `${shop.emoji || '🏬'} ${shop.name}`;
       shopSwitcher.appendChild(opt);
     });
-    shopSwitcher.value = data.active;
+    shopSwitcher.value = activeId;
+    shopContext.id = activeId;
+    shopContext.name = String(currentShopsData[activeId]?.name || '').trim();
+    shopContextReady = true;
+    shopContextDrifted = false;
     void loadCloudAssetStatus();
     
-    shopSwitcher.addEventListener('change', async (e) => {
+    if (shopSwitcher.dataset.contextHandlerBound !== 'true') shopSwitcher.addEventListener('change', async (e) => {
+      const requestedId = String(e.target.value || '').trim();
+      const previousId = String(shopContext.id || '').trim();
+      if (!requestedId || requestedId === previousId) return;
+      shopContextSwitchInFlight = true;
       try {
-        await fetch('/api/set-shop', {
+        const response = await fetch('/api/set-shop', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ shop_id: e.target.value })
+          body: JSON.stringify({ shop_id: requestedId })
         });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data?.ok !== true || String(data?.active || '').trim() !== requestedId) {
+          throw new Error(data?.detail || data?.error || `Không thể chuyển shop (HTTP ${response.status})`);
+        }
+        shopContext.id = requestedId;
+        shopContext.name = String(data?.shop?.name || currentShopsData[requestedId]?.name || '').trim();
         window.location.reload(); // Reload to reset state for new shop
       } catch (err) {
+        e.target.value = previousId;
         toast('error', `Lỗi chuyển shop: ${err.message}`);
+      } finally {
+        shopContextSwitchInFlight = false;
       }
     });
+    shopSwitcher.dataset.contextHandlerBound = 'true';
+    return true;
   } catch (err) {
+    shopContextReady = false;
     console.error('Failed to load shops:', err);
     shopSwitcher.innerHTML = '<option>Lỗi tải shop</option>';
+    disableShopScopedControls('Không tải được context shop; các thao tác đã bị khóa');
+    toast('error', `Không tải được context shop: ${err.message}`);
+    return false;
   }
+}
+
+const shopContext = { id: '', name: '' };
+
+async function initializeDashboard() {
+  if (!shopContextInitializationPromise) {
+    shopContextInitializationPromise = (async () => {
+      const ready = await initShopSwitcher();
+      if (!ready) return false;
+      await loadProducts();
+      return true;
+    })().catch((error) => {
+      shopContextReady = false;
+      disableShopScopedControls('Không khởi tạo được context shop; các thao tác đã bị khóa');
+      toast('error', `Không khởi tạo được dashboard: ${error.message}`);
+      return false;
+    });
+  }
+  return shopContextInitializationPromise;
 }
 
 async function openEtsyPostingLogin() {
@@ -580,6 +840,134 @@ async function openEtsyPostingLogin() {
 }
 
 // ── Shop Settings ──────────────────────────────────────────────────────────────
+const TOGETHER_DEFAULT_BASE_URL = 'https://api.together.xyz/v1';
+const TOGETHER_DEFAULT_MODEL = 'deepseek-ai/DeepSeek-V4.1-Flash';
+const TOGETHER_SETTINGS_ENDPOINT = '/api/together/settings';
+
+function setTogetherConfigStatus(message, state = 'info') {
+  const status = document.getElementById('set-together-status');
+  if (!status) return;
+  status.textContent = message;
+  status.dataset.state = state;
+}
+
+function togetherConfigStatus(config) {
+  const keyHint = config?.key_hint ? ` (••••${String(config.key_hint)})` : '';
+  const storageError = String(config?.storage_error || '').trim();
+  if (storageError) {
+    return {
+      message: `Keychain báo lỗi: ${storageError}`,
+      state: 'error',
+    };
+  }
+  if (config?.configured && config?.persisted === true) {
+    return {
+      message: `Đã lưu trong macOS Keychain${keyHint}`,
+      state: 'success',
+    };
+  }
+  if (config?.configured) {
+    return {
+      message: `Chỉ dùng trong phiên hiện tại${keyHint}; cấu hình Keychain chưa khớp`,
+      state: 'warning',
+    };
+  }
+  return {
+    message: 'Chưa cấu hình API key Together',
+    state: 'info',
+  };
+}
+
+function renderTogetherConfig(config) {
+  const baseInput = document.getElementById('set-together-base-url');
+  const modelInput = document.getElementById('set-together-model');
+  const keyInput = document.getElementById('set-together-api-key');
+  if (baseInput) baseInput.value = config.base_url || TOGETHER_DEFAULT_BASE_URL;
+  if (modelInput) modelInput.value = config.model || TOGETHER_DEFAULT_MODEL;
+  // The API never returns the key. Keep the password field blank after every
+  // read/write so it cannot be recovered from the DOM later.
+  if (keyInput) keyInput.value = '';
+  const status = togetherConfigStatus(config);
+  setTogetherConfigStatus(status.message, status.state);
+}
+
+async function loadTogetherConfig() {
+  const keyInput = document.getElementById('set-together-api-key');
+  if (keyInput) keyInput.value = '';
+  setTogetherConfigStatus('Đang tải cấu hình Together…', 'info');
+  try {
+    const res = await fetch(TOGETHER_SETTINGS_ENDPOINT, { cache: 'no-store' });
+    const data = await res.json();
+    if (!res.ok || data.ok !== true || typeof data.configured !== 'boolean') throw new Error('invalid Together config response');
+    renderTogetherConfig(data);
+  } catch (_error) {
+    setTogetherConfigStatus('Không tải được cấu hình Together', 'error');
+  }
+}
+
+async function saveTogetherConfig() {
+  const button = document.getElementById('save-together-config');
+  const key = document.getElementById('set-together-api-key')?.value || '';
+  const baseUrl = document.getElementById('set-together-base-url')?.value.trim() || '';
+  const model = document.getElementById('set-together-model')?.value.trim() || '';
+  if (!model.trim()) {
+    setTogetherConfigStatus('Model Together không được để trống', 'error');
+    return;
+  }
+  if (button) button.disabled = true;
+  setTogetherConfigStatus('Đang lưu vào macOS Keychain…', 'info');
+  try {
+    const res = await fetch(TOGETHER_SETTINGS_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key: key, base_url: baseUrl, model, persist: true }),
+    });
+    const data = await res.json();
+    if (!res.ok && typeof data.detail === 'string') {
+      setTogetherConfigStatus(data.detail, 'error');
+      return;
+    }
+    if (!res.ok || data.ok !== true || typeof data.configured !== 'boolean') throw new Error('Together config save failed');
+    renderTogetherConfig(data);
+  } catch (_error) {
+    setTogetherConfigStatus('Không lưu được cấu hình Together vào Keychain', 'error');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function clearTogetherConfig() {
+  const button = document.getElementById('clear-together-config');
+  const baseUrl = document.getElementById('set-together-base-url')?.value.trim() || '';
+  const model = document.getElementById('set-together-model')?.value.trim() || '';
+  if (typeof window !== 'undefined' && typeof window.confirm === 'function'
+      && !window.confirm('Xoá Together API key đã lưu trong macOS Keychain và key đang dùng trong runtime? Thao tác này xoá cả hai bản lưu.')) return;
+  if (!model) {
+    setTogetherConfigStatus('Model Together không được để trống', 'error');
+    return;
+  }
+  if (button) button.disabled = true;
+  setTogetherConfigStatus('Đang xoá key khỏi macOS Keychain và runtime…', 'info');
+  try {
+    const res = await fetch(TOGETHER_SETTINGS_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key: '', clear_key: true, base_url: baseUrl, model, persist: true }),
+    });
+    const data = await res.json();
+    if (!res.ok && typeof data.detail === 'string') {
+      setTogetherConfigStatus(data.detail, 'error');
+      return;
+    }
+    if (!res.ok || data.ok !== true || typeof data.configured !== 'boolean') throw new Error('Together config clear failed');
+    renderTogetherConfig(data);
+  } catch (_error) {
+    setTogetherConfigStatus('Không xoá được Together khỏi Keychain và runtime', 'error');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 function openShopSettings() {
   const activeId = document.getElementById('shop-switcher').value;
   const shop = currentShopsData[activeId];
@@ -591,6 +979,7 @@ function openShopSettings() {
   document.getElementById('set-etsy-link').value = shop.etsy_link || '';
   document.getElementById('set-social-links').value = shop.social_links || '';
   document.getElementById('set-shop-info').value = shop.shop_info || '';
+  void loadTogetherConfig();
   
   openModal('settings-modal');
 }
@@ -706,6 +1095,80 @@ async function doImportCSV() {
   }
 }
 
+async function readDashboardSSE(response, onMessage) {
+  if (!response.ok) {
+    let detail = '';
+    try {
+      detail = await response.text();
+    } catch (_) {}
+    throw new Error(`HTTP ${response.status}${detail ? `: ${detail}` : ''}`);
+  }
+
+  const reader = response.body?.getReader?.();
+  if (!reader) throw new Error('The response does not contain a readable event stream');
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let streamEnded = false;
+
+  const dispatchBlock = (block) => {
+    const dataLines = [];
+    for (const line of block.split(/\r\n|\r|\n/)) {
+      if (!line || line.startsWith(':')) continue;
+      const colon = line.indexOf(':');
+      const field = colon < 0 ? line : line.slice(0, colon);
+      let value = colon < 0 ? '' : line.slice(colon + 1);
+      if (value.startsWith(' ')) value = value.slice(1);
+      if (field === 'data') dataLines.push(value);
+    }
+    return dataLines.length > 0 && onMessage(dataLines.join('\n')) === false;
+  };
+
+  const dispatchAvailableBlocks = () => {
+    const separator = /\r\n\r\n|\n\n|\r\r/;
+    while (true) {
+      const match = separator.exec(buffer);
+      if (!match) return false;
+      const block = buffer.slice(0, match.index);
+      buffer = buffer.slice(match.index + match[0].length);
+      if (dispatchBlock(block)) return true;
+    }
+  };
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) {
+        streamEnded = true;
+        buffer += decoder.decode();
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      if (dispatchAvailableBlocks()) return;
+    }
+    // SSE dispatches an event only after its blank-line terminator. Ignore any
+    // trailing partial packet, matching EventSource behavior at EOF.
+  } finally {
+    if (!streamEnded) {
+      try {
+        await reader.cancel();
+      } catch (_) {}
+    }
+    try {
+      reader.releaseLock?.();
+    } catch (_) {}
+  }
+}
+
+async function postDashboardSSE(url, onMessage, signal) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { Accept: 'text/event-stream' },
+    signal,
+  });
+  await readDashboardSSE(response, onMessage);
+}
+
 function cleanDuplicates() {
   if (!confirm("Bạn có chắc chắn muốn dọn sạch các bản nháp trùng lặp tiêu đề trên Etsy?\n\nHành động này sẽ mở Chrome tự động tìm và xoá các bản nháp trùng lặp.")) {
     return;
@@ -716,32 +1179,35 @@ function cleanDuplicates() {
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span> Đang dọn trùng...';
   }
-  
-  const es = new EventSource('/api/clean-duplicates');
-  
-  es.onmessage = function(e) {
+
+  const controller = new AbortController();
+  const abortOnPageHide = () => controller.abort();
+  let finished = false;
+  window.addEventListener('pagehide', abortOnPageHide, { once: true });
+
+  return postDashboardSSE('/api/clean-duplicates', (eventData) => {
     try {
-      const data = JSON.parse(e.data);
+      const data = JSON.parse(eventData);
       if (data.type === 'finished') {
-        es.close();
-        if (btn) {
-          btn.disabled = false;
-          btn.innerHTML = '🧹 Dọn trùng Drafts';
-        }
+        finished = true;
         alert("✅ Đã hoàn thành tiến trình dọn dẹp bản nháp trùng lặp trên Etsy!");
+        return false;
       }
     } catch(err) {
-      console.log("[Clean Duplicates Log]:", e.data);
+      console.log("[Clean Duplicates Log]:", eventData);
     }
-  };
-  
-  es.onerror = function() {
-    es.close();
+    return true;
+  }, controller.signal).catch((error) => {
+    if (error?.name !== 'AbortError') console.log('[Clean Duplicates Error]:', error);
+  }).finally(() => {
+    window.removeEventListener('pagehide', abortOnPageHide);
+    controller.abort();
     if (btn) {
       btn.disabled = false;
       btn.innerHTML = '🧹 Dọn trùng Drafts';
     }
-  };
+    if (!finished) console.log('[Clean Duplicates]: event stream ended before finished');
+  });
 }
 
 // ── Repair Modal & Scanning ──────────────────────────────────────────────────
@@ -751,7 +1217,7 @@ function openRepairModal() {
   document.getElementById('scan-result').style.display = 'none';
   document.getElementById('scan-errors-list').innerHTML = '';
   document.getElementById('scan-log').innerHTML = '';
-  document.getElementById('repair-modal').classList.add('open');
+  openModal('repair-modal');
 }
 
 function startScan() {
@@ -765,18 +1231,21 @@ function startScan() {
   resDiv.style.display = 'block';
   logDiv.innerHTML = 'Đang mở Chrome để quét...';
   listDiv.innerHTML = '';
-  
-  const evtSource = new EventSource('/api/scan-listings');
-  
-  evtSource.onmessage = function(e) {
+
+  const controller = new AbortController();
+  const abortOnPageHide = () => controller.abort();
+  let terminal = false;
+  let resultLabel = '🔍 Quét shop';
+  window.addEventListener('pagehide', abortOnPageHide, { once: true });
+
+  return postDashboardSSE('/api/scan-listings', (eventData) => {
     try {
-      const data = JSON.parse(e.data);
+      const data = JSON.parse(eventData);
       if (data.type === 'finished') {
-        evtSource.close();
-        btn.disabled = false;
-        btn.innerHTML = '🔍 Quét lại';
+        terminal = true;
+        resultLabel = '🔍 Quét lại';
         logDiv.innerHTML = '✅ Quét hoàn tất!';
-        return;
+        return false;
       }
       
       if (data.type === 'info') {
@@ -784,9 +1253,9 @@ function startScan() {
       } else if (data.type === 'error' || data.type === 'fatal') {
         logDiv.innerHTML = `<span style="color:var(--red)">${data.msg || data.error}</span>`;
         if (data.type === 'fatal') {
-            evtSource.close();
-            btn.disabled = false;
-            btn.innerHTML = '🔍 Quét lại';
+            terminal = true;
+            resultLabel = '🔍 Quét lại';
+            return false;
         }
       } else if (data.type === 'found') {
         // Render error item
@@ -811,16 +1280,26 @@ function startScan() {
         listDiv.appendChild(item);
       }
     } catch(err) {
-      console.log("SSE error:", err);
+      console.log("SSE error:", eventData, err);
     }
-  };
-  
-  evtSource.onerror = function() {
-    evtSource.close();
+    return true;
+  }, controller.signal).then(() => {
+    if (!terminal) {
+      logDiv.innerHTML = '<span style="color:var(--red)">Mất kết nối với server.</span>';
+      resultLabel = '🔍 Quét shop';
+    }
+  }).catch((error) => {
+    if (error?.name !== 'AbortError') {
+      console.log('[Scan Listings Error]:', error);
+      logDiv.innerHTML = '<span style="color:var(--red)">Mất kết nối với server.</span>';
+      resultLabel = '🔍 Quét shop';
+    }
+  }).finally(() => {
+    window.removeEventListener('pagehide', abortOnPageHide);
+    controller.abort();
     btn.disabled = false;
-    btn.innerHTML = '🔍 Quét shop';
-    logDiv.innerHTML = '<span style="color:var(--red)">Mất kết nối với server.</span>';
-  };
+    btn.innerHTML = resultLabel;
+  });
 }
 
 function selectListingToRepair(id) {
@@ -1293,6 +1772,29 @@ function formatCloudAssetDate(value) {
   return parsed.toLocaleDateString('vi-VN');
 }
 
+function formatEtsyPostedAt(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  let parsed;
+  if (/^-?\d+(?:\.\d+)?$/.test(raw)) {
+    const numeric = Number(raw);
+    const milliseconds = Math.abs(numeric) >= 10 ** 11 ? numeric : numeric * 1000;
+    parsed = new Date(milliseconds);
+  } else {
+    parsed = new Date(raw);
+  }
+  if (Number.isNaN(parsed.getTime())) return raw;
+  try {
+    return new Intl.DateTimeFormat('vi-VN', {
+      dateStyle: 'short',
+      timeStyle: 'short',
+      hour12: false,
+    }).format(parsed);
+  } catch {
+    return parsed.toLocaleString('vi-VN');
+  }
+}
+
 function cloudAssetDetailsHtml(status) {
   if (!status) return '';
   const details = [];
@@ -1611,6 +2113,13 @@ async function cloudAssetRefreshStatus(folder, button) {
 async function cloudAssetUploadAndOffload(folder, button) {
   try {
     const payload = cloudAssetRequestPayload(folder);
+    const statusWarning = cloudUploadPostedStatusWarning(payload.folder);
+    if (statusWarning) {
+      // Reject before confirmation and before any request so an accidental
+      // click on a pending product cannot enter the cloud mutation path.
+      toast('warning', statusWarning);
+      return;
+    }
     const productKey = payload.scope === 'master'
       ? `master_products/${payload.folder}`
       : `shops/${payload.shop_id}/${payload.folder}`;
@@ -1722,6 +2231,11 @@ async function loadProducts(options = {}) {
     requestTimeoutMs = 0,
     requestPhase = 'products',
   } = options;
+  if (typeof shopContextReady !== 'undefined' && !shopContextReady) {
+    const error = new Error('Shop context chưa khởi tạo xong');
+    if (throwOnError) throw error;
+    return null;
+  }
   try {
     const { response: res, data } = await fetchJsonWithTimeout(
       '/api/products',
@@ -1729,6 +2243,17 @@ async function loadProducts(options = {}) {
       { timeoutMs: requestTimeoutMs, phase: requestPhase },
     );
     if (!res.ok) throw new Error(data.detail || data.error || `Không tải được sản phẩm (HTTP ${res.status})`);
+    if (typeof validateProductsShopIdentity === 'function' && !validateProductsShopIdentity(data)) {
+      if (typeof shopContextSwitchInFlight !== 'undefined' && shopContextSwitchInFlight) {
+        throw new Error('Shop đang chuyển; bỏ qua payload sản phẩm cũ');
+      }
+      handleShopContextDrift({
+        actualId: data?.active_shop?.id || '',
+        source: 'products',
+      });
+      throw new Error('Payload sản phẩm không khớp context shop hiện tại');
+    }
+    if (typeof shopContextDrifted !== 'undefined' && shopContextDrifted) return null;
     allProducts = data.products || [];
     etsyManagerSnapshot = data.etsy_manager || null;
     updateProductSourceSwitcher();
@@ -1881,6 +2406,8 @@ function updateStats(products) {
   document.getElementById('stat-pending').textContent = summary.pending;
   document.getElementById('stat-error').textContent = summary.error;
   document.getElementById('stat-other').textContent = summary.other;
+  const newImportElement = document.getElementById('stat-new-import');
+  if (newImportElement) newImportElement.textContent = summary.new_import;
   document.getElementById('stat-total-label').textContent = statsTotalLabel(currentProductSource);
 }
 
@@ -2092,8 +2619,9 @@ function isCanonicalSuccessfulLocalDraftStatus(status) {
 }
 
 function isCanonicalSuccessfulLocalPostedStatus(status) {
-  return String(status || '').trim() === '✅ Đã đăng'
-    || String(status || '').trim() === '🆕 Mới import · ✅ Đã đăng';
+  return /^(?:🆕 Mới import · )?✅ Đã đăng(?: draft)?(?: \(URL chưa xác minh\))?$/.test(
+    String(status || '').trim(),
+  );
 }
 
 function withNewImportPrefix(status, isNewImport) {
@@ -2243,9 +2771,15 @@ function classifyProductStatus(status) {
 }
 
 function summarizeProductStatuses(products = []) {
-  const summary = { total: products.length, posted: 0, pending: 0, error: 0, other: 0 };
+  const summary = { total: products.length, posted: 0, pending: 0, error: 0, other: 0, new_import: 0 };
   products.forEach(product => {
-    if (String(product?.source || '').trim().toLowerCase() === 'etsy') {
+    const source = String(product?.source || '').trim().toLowerCase();
+    const isEtsyOnly = source === 'etsy';
+    const status = String(product?.status || '').trim();
+    if (!isEtsyOnly && (product?.is_new_import === true || status.includes('Mới import'))) {
+      summary.new_import += 1;
+    }
+    if (isEtsyOnly) {
       if (statusFilterMatches(product, 'error')) summary.error += 1;
       else if (statusFilterMatches(product, 'posted')) summary.posted += 1;
       else if (statusFilterMatches(product, 'pending')) summary.pending += 1;
@@ -2387,6 +2921,9 @@ function filterProducts() {
         status,
         source: p.source || displayProduct.source || '',
         etsy_status: p.etsy_status || displayProduct.etsy_status || '',
+        is_new_import: displayProduct?.is_new_import === true
+          || p?.is_new_import === true
+          || status.includes('Mới import'),
       };
     }));
     return;
@@ -2452,6 +2989,14 @@ function renderAggregateProducts(records) {
     const registerLocalButton = record.source === 'local' && !record.row && record.folder
       ? `<button class="btn btn-warning btn-sm product-primary-action" data-action-role="primary-next" data-action-scope="local" onclick="registerSingleLocalFolder('${escJs(record.folder)}', this)" title="Bước tiếp theo: đăng ký folder này vào catalog">♻️ Đăng ký local</button>`
       : '';
+    const fallbackFileBytes = record.file_bytes ?? record.local_file_bytes ?? (
+      Array.isArray(record.digital_files)
+        ? record.digital_files.reduce((total, file) => {
+            const size = Number(file?.size);
+            return Number.isFinite(size) && size >= 0 ? total + size : total;
+          }, 0)
+        : null
+    );
     return `<div class="product-card aggregate-summary-card">
       <div class="gallery-wrap"><div class="shop-thumb">${record.source === 'both' ? '🔗' : record.source === 'etsy' ? '🛍' : '📁'}</div></div>
       <div class="product-info">
@@ -2459,6 +3004,13 @@ function renderAggregateProducts(records) {
         <div class="product-title" title="${title}">${title}</div>
         ${listing}
         <div class="product-meta"><span>🖼 ${record.image_count || 0} ảnh</span><span>📎 ${record.file_count || 0} file</span><span>${escHtml(record.etsy_status || record.status || '')}</span></div>
+        ${renderProductCardMetadata({
+          status: record.etsy_status || record.status,
+          etsy_manager_status: record.etsy_status || record.status,
+          etsy_posted_at: record.etsy_posted_at,
+          local_file_bytes: fallbackFileBytes,
+          local_file_count: record.local_file_count ?? record.file_count,
+        })}
         ${renderCloudAssetUi(record.folder)}
         ${duplicateHtml}
         <div class="product-actions" style="margin-top:10px;">
@@ -2572,6 +3124,29 @@ function remoteEtsyProductCard(listing) {
         <div class="product-title" title="${title}">${title}</div>
         ${etsyLink.url ? `<a class="product-etsy-link" href="${safeUrl}" target="_blank" rel="noopener">${etsyLink.kind === 'manager' ? '🛠 Listing editor' : '🔗 Listing Etsy'} ${id}</a>` : `<span class="product-etsy-link missing" title="Không có link Etsy đã xác minh từ snapshot mới nhất">⚠️ Listing ${id} · link unavailable</span>`}
         <div class="product-meta"><span>🛍 Trên shop</span><span>📌 ${escHtml(status)}</span>${etsyLink.stale ? '<span style="color:var(--orange)">⚠ Snapshot stale</span>' : ''}<span style="color:var(--orange)">Chưa ghép folder local</span></div>
+        ${renderProductCardMetadata({
+          status: status.toLowerCase() === 'active' ? '✅ Đã đăng' : status.toLowerCase() === 'draft' ? '✅ Đã đăng draft' : `⏳ ${status}`,
+          managerStatus: status,
+          etsy_posted_at: listing.etsy_posted_at,
+          formatted_state_date: listing.formatted_state_date,
+          formattedStateDate: listing.formattedStateDate,
+          state_date: listing.state_date,
+          stateDate: listing.stateDate,
+          posted_at: listing.posted_at,
+          postedAt: listing.postedAt,
+          published_at: listing.published_at,
+          publishedAt: listing.publishedAt,
+          listed_at: listing.listed_at,
+          listedAt: listing.listedAt,
+          date_listed: listing.date_listed,
+          dateListed: listing.dateListed,
+          creation_tsz: listing.creation_tsz,
+          creationTsz: listing.creationTsz,
+          creation_timestamp: listing.creation_timestamp,
+          creationTimestamp: listing.creationTimestamp,
+          created_at: listing.created_at,
+          createdAt: listing.createdAt,
+        })}
       </div>
       <div class="status-wrap"><div class="status-badge status-${escHtml(status)}">${escHtml(status)}</div></div>
       <div class="product-actions">
@@ -3288,6 +3863,7 @@ function productCard(p) {
         <span>💲 $${Number(p.price).toFixed(2)}</span>
         ${p.has_planner ? '<span style="color:var(--accent2)">🗂 Planner ✓</span>' : ''}
       </div>
+      ${renderProductCardMetadata(p)}
       ${renderCloudAssetUi(p.folder)}
       ${seoBadges}
       ${renderSocialChannelBadges(p.social_statuses)}
@@ -3296,7 +3872,7 @@ function productCard(p) {
       <div class="product-action-header">
         <span class="product-action-title">Thao tác</span>
         <div class="status-wrap" id="status-wrap-${p.row}">
-          <div class="status-badge status-${statusClass}" onclick="toggleStatusMenu(${p.row})" title="Click để thay đổi trạng thái" style="cursor:pointer">
+          <div class="status-badge status-${statusClass}" onclick="toggleStatusMenu(${p.row})" aria-haspopup="true" aria-expanded="false" aria-controls="smenu-${p.row}" title="Click để thay đổi trạng thái" style="cursor:pointer">
             ${statusLabel} <span style="opacity:0.6;font-size:10px">▾</span>
           </div>
           ${errorReason ? `
@@ -3352,6 +3928,69 @@ function productCard(p) {
       </div>
     </aside>
   </div>`;
+}
+
+function renderProductCardMetadata(product) {
+  const item = product || {};
+  const parts = [];
+  const postedAt = String(
+    item.etsy_posted_at
+      || item.formatted_state_date
+      || item.formattedStateDate
+      || item.state_date
+      || item.stateDate
+      || item.posted_at
+      || item.postedAt
+      || item.published_at
+      || item.publishedAt
+      || item.listed_at
+      || item.listedAt
+      || item.date_listed
+      || item.dateListed
+      || item.creation_tsz
+      || item.creationTsz
+      || item.creation_timestamp
+      || item.creationTimestamp
+      || item.created_at
+      || item.createdAt
+      || '',
+  ).trim();
+  const managerStatus = String(
+    item.etsy_manager_status
+      || item.managerStatus
+      || item.etsy_status
+      || '',
+  ).trim().toLowerCase();
+  const hasPostedStatus = /^(?:🆕 Mới import · )?✅ Đã đăng(?: draft)?(?: \(URL chưa xác minh\))?$/.test(String(item.status || '').trim())
+    || managerStatus === 'active'
+    || managerStatus === 'draft'
+    || /^🛍 Etsy (?:active|draft)$/i.test(String(item.status || '').trim());
+  if (postedAt) {
+    const formatter = typeof formatEtsyPostedAt === 'function' ? formatEtsyPostedAt : value => String(value || '');
+    const displayedDate = formatter(postedAt) || postedAt;
+    parts.push(
+      `<span class="product-etsy-posted-at" title="Ngày giờ lấy từ dữ liệu listing Etsy authoritative">📅 Etsy đăng: ${escHtml(displayedDate)}</span>`,
+    );
+  } else if (hasPostedStatus) {
+    parts.push('<span class="product-etsy-posted-at" title="Snapshot Etsy chưa có trường ngày giờ đăng">📅 Etsy đăng: chưa có dữ liệu</span>');
+  } else {
+    parts.push('<span class="product-etsy-posted-at" title="Sản phẩm chưa ở trạng thái đã đăng">📅 Etsy đăng: chưa đăng</span>');
+  }
+
+  const rawBytes = item.local_file_bytes ?? item.file_bytes;
+  const localBytes = Number(rawBytes);
+  if (rawBytes !== null && rawBytes !== undefined && rawBytes !== '' && Number.isFinite(localBytes) && localBytes >= 0) {
+    const fileCount = Number(item.local_file_count ?? item.file_count);
+    const countSuffix = Number.isInteger(fileCount) && fileCount >= 0 ? ` · ${fileCount} file` : '';
+    const formatter = typeof formatCloudAssetBytes === 'function' ? formatCloudAssetBytes : value => `${value} B`;
+    parts.push(`<span class="product-local-asset-size" title="Tổng dung lượng logical của file regular trong files/ local">📎 File local: ${escHtml(formatter(localBytes))}${countSuffix}</span>`);
+  } else if (item.local_asset_size_error) {
+    parts.push('<span class="product-local-asset-size" title="Không đọc được đầy đủ dung lượng trong files/ local">📎 File local: không đọc được</span>');
+  } else {
+    parts.push('<span class="product-local-asset-size" title="Chưa có dữ liệu dung lượng trong files/ local">📎 File local: chưa có dữ liệu</span>');
+  }
+
+  return `<div class="product-card-metadata" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:5px;font-size:11px;color:var(--text3);" aria-label="Thông tin Etsy và dung lượng local">${parts.join(' · ')}</div>`;
 }
 
 function productImageGallery(images, folder) {
@@ -4705,17 +5344,77 @@ async function batchPostSelected() {
   }
 }
 
+let activeStatusMenu = null;
+
+function closeStatusMenu() {
+  const active = activeStatusMenu;
+  if (!active) return;
+  activeStatusMenu = null;
+  active.observer?.disconnect();
+  active.anchor.setAttribute('aria-expanded', 'false');
+  active.menu.style.display = 'none';
+  active.menu.classList.remove('status-menu-floating');
+  for (const property of ['top', 'left', 'max-height']) {
+    active.menu.style.removeProperty(property);
+  }
+  // A refreshed card may have replaced the original anchor while the menu
+  // was in the body. Do not leave that old menu or a duplicate id behind.
+  if (active.parent.isConnected && active.anchor.isConnected) {
+    const next = active.nextSibling?.parentNode === active.parent ? active.nextSibling : null;
+    active.parent.insertBefore(active.menu, next);
+  } else {
+    active.menu.remove();
+  }
+}
+
 function toggleStatusMenu(row) {
-  // Close all other open menus first
-  document.querySelectorAll('.status-menu').forEach(m => {
-    if (m.id !== `smenu-${row}`) m.style.display = 'none';
-  });
+  const wasOpen = activeStatusMenu?.menu.id === `smenu-${row}`;
+  closeStatusMenu();
+  if (wasOpen) return;
+
   const menu = document.getElementById(`smenu-${row}`);
-  if (menu) menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+  const anchor = document.getElementById(`status-wrap-${row}`)?.querySelector('.status-badge');
+  if (!menu || !anchor) return;
+
+  const rect = anchor.getBoundingClientRect();
+  const viewportWidth = document.documentElement.clientWidth || window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  if (rect.bottom <= 0 || rect.top >= viewportHeight || rect.right <= 0 || rect.left >= viewportWidth) return;
+
+  const active = { menu, anchor, parent: menu.parentNode, nextSibling: menu.nextSibling, observer: null };
+  activeStatusMenu = active;
+  // Anchor to the badge, not the tall wrapper containing category errors.
+  // A body-level menu also escapes the card's hover transform and stacking.
+  document.body.appendChild(menu);
+  menu.classList.add('status-menu-floating');
+  menu.style.display = 'block';
+  anchor.setAttribute('aria-expanded', 'true');
+
+  const margin = 8;
+  const gap = 6;
+  const below = Math.max(0, viewportHeight - rect.bottom - gap - margin);
+  const above = Math.max(0, rect.top - gap - margin);
+  const naturalHeight = menu.getBoundingClientRect().height;
+  const openAbove = naturalHeight > below && above > below;
+  menu.style.maxHeight = `${openAbove ? above : below}px`;
+  const menuRect = menu.getBoundingClientRect();
+  const left = Math.max(margin, Math.min(rect.left, viewportWidth - menuRect.width - margin));
+  const preferredTop = openAbove ? rect.top - gap - menuRect.height : rect.bottom + gap;
+  const top = Math.max(margin, Math.min(preferredTop, viewportHeight - menuRect.height - margin));
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+
+  if (typeof MutationObserver !== 'undefined') {
+    active.observer = new MutationObserver(() => {
+      if (!anchor.isConnected) closeStatusMenu();
+    });
+    active.observer.observe(document.body, { childList: true, subtree: true });
+  }
 }
 
 async function changeStatus(row, folder, newStatus) {
   // Close menu
+  closeStatusMenu();
   const menu = document.getElementById(`smenu-${row}`);
   if (menu) menu.style.display = 'none';
   const p = allProducts.find(x => x.row === row);
@@ -4772,10 +5471,17 @@ async function changeStatus(row, folder, newStatus) {
 
 // Close status menu when clicking outside
 document.addEventListener('click', (e) => {
-  if (!e.target.closest('.status-wrap')) {
-    document.querySelectorAll('.status-menu').forEach(m => m.style.display = 'none');
-  }
+  const active = activeStatusMenu;
+  if (active && !active.anchor.contains(e.target) && !active.menu.contains(e.target)) closeStatusMenu();
 });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeStatusMenu();
+});
+document.addEventListener('scroll', (e) => {
+  // Scrolling inside a height-limited menu must still allow choosing an item.
+  if (activeStatusMenu && !activeStatusMenu.menu.contains(e.target)) closeStatusMenu();
+}, true);
+window.addEventListener('resize', closeStatusMenu);
 
 
 
@@ -4852,8 +5558,14 @@ async function syncEtsyShop() {
 
 
 async function batchGenerateSEO() {
-  if (!confirm('Tự động generate SEO (title, tags, description) cho tất cả sản phẩm có file nhưng chưa có title?\n\nVertex AI / Gemini sẽ xử lý từng sản phẩm và lưu thẳng vào Excel.')) return;
-  const btn = document.querySelector('.btn-seo');
+  if (!confirm('Tự động generate SEO (title, tags, description) cho tất cả sản phẩm có file nhưng chưa có title?\n\nTogether AI sẽ xử lý từng sản phẩm và lưu thẳng vào Excel.')) return;
+  const btn = document.getElementById('btn-batch-generate-seo');
+  if (!btn) {
+    toast('error', 'Không tìm thấy nút Tạo SEO còn thiếu');
+    return;
+  }
+  const originalButtonHtml = btn.innerHTML;
+  const originalDisabled = btn.disabled;
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Đang chạy...';
   try {
@@ -4863,13 +5575,12 @@ async function batchGenerateSEO() {
       toast('info', `🤖 Đang generate SEO cho ${data.count} sản phẩm: ${(data.folders || []).join(', ')}`);
     } else {
       toast('info', data.message || 'Không có folder nào cần generate');
-      btn.disabled = false;
-      btn.innerHTML = '🤖 Generate Missing SEO';
     }
   } catch (e) {
     toast('error', `Lỗi: ${e.message}`);
-    btn.disabled = false;
-    btn.innerHTML = '🤖 Generate Missing SEO';
+  } finally {
+    btn.disabled = originalDisabled;
+    btn.innerHTML = originalButtonHtml;
   }
 }
 
@@ -4895,7 +5606,7 @@ async function quickSEO(row, folder) {
       toast('success', `✅ ${folder}: SEO đã generate — kiểm tra thẻ ✏️`);
       await loadProducts();   // reload to remove needs_seo flag & show real title
     } else {
-      toast('error', data.error || 'Vertex AI không phản hồi');
+      toast('error', data.error || 'Together AI không phản hồi');
     }
   } catch (e) {
     toast('error', `Lỗi: ${e.message}`);
@@ -5012,6 +5723,7 @@ function openEditModal(row) {
   document.getElementById('edit-title').value       = p.needs_seo ? "" : p.title;
   document.getElementById('edit-tags').value        = p.tags;
   document.getElementById('edit-keywords').value    = p.keywords;
+  document.getElementById('edit-category').value     = p.category || "";
   document.getElementById('edit-extra').value       = p.extra || ""; // Khôi phục lại gợi ý AI từ memory
   document.getElementById('edit-description').value = p.description;
   document.getElementById('edit-price').value       = p.price;
@@ -5050,6 +5762,7 @@ async function saveEdit() {
     title:       titleVal,
     tags:        document.getElementById('edit-tags').value.trim(),
     keywords:    document.getElementById('edit-keywords').value.trim(),
+    category:    document.getElementById('edit-category').value.trim(),
     description: document.getElementById('edit-description').value.trim(),
     price:       priceValue,
     section:     document.getElementById('edit-section').value.trim(),
@@ -5153,7 +5866,7 @@ async function regenField(field) {
         if (field === 'description') p.description = seo.description;
       }
     } else {
-      toast('error', data.error || 'Vertex AI không phản hồi');
+      toast('error', data.error || 'Together AI không phản hồi');
     }
   } catch (e) {
     toast('error', `Lỗi: ${e.message}`);
@@ -5199,7 +5912,7 @@ async function regenSEO() {
     const data = await res.json().catch(() => ({}));
 
     if (!res.ok || !data.ok || !data.seo) {
-      const detail = data.detail || data.error || data.message || `Vertex AI trả về HTTP ${res.status}`;
+      const detail = data.detail || data.error || data.message || `Together AI trả về HTTP ${res.status}`;
       toast('error', detail);
       return;
     }
@@ -5489,8 +6202,16 @@ function runtimeHealthWarnings(payload = {}) {
   }
 
   const optionalChecks = optional?.checks || readiness?.checks || {};
-  if (optionalChecks.vertex_app === false) {
-    checks.push({ kind: 'vertex', label: 'Vertex service offline' });
+  const readBooleanCheck = (keys) => keys
+    .map((key) => optionalChecks?.[key])
+    .find((value) => typeof value === 'boolean');
+  const togetherCheck = readBooleanCheck(['together_api', 'bai_api', 'vertex_app']);
+  const imageStudioCheck = readBooleanCheck(['image_studio', 'vertex_app']);
+  if (togetherCheck === false) {
+    checks.push({ kind: 'together', label: 'Together AI API offline' });
+  }
+  if (imageStudioCheck === false) {
+    checks.push({ kind: 'image-studio', label: 'Image Studio offline' });
   }
   if (optionalChecks.mlx_ai === false) {
     checks.push({ kind: 'mlx', label: 'MLX service offline' });
@@ -5513,6 +6234,18 @@ function renderRuntimeHealth(payload = {}) {
   const canonicalRoot = String(payload?.canonical_root || 'unknown').trim();
   const activeShop = payload?.active_shop || {};
   const title = document.querySelector('#runtime-health .runtime-health-text');
+
+  if (typeof shopContextReady !== 'undefined' && shopContextReady
+      && !(typeof shopContextSwitchInFlight !== 'undefined' && shopContextSwitchInFlight)) {
+    const runtimeShopId = String(activeShop?.id || '').trim();
+    const expectedShopId = String(
+      ((typeof shopContext !== 'undefined' && shopContext?.id) || currentShopContextId()),
+    ).trim();
+    if (!runtimeShopId || !expectedShopId || runtimeShopId !== expectedShopId) {
+      handleShopContextDrift({ actualId: runtimeShopId, source: 'runtime-health' });
+      return;
+    }
+  }
 
   const readiness = payload?.service_readiness || {};
   const coreReadiness = readiness?.core;
@@ -5540,6 +6273,8 @@ function renderRuntimeHealth(payload = {}) {
 
   widget.dataset.currentRoot = currentRoot;
   widget.dataset.canonicalRoot = canonicalRoot;
+  const warningText = warnings.map((item) => item.label).join(' • ');
+  widget.title = `Runtime Health${shopLabel}${warningText ? `\nCảnh báo: ${warningText}` : '\nKhông có cảnh báo'}`;
 
   const existingList = widget.querySelector('.runtime-health-issues');
   if (existingList) {
@@ -5549,7 +6284,7 @@ function renderRuntimeHealth(payload = {}) {
 
   const list = document.createElement('span');
   list.className = 'runtime-health-meta runtime-health-issues';
-  list.textContent = warnings.map((item) => item.label).join(' • ');
+  list.textContent = warningText;
   widget.appendChild(list);
 }
 
@@ -5576,14 +6311,20 @@ async function pollServices() {
   try {
     const res  = await fetch('/api/services');
     const data = await res.json();
-    setSvc('svc-vertex',  data.vertex_app);
-    setSvc('svc-mlx',     data.mlx_ai);
-    setSvc('svc-watcher', data.watcher);
+    // Older dashboard backends exposed `bai_api` or one `vertex_app` probe.
+    // Read those keys only as compatibility fallbacks for the Together pill.
+    setSvc('svc-together', serviceSignal(data, 'together_api', ['bai_api', 'vertex_app']));
+    setSvc('svc-image-studio', serviceSignal(data, 'image_studio'));
+    setSvc('svc-mlx', serviceSignal(data, 'mlx_ai', null));
+    setSvc('svc-watcher', serviceSignal(data, 'watcher', null));
+    updateServiceSummary();
 
     const prev = new Set(runningSet);
     runningSet = new Set(data.running || []);
+    servicesSnapshotValid = true;
+    updateStopButtonState();
     const syncBtn = document.getElementById('btn-etsy-sync');
-    if (syncBtn) {
+    if (syncBtn && syncBtn.dataset.shopContextDisabled !== 'true') {
       const syncing = runningSet.has('__ETSY_SYNC__');
       syncBtn.disabled = syncing;
       syncBtn.innerHTML = syncing ? '<span class="spinner"></span> Đang sync...' : '🔄 Đồng bộ Etsy Shop';
@@ -5593,9 +6334,15 @@ async function pollServices() {
       await loadProducts();
     }
   } catch (e) {
-    setSvc('svc-vertex', false);
-    setSvc('svc-mlx', false);
-    setSvc('svc-watcher', false);
+    // A failed read cannot prove that an optional service is offline. Keep the
+    // pills neutral and leave Stop All enabled until a fresh snapshot arrives.
+    setSvc('svc-together', null);
+    setSvc('svc-image-studio', null);
+    setSvc('svc-mlx', null);
+    setSvc('svc-watcher', null);
+    updateServiceSummary();
+    servicesSnapshotValid = false;
+    updateStopButtonState();
   }
 }
 
@@ -5605,6 +6352,17 @@ async function pollRuntimeHealth() {
     const payload = await response.json();
     if (!response.ok) {
       throw new Error(payload?.detail || `Runtime health HTTP ${response.status}`);
+    }
+    if (typeof shopContextReady !== 'undefined' && shopContextReady
+        && !(typeof shopContextSwitchInFlight !== 'undefined' && shopContextSwitchInFlight)) {
+      const runtimeShopId = String(payload?.active_shop?.id || '').trim();
+      const expectedShopId = String(
+        ((typeof shopContext !== 'undefined' && shopContext?.id) || currentShopContextId()),
+      ).trim();
+      if (!runtimeShopId || !expectedShopId || runtimeShopId !== expectedShopId) {
+        handleShopContextDrift({ actualId: runtimeShopId, source: 'runtime-health' });
+        return;
+      }
     }
     renderRuntimeHealth(payload);
   } catch (error) {
@@ -5626,7 +6384,49 @@ async function pollRuntimeHealth() {
 function setSvc(id, online) {
   const el = document.getElementById(id);
   if (!el) return;
-  el.className = `svc ${online ? 'online' : 'offline'}`;
+  const known = typeof online === 'boolean';
+  el.className = `svc ${known ? (online ? 'online' : 'offline') : 'unknown'}`;
+  el.dataset.status = known ? (online ? 'online' : 'offline') : 'unknown';
+}
+
+function serviceSignal(payload, key, legacyKey = 'vertex_app') {
+  if (payload && typeof payload[key] === 'boolean') {
+    return payload[key];
+  }
+  const legacyKeys = Array.isArray(legacyKey) ? legacyKey : [legacyKey];
+  for (const legacyName of legacyKeys) {
+    if (payload && legacyName && Object.prototype.hasOwnProperty.call(payload, legacyName)) {
+      if (typeof payload[legacyName] === 'boolean') return payload[legacyName];
+    }
+  }
+  return null;
+}
+
+function updateServiceSummary() {
+  const summary = document.getElementById('service-summary');
+  if (!summary) return;
+  const serviceIds = ['svc-together', 'svc-image-studio', 'svc-mlx', 'svc-watcher'];
+  const online = serviceIds.reduce((count, id) => {
+    const node = document.getElementById(id);
+    return count + (node?.classList.contains('online') ? 1 : 0);
+  }, 0);
+  summary.textContent = `Dịch vụ ${online}/4`;
+  summary.title = `${online}/4 dịch vụ đang sẵn sàng`;
+}
+
+function updateStopButtonState() {
+  const button = document.getElementById('btn-stop-all');
+  if (!button) return;
+  const queueSnapshot = Array.isArray(operationQueueLastCommands)
+    ? operationQueueLastCommands
+    : [];
+  const hasWork = runningSet.size > 0 || queueSnapshot.length > 0;
+  const hasReliableIdleEvidence = servicesSnapshotValid && operationQueueSnapshotValid;
+  const canDisable = hasReliableIdleEvidence && !hasWork;
+  button.disabled = canDisable;
+  button.title = canDisable
+    ? 'Không có tác vụ đang chạy hoặc chờ theo lần kiểm tra gần nhất'
+    : 'Dừng tất cả poster đang chạy hoặc đang chờ';
 }
 
 // ── SSE Logs ───────────────────────────────────────────────────────────────────
@@ -6013,6 +6813,11 @@ function updateBatchUI(e) {
 }
 
 function cloudBatchSkipReason(folder) {
+  const safeFolder = String(folder || '').trim();
+  const product = allProducts.find((item) => String(item?.folder || '').trim() === safeFolder);
+  if (product && !isCanonicalSuccessfulLocalPostedStatus(product.status)) {
+    return 'chưa ở trạng thái Đã đăng — hãy đăng sản phẩm trước khi upload cloud';
+  }
   const status = cloudAssetStatusForFolder(folder) || null;
   const state = String(status?.state || '').trim().toUpperCase();
   if (state === 'CLOUD_ONLY') return 'đã Cloud-only';
@@ -6041,6 +6846,13 @@ function cloudBatchSkipReason(folder) {
     return 'local thiếu image/file usable — bổ sung assets rồi thử lại';
   }
   return '';
+}
+
+function cloudUploadPostedStatusWarning(folder) {
+  const safeFolder = String(folder || '').trim();
+  const product = allProducts.find((item) => String(item?.folder || '').trim() === safeFolder);
+  if (!product || isCanonicalSuccessfulLocalPostedStatus(product.status)) return '';
+  return `⚠️ Không thể upload cloud ${safeFolder}: sản phẩm chưa ở trạng thái ✅ Đã đăng (hoặc ✅ Đã đăng draft) hợp lệ. Hãy đưa sản phẩm lên Đã đăng trước; local vẫn được giữ nguyên cho đến khi upload + verify manifest/hash cloud hoàn tất.`;
 }
 
 async function batchCloudUploadAndOffload() {
@@ -6080,7 +6892,12 @@ async function batchCloudUploadAndOffload() {
   }
 
   if (!uniqueItems.length) {
-    toast('info', skipped.length ? `Không có product cần upload; ${skipped.join(', ')}` : 'Không có product hợp lệ để upload cloud');
+    toast(
+      skipped.length ? 'warning' : 'info',
+      skipped.length
+        ? `⚠️ Không có product được upload; đã bỏ qua sản phẩm chưa ở trạng thái Đã đăng: ${skipped.join(', ')}`
+        : 'Không có product hợp lệ để upload cloud',
+    );
     return;
   }
 
@@ -6162,6 +6979,9 @@ async function batchCloudUploadAndOffload() {
 
   if (queued) {
     toast('info', `🗓️ Đã xếp ${queued}/${uniqueItems.length} product vào queue Upload + verify + xoá local sau cloud verify.`);
+  }
+  if (skipped.length) {
+    toast('warning', `⚠️ Đã bỏ qua ${skipped.length} product chưa ở trạng thái Đã đăng: ${skipped.join(' · ')}`);
   }
   if (failed.length) {
     toast('error', `❌ ${failed.length} product không xếp được: ${failed.join(' · ')}`);
@@ -6299,14 +7119,22 @@ async function openGenModal(row, folder) {
 
   _buildGenStyleGrid();
 
-  // Check vertex status
-  const svEl = document.getElementById('gen-vertex-status');
+  // Image Studio remains a separate local service until Together AI image-model
+  // access is explicitly enabled; do not report Together AI text readiness as
+  // image readiness.
+  const svEl = document.getElementById('gen-image-studio-status');
   try {
     const svc = await fetch('/api/services').then(r => r.json());
-    const ok = svc.mlx_ai || svc.vertex_app; // vertex image studio runs on mlx_ai port
-    svEl.textContent = ok ? '● Vertex Online' : '● Vertex Offline';
-    svEl.className = `svc ${ok ? 'online' : 'offline'}`;
-  } catch { svEl.textContent = '● Checking...'; }
+    const ok = serviceSignal(svc, 'image_studio');
+    const status = typeof ok === 'boolean' ? (ok ? 'online' : 'offline') : 'unknown';
+    svEl.textContent = status === 'online'
+      ? '● Image Studio Online'
+      : status === 'offline' ? '● Image Studio Offline' : '● Image Studio Checking';
+    svEl.className = `svc ${status}`;
+  } catch {
+    svEl.textContent = '● Image Studio Checking';
+    svEl.className = 'svc unknown';
+  }
 
   openModal('gen-modal');
 
@@ -7061,7 +7889,7 @@ async function scanFactory(options = {}) {
       ? Number(scanSummary.excluded_catalog_product_folders)
       : 0;
     const scopeNote = document.getElementById('factory-scope-note');
-    scopeNote.textContent = `Chỉ hiển thị ${eligibleCount} folder intake có đủ ảnh gallery và ZIP nguồn. ${excludedProductCount} folder catalog product-* được loại để tránh import trùng.`;
+    scopeNote.textContent = `Quét ${eligibleCount} folder nguồn (nested intake + direct product-*) có đủ ảnh gallery và file ZIP/PDF. ${excludedProductCount} folder product-* trong catalog đã bị loại để tránh import trùng.`;
     scopeNote.style.display = 'block';
     updateFactoryFilterCounts();
 

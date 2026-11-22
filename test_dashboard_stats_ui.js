@@ -31,6 +31,7 @@ const elements = Object.fromEntries([
   'stat-total',
   'stat-posted',
   'stat-pending',
+  'stat-new-import',
   'stat-error',
   'stat-other',
   'stat-total-label',
@@ -82,7 +83,7 @@ const products = [
 const summary = summarizeProductStatuses(products);
 assert.deepEqual(
   { ...summary },
-  { total: 198, posted: 179, pending: 8, error: 6, other: 5 },
+  { total: 198, posted: 179, pending: 8, error: 6, other: 5, new_import: 1 },
 );
 assert.equal(summary.posted + summary.pending + summary.error + summary.other, summary.total);
 assert.equal(classifyProductStatus('Đã đăng · sync lỗi'), 'error');
@@ -99,9 +100,11 @@ setSource('local');
 updateStats(products.slice(0, -1));
 assert.equal(elements['stat-total'].textContent, 197);
 assert.equal(elements['stat-other'].textContent, 4);
+assert.equal(elements['stat-new-import'].textContent, 1);
 updateStats(products);
 assert.equal(elements['stat-total'].textContent, 198);
 assert.equal(elements['stat-other'].textContent, 5);
+assert.equal(elements['stat-new-import'].textContent, 1);
 assert.equal(elements['stat-total-label'].textContent, 'Folder local hiển thị');
 setSource('aggregate');
 updateStats(products);
@@ -114,6 +117,8 @@ for (const id of [
   'stat-total-label',
   'stat-posted-label',
   'stat-pending-label',
+  'stat-new-import',
+  'stat-new-import-label',
   'stat-error-label',
   'stat-other',
   'stat-other-label',
@@ -121,6 +126,7 @@ for (const id of [
   assert.match(indexHtml, new RegExp(`id=["']${id}["']`), `missing HTML id ${id}`);
 }
 assert.match(indexHtml, /Khác \/ cần xử lý/);
+assert.match(indexHtml, /🆕 Mới thêm/);
 assert.match(indexHtml, /không phải số Etsy Active/);
 
 console.log('dashboard stats UI tests passed');

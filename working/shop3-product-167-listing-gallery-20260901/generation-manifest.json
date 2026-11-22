@@ -1,0 +1,223 @@
+{
+  "schema": "etsy-image-generation-v3",
+  "generated_at": "2026-09-01T07:54:52+07:00",
+  "shop_id": "shop3",
+  "folder": "product-167",
+  "row": 0,
+  "listing_title": "Wood Furniture Set | Mun Wood | Model 70151",
+  "product_type": "Wood Furniture Set",
+  "wood": "Mun Wood",
+  "model": "70151",
+  "before_image_count": 3,
+  "tool_mode": "chatgpt-built-in-imagegen",
+  "generation_count": 10,
+  "independent_generation": true,
+  "one_generation_call_per_asset": true,
+  "canva_used": false,
+  "local_compositor_used": false,
+  "contact_sheet_output": false,
+  "branding_overlay": false,
+  "logo_policy": "none",
+  "text_overlay_policy": "none",
+  "target_format": "PNG",
+  "target_aspect_ratio": "1:1",
+  "target_quality": "highest available; prefer 2048x2048 or larger square output when supported",
+  "source_references": [
+    {
+      "kind": "local_original_backup",
+      "value": "output/backup/shop3-product-167-gallery-before-20260901T011317+0700/images/etsy_01.jpg",
+      "priority": 1
+    },
+    {
+      "kind": "local_original_backup",
+      "value": "output/backup/shop3-product-167-gallery-before-20260901T011317+0700/images/etsy_02.jpg",
+      "priority": 1
+    },
+    {
+      "kind": "local_original_backup",
+      "value": "output/backup/shop3-product-167-gallery-before-20260901T011317+0700/images/etsy_03.jpg",
+      "priority": 1
+    },
+    {
+      "kind": "source_url",
+      "value": "https://godinh.com/web/image/product.product/70091/image_1920/B%E1%BB%99%20%C4%90%C3%B4n%20G%E1%BB%97%20Mun%20Hoa%20B%C3%A0n%20Cao%2062%20%C4%90%C6%B0%E1%BB%9Dng%20K%C3%ADnh%20M%E1%BA%B7t%2075%20Ph%E1%BB%A7%20B%C3%AC%20R%E1%BB%99ng%2091%20%28cm%29?unique=0f8aaa5",
+      "priority": 2
+    },
+    {
+      "kind": "source_url",
+      "value": "https://godinh.com/web/image/product.image/400519/image_1920/B%E1%BB%99%20%C4%90%C3%B4n%20G%E1%BB%97%20Mun%20Hoa%20B%C3%A0n%20Cao%2062%20%C4%90%C6%B0%E1%BB%9Dng%20K%C3%ADnh%20M%E1%BA%B7t%2075%20Ph%E1%BB%A7%20B%C3%AC%20R%E1%BB%99ng%2091%20%28cm%29?unique=0f8aaa5",
+      "priority": 2
+    },
+    {
+      "kind": "source_url",
+      "value": "https://godinh.com/web/image/product.image/400520/image_1920/B%E1%BB%99%20%C4%90%C3%B4n%20G%E1%BB%97%20Mun%20Hoa%20B%C3%A0n%20Cao%2062%20%C4%90%C6%B0%E1%BB%9Dng%20K%C3%ADnh%20M%E1%BA%B7t%2075%20Ph%E1%BB%A7%20B%C3%AC%20R%E1%BB%99ng%2091%20%28cm%29?unique=0f8aaa5",
+      "priority": 2
+    }
+  ],
+  "source_reference_note": "When running ChatGPT Image Generate, attach the original source photographs for every asset. Do not use earlier composed listing graphics as product truth when original references are available.",
+  "run_instruction": "Run assets 01 through 10 as TEN SEPARATE image-generation calls. Never ask for a 10-image grid, contact sheet, collage, or multi-panel output. Save each returned image under its declared output filename.",
+  "assets": [
+    {
+      "slot": "01",
+      "output": "etsy_01.png",
+      "title": "Hero studio 3/4",
+      "generation_mode": "independent_single_image",
+      "reference_policy": "attach original source photos; prefer local_original/source_url over current_image_fallback",
+      "prompt": "The product is Wood Furniture Set, material/style label: Mun Wood, model 70151. Use ALL attached original reference photos as strict product-identity references. Preserve the exact real product: same silhouette, proportions, tabletop/seat shape, base shape, number of legs/supports, joinery, edge character, piece count, visible defects/marks, and overall wood tone/grain character. Do not redesign, beautify, simplify, symmetrize, add or remove parts, invent hidden geometry, add extra matching stools/tables, or turn one furniture type into another. Remove any source watermark/logo/text artifact from the generated scene while keeping product geometry intact. Premium international artisan furniture catalog photography. Warm natural wood, warm cream/sand/walnut/muted-olive palette, Japandi / Wabi-Sabi / Quiet Luxury mood, natural daylight, soft realistic shadows, restrained styling, realistic material detail, high-end editorial photography, product remains the hero. One square standalone Etsy image only. NO collage, NO contact sheet, NO split panels, NO inset thumbnails, NO text, NO typography, NO captions, NO badges, NO infographic, NO logo, NO watermark, NO border, NO neon, NO childish pastel styling, NO fantasy furniture, NO busy background. SCENE: Create a clean premium hero image on a warm cream seamless studio background. Camera at natural eye level with a gentle three-quarter view; show the entire product with comfortable breathing room. Soft window daylight from one side, subtle floor shadow, no props except at most one tiny neutral ceramic object far from the product.",
+      "qa": [
+        "single standalone image; not collage or multi-panel",
+        "no logo, watermark, text, labels, badges, or infographic",
+        "product identity and geometry match source references",
+        "no extra matching furniture pieces invented",
+        "premium warm Japandi/Wabi-Sabi/Quiet Luxury art direction"
+      ]
+    },
+    {
+      "slot": "02",
+      "output": "etsy_02.png",
+      "title": "Clean catalog front",
+      "generation_mode": "independent_single_image",
+      "reference_policy": "attach original source photos; prefer local_original/source_url over current_image_fallback",
+      "prompt": "The product is Wood Furniture Set, material/style label: Mun Wood, model 70151. Use ALL attached original reference photos as strict product-identity references. Preserve the exact real product: same silhouette, proportions, tabletop/seat shape, base shape, number of legs/supports, joinery, edge character, piece count, visible defects/marks, and overall wood tone/grain character. Do not redesign, beautify, simplify, symmetrize, add or remove parts, invent hidden geometry, add extra matching stools/tables, or turn one furniture type into another. Remove any source watermark/logo/text artifact from the generated scene while keeping product geometry intact. Premium international artisan furniture catalog photography. Warm natural wood, warm cream/sand/walnut/muted-olive palette, Japandi / Wabi-Sabi / Quiet Luxury mood, natural daylight, soft realistic shadows, restrained styling, realistic material detail, high-end editorial photography, product remains the hero. One square standalone Etsy image only. NO collage, NO contact sheet, NO split panels, NO inset thumbnails, NO text, NO typography, NO captions, NO badges, NO infographic, NO logo, NO watermark, NO border, NO neon, NO childish pastel styling, NO fantasy furniture, NO busy background. SCENE: Create a distinct clean catalog view on a sand-toned plaster studio set. Camera more frontal and slightly farther back than the hero; entire product visible and centered. Use diffuse daylight and a soft grounding shadow. No decorative props.",
+      "qa": [
+        "single standalone image; not collage or multi-panel",
+        "no logo, watermark, text, labels, badges, or infographic",
+        "product identity and geometry match source references",
+        "no extra matching furniture pieces invented",
+        "premium warm Japandi/Wabi-Sabi/Quiet Luxury art direction"
+      ]
+    },
+    {
+      "slot": "03",
+      "output": "etsy_03.png",
+      "title": "Opposite 3/4 angle",
+      "generation_mode": "independent_single_image",
+      "reference_policy": "attach original source photos; prefer local_original/source_url over current_image_fallback",
+      "prompt": "The product is Wood Furniture Set, material/style label: Mun Wood, model 70151. Use ALL attached original reference photos as strict product-identity references. Preserve the exact real product: same silhouette, proportions, tabletop/seat shape, base shape, number of legs/supports, joinery, edge character, piece count, visible defects/marks, and overall wood tone/grain character. Do not redesign, beautify, simplify, symmetrize, add or remove parts, invent hidden geometry, add extra matching stools/tables, or turn one furniture type into another. Remove any source watermark/logo/text artifact from the generated scene while keeping product geometry intact. Premium international artisan furniture catalog photography. Warm natural wood, warm cream/sand/walnut/muted-olive palette, Japandi / Wabi-Sabi / Quiet Luxury mood, natural daylight, soft realistic shadows, restrained styling, realistic material detail, high-end editorial photography, product remains the hero. One square standalone Etsy image only. NO collage, NO contact sheet, NO split panels, NO inset thumbnails, NO text, NO typography, NO captions, NO badges, NO infographic, NO logo, NO watermark, NO border, NO neon, NO childish pastel styling, NO fantasy furniture, NO busy background. SCENE: Create a separate alternate three-quarter catalog photograph from the opposite side, but only reveal geometry that can be supported by the reference photos. Warm ivory studio, soft daylight, product fully visible, no props.",
+      "qa": [
+        "single standalone image; not collage or multi-panel",
+        "no logo, watermark, text, labels, badges, or infographic",
+        "product identity and geometry match source references",
+        "no extra matching furniture pieces invented",
+        "premium warm Japandi/Wabi-Sabi/Quiet Luxury art direction"
+      ]
+    },
+    {
+      "slot": "04",
+      "output": "etsy_04.png",
+      "title": "Wood surface close-up",
+      "generation_mode": "independent_single_image",
+      "reference_policy": "attach original source photos; prefer local_original/source_url over current_image_fallback",
+      "prompt": "The product is Wood Furniture Set, material/style label: Mun Wood, model 70151. Use ALL attached original reference photos as strict product-identity references. Preserve the exact real product: same silhouette, proportions, tabletop/seat shape, base shape, number of legs/supports, joinery, edge character, piece count, visible defects/marks, and overall wood tone/grain character. Do not redesign, beautify, simplify, symmetrize, add or remove parts, invent hidden geometry, add extra matching stools/tables, or turn one furniture type into another. Remove any source watermark/logo/text artifact from the generated scene while keeping product geometry intact. Premium international artisan furniture catalog photography. Warm natural wood, warm cream/sand/walnut/muted-olive palette, Japandi / Wabi-Sabi / Quiet Luxury mood, natural daylight, soft realistic shadows, restrained styling, realistic material detail, high-end editorial photography, product remains the hero. One square standalone Etsy image only. NO collage, NO contact sheet, NO split panels, NO inset thumbnails, NO text, NO typography, NO captions, NO badges, NO infographic, NO logo, NO watermark, NO border, NO neon, NO childish pastel styling, NO fantasy furniture, NO busy background. SCENE: Create a dedicated macro/detail photograph of the most characteristic real wood surface from the referenced product. Crop tightly enough to reveal authentic grain, tone transitions, live/organic edge or surface character while still making the product context recognizable. Neutral warm background, raking daylight, realistic texture.",
+      "qa": [
+        "single standalone image; not collage or multi-panel",
+        "no logo, watermark, text, labels, badges, or infographic",
+        "product identity and geometry match source references",
+        "no extra matching furniture pieces invented",
+        "premium warm Japandi/Wabi-Sabi/Quiet Luxury art direction"
+      ]
+    },
+    {
+      "slot": "05",
+      "output": "etsy_05.png",
+      "title": "Construction detail close-up",
+      "generation_mode": "independent_single_image",
+      "reference_policy": "attach original source photos; prefer local_original/source_url over current_image_fallback",
+      "prompt": "The product is Wood Furniture Set, material/style label: Mun Wood, model 70151. Use ALL attached original reference photos as strict product-identity references. Preserve the exact real product: same silhouette, proportions, tabletop/seat shape, base shape, number of legs/supports, joinery, edge character, piece count, visible defects/marks, and overall wood tone/grain character. Do not redesign, beautify, simplify, symmetrize, add or remove parts, invent hidden geometry, add extra matching stools/tables, or turn one furniture type into another. Remove any source watermark/logo/text artifact from the generated scene while keeping product geometry intact. Premium international artisan furniture catalog photography. Warm natural wood, warm cream/sand/walnut/muted-olive palette, Japandi / Wabi-Sabi / Quiet Luxury mood, natural daylight, soft realistic shadows, restrained styling, realistic material detail, high-end editorial photography, product remains the hero. One square standalone Etsy image only. NO collage, NO contact sheet, NO split panels, NO inset thumbnails, NO text, NO typography, NO captions, NO badges, NO infographic, NO logo, NO watermark, NO border, NO neon, NO childish pastel styling, NO fantasy furniture, NO busy background. SCENE: Create a separate close-up focused on one real construction detail supported by the references: base transition, joinery, carved edge, leg/support shape, or stool/body profile. Do not invent hardware or joinery. Warm natural daylight, shallow but realistic depth of field, premium craft catalog feel.",
+      "qa": [
+        "single standalone image; not collage or multi-panel",
+        "no logo, watermark, text, labels, badges, or infographic",
+        "product identity and geometry match source references",
+        "no extra matching furniture pieces invented",
+        "premium warm Japandi/Wabi-Sabi/Quiet Luxury art direction"
+      ]
+    },
+    {
+      "slot": "06",
+      "output": "etsy_06.png",
+      "title": "Living room placement",
+      "generation_mode": "independent_single_image",
+      "reference_policy": "attach original source photos; prefer local_original/source_url over current_image_fallback",
+      "prompt": "The product is Wood Furniture Set, material/style label: Mun Wood, model 70151. Use ALL attached original reference photos as strict product-identity references. Preserve the exact real product: same silhouette, proportions, tabletop/seat shape, base shape, number of legs/supports, joinery, edge character, piece count, visible defects/marks, and overall wood tone/grain character. Do not redesign, beautify, simplify, symmetrize, add or remove parts, invent hidden geometry, add extra matching stools/tables, or turn one furniture type into another. Remove any source watermark/logo/text artifact from the generated scene while keeping product geometry intact. Premium international artisan furniture catalog photography. Warm natural wood, warm cream/sand/walnut/muted-olive palette, Japandi / Wabi-Sabi / Quiet Luxury mood, natural daylight, soft realistic shadows, restrained styling, realistic material detail, high-end editorial photography, product remains the hero. One square standalone Etsy image only. NO collage, NO contact sheet, NO split panels, NO inset thumbnails, NO text, NO typography, NO captions, NO badges, NO infographic, NO logo, NO watermark, NO border, NO neon, NO childish pastel styling, NO fantasy furniture, NO busy background. SCENE: Place the exact referenced product in a calm high-end living room beside a warm cream or oatmeal sofa. Limewash/plaster wall, natural oak or pale stone floor, one muted-olive textile accent, minimal decor. Keep realistic scale and leave the product unobstructed and visually dominant.",
+      "qa": [
+        "single standalone image; not collage or multi-panel",
+        "no logo, watermark, text, labels, badges, or infographic",
+        "product identity and geometry match source references",
+        "no extra matching furniture pieces invented",
+        "premium warm Japandi/Wabi-Sabi/Quiet Luxury art direction"
+      ]
+    },
+    {
+      "slot": "07",
+      "output": "etsy_07.png",
+      "title": "Bedroom or lounge placement",
+      "generation_mode": "independent_single_image",
+      "reference_policy": "attach original source photos; prefer local_original/source_url over current_image_fallback",
+      "prompt": "The product is Wood Furniture Set, material/style label: Mun Wood, model 70151. Use ALL attached original reference photos as strict product-identity references. Preserve the exact real product: same silhouette, proportions, tabletop/seat shape, base shape, number of legs/supports, joinery, edge character, piece count, visible defects/marks, and overall wood tone/grain character. Do not redesign, beautify, simplify, symmetrize, add or remove parts, invent hidden geometry, add extra matching stools/tables, or turn one furniture type into another. Remove any source watermark/logo/text artifact from the generated scene while keeping product geometry intact. Premium international artisan furniture catalog photography. Warm natural wood, warm cream/sand/walnut/muted-olive palette, Japandi / Wabi-Sabi / Quiet Luxury mood, natural daylight, soft realistic shadows, restrained styling, realistic material detail, high-end editorial photography, product remains the hero. One square standalone Etsy image only. NO collage, NO contact sheet, NO split panels, NO inset thumbnails, NO text, NO typography, NO captions, NO badges, NO infographic, NO logo, NO watermark, NO border, NO neon, NO childish pastel styling, NO fantasy furniture, NO busy background. SCENE: Place the exact referenced furniture in a refined tea/lounge or dining-scale interior, with limewash walls, pale stone or oak flooring, one quiet linen accent, and generous negative space.",
+      "qa": [
+        "single standalone image; not collage or multi-panel",
+        "no logo, watermark, text, labels, badges, or infographic",
+        "product identity and geometry match source references",
+        "no extra matching furniture pieces invented",
+        "premium warm Japandi/Wabi-Sabi/Quiet Luxury art direction"
+      ]
+    },
+    {
+      "slot": "08",
+      "output": "etsy_08.png",
+      "title": "Wabi-Sabi editorial interior",
+      "generation_mode": "independent_single_image",
+      "reference_policy": "attach original source photos; prefer local_original/source_url over current_image_fallback",
+      "prompt": "The product is Wood Furniture Set, material/style label: Mun Wood, model 70151. Use ALL attached original reference photos as strict product-identity references. Preserve the exact real product: same silhouette, proportions, tabletop/seat shape, base shape, number of legs/supports, joinery, edge character, piece count, visible defects/marks, and overall wood tone/grain character. Do not redesign, beautify, simplify, symmetrize, add or remove parts, invent hidden geometry, add extra matching stools/tables, or turn one furniture type into another. Remove any source watermark/logo/text artifact from the generated scene while keeping product geometry intact. Premium international artisan furniture catalog photography. Warm natural wood, warm cream/sand/walnut/muted-olive palette, Japandi / Wabi-Sabi / Quiet Luxury mood, natural daylight, soft realistic shadows, restrained styling, realistic material detail, high-end editorial photography, product remains the hero. One square standalone Etsy image only. NO collage, NO contact sheet, NO split panels, NO inset thumbnails, NO text, NO typography, NO captions, NO badges, NO infographic, NO logo, NO watermark, NO border, NO neon, NO childish pastel styling, NO fantasy furniture, NO busy background. SCENE: Create a distinctly different Wabi-Sabi editorial interior: warm textured plaster wall, soft linen curtain, aged neutral stone or oak floor, one sculptural branch or ceramic object. Natural side light with soft shadows. Keep the exact product isolated as the hero and do not add matching furniture pieces.",
+      "qa": [
+        "single standalone image; not collage or multi-panel",
+        "no logo, watermark, text, labels, badges, or infographic",
+        "product identity and geometry match source references",
+        "no extra matching furniture pieces invented",
+        "premium warm Japandi/Wabi-Sabi/Quiet Luxury art direction"
+      ]
+    },
+    {
+      "slot": "09",
+      "output": "etsy_09.png",
+      "title": "Quiet luxury architectural scene",
+      "generation_mode": "independent_single_image",
+      "reference_policy": "attach original source photos; prefer local_original/source_url over current_image_fallback",
+      "prompt": "The product is Wood Furniture Set, material/style label: Mun Wood, model 70151. Use ALL attached original reference photos as strict product-identity references. Preserve the exact real product: same silhouette, proportions, tabletop/seat shape, base shape, number of legs/supports, joinery, edge character, piece count, visible defects/marks, and overall wood tone/grain character. Do not redesign, beautify, simplify, symmetrize, add or remove parts, invent hidden geometry, add extra matching stools/tables, or turn one furniture type into another. Remove any source watermark/logo/text artifact from the generated scene while keeping product geometry intact. Premium international artisan furniture catalog photography. Warm natural wood, warm cream/sand/walnut/muted-olive palette, Japandi / Wabi-Sabi / Quiet Luxury mood, natural daylight, soft realistic shadows, restrained styling, realistic material detail, high-end editorial photography, product remains the hero. One square standalone Etsy image only. NO collage, NO contact sheet, NO split panels, NO inset thumbnails, NO text, NO typography, NO captions, NO badges, NO infographic, NO logo, NO watermark, NO border, NO neon, NO childish pastel styling, NO fantasy furniture, NO busy background. SCENE: Create a quiet-luxury architectural scene with generous negative space, warm cream wall planes, muted olive accent in the distance, and soft morning daylight. Product placed alone at realistic scale, photographed like a premium interior design magazine. No people, no text, no extra matching pieces.",
+      "qa": [
+        "single standalone image; not collage or multi-panel",
+        "no logo, watermark, text, labels, badges, or infographic",
+        "product identity and geometry match source references",
+        "no extra matching furniture pieces invented",
+        "premium warm Japandi/Wabi-Sabi/Quiet Luxury art direction"
+      ]
+    },
+    {
+      "slot": "10",
+      "output": "etsy_10.png",
+      "title": "Craftsmanship atmosphere",
+      "generation_mode": "independent_single_image",
+      "reference_policy": "attach original source photos; prefer local_original/source_url over current_image_fallback",
+      "prompt": "The product is Wood Furniture Set, material/style label: Mun Wood, model 70151. Use ALL attached original reference photos as strict product-identity references. Preserve the exact real product: same silhouette, proportions, tabletop/seat shape, base shape, number of legs/supports, joinery, edge character, piece count, visible defects/marks, and overall wood tone/grain character. Do not redesign, beautify, simplify, symmetrize, add or remove parts, invent hidden geometry, add extra matching stools/tables, or turn one furniture type into another. Remove any source watermark/logo/text artifact from the generated scene while keeping product geometry intact. Premium international artisan furniture catalog photography. Warm natural wood, warm cream/sand/walnut/muted-olive palette, Japandi / Wabi-Sabi / Quiet Luxury mood, natural daylight, soft realistic shadows, restrained styling, realistic material detail, high-end editorial photography, product remains the hero. One square standalone Etsy image only. NO collage, NO contact sheet, NO split panels, NO inset thumbnails, NO text, NO typography, NO captions, NO badges, NO infographic, NO logo, NO watermark, NO border, NO neon, NO childish pastel styling, NO fantasy furniture, NO busy background. SCENE: Create a premium artisan-workshop atmosphere around the exact finished product: clean woodworker studio, soft daylight, a few restrained hand tools in the background only. The product must remain fully finished exactly like the references; do not show invented construction stages, unverified hand-carving, or change its finish. No visible brand marks or signage.",
+      "qa": [
+        "single standalone image; not collage or multi-panel",
+        "no logo, watermark, text, labels, badges, or infographic",
+        "product identity and geometry match source references",
+        "no extra matching furniture pieces invented",
+        "premium warm Japandi/Wabi-Sabi/Quiet Luxury art direction"
+      ]
+    }
+  ],
+  "legacy_pillow_working_backup": "output/backup/shop3-product-167-legacy-pillow-working-20260901T075452+0700",
+  "known_source_facts": {
+    "material": "Gỗ Mun / Mun wood",
+    "height_cm": 62,
+    "tabletop_diameter_cm": 75,
+    "overall_width_cm": 91,
+    "set_shown": {
+      "table": 1,
+      "stools": 6
+    }
+  },
+  "selection_reason": "replace_legacy_pillow_gallery"
+}

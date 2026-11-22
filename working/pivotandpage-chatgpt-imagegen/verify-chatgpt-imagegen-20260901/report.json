@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "run_id": "verify-chatgpt-imagegen-20260901",
+  "shop_id": "shop3",
+  "tool_mode": "chatgpt-built-in-imagegen",
+  "canva_used": false,
+  "local_compositor_used": false,
+  "targets": 0,
+  "jobs": 0,
+  "mutated_shop_images": false,
+  "mutated_workbook": false,
+  "results": []
+}

@@ -38,7 +38,7 @@ class RuntimeIdentityUnitTests(unittest.TestCase):
     def test_runtime_health_payload_shape_and_no_secret_fields(self) -> None:
         fixed_root = Path(tempfile.gettempdir())
         service_checks = {
-            "vertex_app": True,
+            "together_api": True,
             "mlx_ai": False,
             "watcher": True,
             "running": ["__ETSY_SYNC__"],
@@ -89,7 +89,7 @@ class RuntimeIdentityUnitTests(unittest.TestCase):
         self.assertFalse(payload["service_readiness"]["core"]["ok"])
         self.assertFalse(payload["service_readiness"]["optional"]["ok"])
         self.assertEqual(payload["service_readiness"]["optional"]["checks"], {
-            "vertex_app": True,
+            "together_api": True,
             "mlx_ai": False,
             "watcher": True,
         })
@@ -106,7 +106,7 @@ class RuntimeIdentityUnitTests(unittest.TestCase):
     def test_runtime_health_payload_core_ready_with_optional_offline(self) -> None:
         fixed_root = Path(tempfile.gettempdir())
         service_checks = {
-            "vertex_app": False,
+            "together_api": False,
             "mlx_ai": False,
             "watcher": False,
             "running": ["__ETSY_SYNC__"],
@@ -146,7 +146,7 @@ class RuntimeIdentityUnitTests(unittest.TestCase):
                 listen_port=8090,
                 service_readiness=service_checks,
                 core_service_readiness={"ok": True, "checks": {"dashboard_endpoint": True}},
-                optional_service_readiness={"ok": False, "checks": {"vertex_app": False, "mlx_ai": False, "watcher": False}},
+                optional_service_readiness={"ok": False, "checks": {"together_api": False, "mlx_ai": False, "watcher": False}},
                 active_shop_id="templyshops",
                 active_shop_name="Temply Studio",
             )
@@ -155,7 +155,7 @@ class RuntimeIdentityUnitTests(unittest.TestCase):
         self.assertTrue(payload["service_readiness"]["core"]["ok"])
         self.assertFalse(payload["service_readiness"]["optional"]["ok"])
         self.assertFalse(payload["service_readiness"]["optional"]["checks"]["watcher"])
-        self.assertEqual(payload["service_readiness"]["optional"]["checks"]["vertex_app"], False)
+        self.assertEqual(payload["service_readiness"]["optional"]["checks"]["together_api"], False)
 
     def test_runtime_health_payload_backup_failure_timestamp_logic(self) -> None:
         fixed_root = Path(tempfile.gettempdir())
@@ -190,7 +190,7 @@ class RuntimeIdentityUnitTests(unittest.TestCase):
                 runtime_root=fixed_root,
                 listen_host="127.0.0.1",
                 listen_port=8090,
-                service_readiness={"vertex_app": False, "mlx_ai": False, "watcher": False},
+                service_readiness={"together_api": False, "mlx_ai": False, "watcher": False},
                 active_shop_id="templyshops",
                 active_shop_name="Temply Studio",
             )
@@ -219,7 +219,7 @@ class RuntimeIdentityUnitTests(unittest.TestCase):
                 runtime_root=fixed_root,
                 listen_host="127.0.0.1",
                 listen_port=8090,
-                service_readiness={"vertex_app": False, "mlx_ai": False, "watcher": False},
+                service_readiness={"together_api": False, "mlx_ai": False, "watcher": False},
                 active_shop_id="templyshops",
                 active_shop_name="Temply Studio",
             )
@@ -248,7 +248,7 @@ class RuntimeIdentityUnitTests(unittest.TestCase):
                 runtime_root=fixed_root,
                 listen_host="127.0.0.1",
                 listen_port=8090,
-                service_readiness={"vertex_app": False, "mlx_ai": False, "watcher": False},
+                service_readiness={"together_api": False, "mlx_ai": False, "watcher": False},
                 active_shop_id="templyshops",
                 active_shop_name="Temply Studio",
             )

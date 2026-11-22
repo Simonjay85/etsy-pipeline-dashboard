@@ -5,4 +5,5 @@ collect_ignore = [
     "test_tag_pills.py",      # Playwright interactive script
     "test_tags.py",           # Playwright interactive script
     "test_translate.py",      # manual translation check
+    "test_apply_bulk_seo_cdp.py",  # one-off CDP script bound to untracked output/ payload
 ]

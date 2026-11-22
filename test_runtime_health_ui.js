@@ -5,6 +5,12 @@ const vm = require('node:vm');
 const indexHtml = fs.readFileSync('dashboard_static/index.html', 'utf8');
 assert.ok(indexHtml.includes('id="runtime-health"'), 'Missing runtime health widget root');
 assert.ok(indexHtml.includes('id="runtime-health-meta"'), 'Missing runtime health metadata label');
+const styleCss = fs.readFileSync('dashboard_static/style.css', 'utf8');
+const compactDesktopStart = styleCss.indexOf('@media (min-width: 1201px)');
+assert.ok(compactDesktopStart >= 0, 'Missing compact desktop styles');
+assert.match(styleCss.slice(compactDesktopStart), /\.topbar \.runtime-health\s*\{[\s\S]*?overflow:\s*hidden/);
+assert.doesNotMatch(styleCss.slice(compactDesktopStart, styleCss.indexOf('.topbar .services', compactDesktopStart)), /overflow-x:\s*auto/);
+assert.match(styleCss, /\.topbar \.runtime-health-issues\s*\{[\s\S]*?text-overflow:\s*ellipsis/);
 
 const appJs = fs.readFileSync('dashboard_static/app.js', 'utf8');
 const start = appJs.indexOf('function runtimeHealthWarnings');
@@ -114,8 +120,8 @@ assert.equal(typeof sandbox.normalizeRuntimeHealthStatus, 'function');
     current_root: '/tmp/noncanonical',
     service_readiness: {
       ok: false,
-      checks: { vertex_app: true, mlx_ai: false, watcher: true },
-      optional: { ok: false, checks: { vertex_app: true, mlx_ai: false, watcher: true } },
+      checks: { together_api: true, image_studio: true, mlx_ai: false, watcher: true },
+      optional: { ok: false, checks: { together_api: true, image_studio: true, mlx_ai: false, watcher: true } },
     },
   };
 
@@ -132,6 +138,10 @@ const meta = document.getElementById('runtime-health-meta');
 assert.ok(widget.className.includes('warning'));
 assert.ok(/noncanonical/.test(meta.textContent));
 assert.ok(document.getElementById('runtime-health').querySelector('.runtime-health-issues'));
+assert.match(widget.title, /Cảnh báo:/);
+assert.match(widget.title, /Source dirty\/unstable/);
+assert.match(widget.title, /Backup scheduler not fully loaded/);
+assert.match(widget.title, /MLX service offline/);
 
   const olderFailurePayload = {
     canonical_match: true,
@@ -149,7 +159,7 @@ assert.ok(document.getElementById('runtime-health').querySelector('.runtime-heal
     service_readiness: {
       ok: true,
       core: { ok: true, checks: { dashboard_endpoint: true } },
-      optional: { ok: true, checks: { vertex_app: true, mlx_ai: true, watcher: true } },
+      optional: { ok: true, checks: { together_api: true, image_studio: true, mlx_ai: true, watcher: true } },
     },
     health_summary: { source_stale: false },
   };
@@ -173,7 +183,7 @@ assert.ok(document.getElementById('runtime-health').querySelector('.runtime-heal
     service_readiness: {
       ok: true,
       core: { ok: true, checks: { dashboard_endpoint: true } },
-      optional: { ok: true, checks: { vertex_app: true, mlx_ai: true, watcher: true } },
+      optional: { ok: true, checks: { together_api: true, image_studio: true, mlx_ai: true, watcher: true } },
     },
     health_summary: { source_stale: false },
   };
@@ -194,7 +204,7 @@ assert.ok(document.getElementById('runtime-health').querySelector('.runtime-heal
     service_readiness: {
       ok: true,
       core: { ok: true, checks: { dashboard_endpoint: true } },
-      optional: { ok: true, checks: { vertex_app: true, mlx_ai: true, watcher: true } },
+      optional: { ok: true, checks: { together_api: true, image_studio: true, mlx_ai: true, watcher: true } },
     },
     health_summary: { source_stale: false, backup_last_failure: false },
   };
@@ -215,7 +225,7 @@ assert.ok(document.getElementById('runtime-health').querySelector('.runtime-heal
     service_readiness: {
       ok: true,
       core: { ok: true, checks: { dashboard_endpoint: true } },
-      optional: { ok: false, checks: { vertex_app: false, mlx_ai: true, watcher: true } },
+      optional: { ok: false, checks: { together_api: false, image_studio: true, mlx_ai: true, watcher: true } },
     },
     health_summary: { source_stale: false, backup_last_failure: false },
   };
@@ -223,7 +233,39 @@ assert.ok(document.getElementById('runtime-health').querySelector('.runtime-heal
   sandbox.renderRuntimeHealth(optionalOfflinePayload);
   assert.ok(widget.className.includes('warning'));
   assert.ok(/ready/.test(meta.textContent));
-  assert.equal(widget.querySelector('.runtime-health-issues').textContent.includes('Vertex service offline'), true);
+  assert.equal(widget.querySelector('.runtime-health-issues').textContent.includes('Together AI API offline'), true);
+
+  const legacyBaiPayload = {
+    canonical_match: true,
+    source: { dirty: false },
+    backup_scheduler: {
+      loaded: { daily: true, weekly: true },
+      status_evidence: { last_failure: null, last_success: { timestamp: '2026-01-01T00:00:00', status: 'success' } },
+    },
+    active_shop: { id: 'demo', name: 'Demo Shop' },
+    canonical_root: '/tmp/canonical',
+    current_root: '/tmp/canonical',
+    service_readiness: {
+      ok: true,
+      core: { ok: true, checks: { dashboard_endpoint: true } },
+      optional: { ok: false, checks: { bai_api: false, image_studio: true, mlx_ai: true, watcher: true } },
+    },
+    health_summary: { source_stale: false, backup_last_failure: false },
+  };
+
+  const legacyBaiWarnings = sandbox.runtimeHealthWarnings(legacyBaiPayload);
+  assert.equal(legacyBaiWarnings.some((item) => item.kind === 'together'), true);
+  assert.equal(legacyBaiWarnings.some((item) => item.label === 'Together AI API offline'), true);
+
+  const legacyVertexPayload = {
+    ...legacyBaiPayload,
+    service_readiness: {
+      ...legacyBaiPayload.service_readiness,
+      optional: { ok: false, checks: { vertex_app: false, image_studio: true, mlx_ai: true, watcher: true } },
+    },
+  };
+  const legacyVertexWarnings = sandbox.runtimeHealthWarnings(legacyVertexPayload);
+  assert.equal(legacyVertexWarnings.some((item) => item.kind === 'together'), true);
 
   const normalized = sandbox.normalizeRuntimeHealthStatus(mismatchPayload);
   assert.equal(normalized.ok, false);

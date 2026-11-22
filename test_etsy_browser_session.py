@@ -67,6 +67,33 @@ def test_open_login_reuses_only_verified_exact_session(tmp_path, monkeypatch):
     popen.assert_not_called()
 
 
+def test_open_login_launcher_passes_session_restore_flags(tmp_path, monkeypatch):
+    session = etsy_browser_session.EtsyBrowserSession(
+        "daisyflowdigital", tmp_path / "etsy-profile", 42123
+    )
+    chrome = tmp_path / "google-chrome"
+    chrome.write_text("", encoding="utf-8")
+    popen = Mock()
+
+    calls = []
+
+    def _session_ready(_candidate):
+        calls.append(True)
+        return len(calls) >= 2
+
+    monkeypatch.setattr(etsy_browser_session, "is_session_ready", _session_ready)
+    monkeypatch.setattr(etsy_browser_session, "CHROME_PATH", chrome)
+    monkeypatch.setattr(etsy_browser_session.subprocess, "Popen", popen)
+
+    assert etsy_browser_session.open_etsy_login_browser(session, wait_seconds=0.001)
+    args = popen.call_args[0][0]
+    assert str(chrome) in args[0]
+    assert f"--remote-debugging-port={session.debug_port}" in args
+    assert f"--user-data-dir={session.profile_dir}" in args
+    assert "--restore-last-session" in args
+    assert "--disable-session-crashed-bubble" in args
+
+
 def test_open_endpoint_rejects_shop_mismatch_before_open(monkeypatch):
     opened = Mock()
 
@@ -134,7 +161,7 @@ def test_poster_reuses_verified_login_context_without_closing_it(
     assert result_page is page
     assert owns_context is False
     chromium.connect_over_cdp.assert_awaited_once_with(
-        "http://127.0.0.1:43997", timeout=10000
+        "http://127.0.0.1:43997", timeout=etsy_auto_post.CDP_CONNECT_TIMEOUT_MS
     )
     chromium.launch_persistent_context.assert_not_awaited()
 
@@ -159,7 +186,11 @@ def test_poster_reconnect_retry_transient_timeout_then_success_same_session(
         sleep_calls.append(seconds)
 
     connect = AsyncMock(
-        side_effect=[etsy_auto_post.PlaywrightTimeoutError("timed out"), browser]
+        side_effect=[
+            etsy_auto_post.PlaywrightTimeoutError("timed out"),
+            etsy_auto_post.PlaywrightTimeoutError("timed out"),
+            browser,
+        ]
     )
     launch = AsyncMock()
     chromium = Mock(
@@ -188,12 +219,17 @@ def test_poster_reconnect_retry_transient_timeout_then_success_same_session(
     assert owns_context is False
     connect.assert_has_awaits(
         [
-            call("http://127.0.0.1:43997", timeout=10000),
-            call("http://127.0.0.1:43997", timeout=10000),
+            call("http://127.0.0.1:43997", timeout=etsy_auto_post.CDP_CONNECT_TIMEOUT_MS),
+            call(
+                "http://127.0.0.1:43997",
+                timeout=etsy_auto_post.CDP_CONNECT_TIMEOUT_MS,
+                no_defaults=True,
+            ),
+            call("http://127.0.0.1:43997", timeout=etsy_auto_post.CDP_CONNECT_TIMEOUT_MS),
         ],
         any_order=False,
     )
-    assert connect.await_count == 2
+    assert connect.await_count == 3
     assert len(readiness_calls) == 2
     assert sleep_calls == [0.25]
     launch.assert_not_awaited()
@@ -213,6 +249,9 @@ def test_poster_reconnect_retry_exhausted_raises_shop_and_port_error(
     timeout_error = etsy_auto_post.PlaywrightTimeoutError("timed out")
     connect = AsyncMock(
         side_effect=[
+            timeout_error,
+            timeout_error,
+            timeout_error,
             timeout_error,
             timeout_error,
             timeout_error,
@@ -250,16 +289,31 @@ def test_poster_reconnect_retry_exhausted_raises_shop_and_port_error(
     assert "daisyflowdigital" in message
     assert str(profile) in message
     assert "43997" in message
-    assert "mở lại phiên đăng nhập đúng profile" in message
+    assert "Đăng nhập Etsy cho Post" in message
     connect.assert_has_awaits(
         [
-            call("http://127.0.0.1:43997", timeout=10000),
-            call("http://127.0.0.1:43997", timeout=10000),
-            call("http://127.0.0.1:43997", timeout=10000),
+            call("http://127.0.0.1:43997", timeout=etsy_auto_post.CDP_CONNECT_TIMEOUT_MS),
+            call(
+                "http://127.0.0.1:43997",
+                timeout=etsy_auto_post.CDP_CONNECT_TIMEOUT_MS,
+                no_defaults=True,
+            ),
+            call("http://127.0.0.1:43997", timeout=etsy_auto_post.CDP_CONNECT_TIMEOUT_MS),
+            call(
+                "http://127.0.0.1:43997",
+                timeout=etsy_auto_post.CDP_CONNECT_TIMEOUT_MS,
+                no_defaults=True,
+            ),
+            call("http://127.0.0.1:43997", timeout=etsy_auto_post.CDP_CONNECT_TIMEOUT_MS),
+            call(
+                "http://127.0.0.1:43997",
+                timeout=etsy_auto_post.CDP_CONNECT_TIMEOUT_MS,
+                no_defaults=True,
+            ),
         ],
         any_order=False,
     )
-    assert connect.await_count == 3
+    assert connect.await_count == 6
     assert exc_info.value.__cause__ is timeout_error
     assert sleep_calls == [0.25, 0.50]
     assert len(readiness_calls) == 3
@@ -280,7 +334,12 @@ def test_poster_reconnect_stops_if_session_no_longer_ready_after_timeout(
     context = Mock()
     context.new_page = AsyncMock(return_value=page)
     browser = Mock(contexts=[context])
-    connect = AsyncMock(side_effect=[etsy_auto_post.PlaywrightTimeoutError("timed out")])
+    connect = AsyncMock(
+        side_effect=[
+            etsy_auto_post.PlaywrightTimeoutError("timed out"),
+            etsy_auto_post.PlaywrightTimeoutError("timed out"),
+        ]
+    )
     launch = AsyncMock()
     chromium = Mock(
         connect_over_cdp=connect,
@@ -311,8 +370,38 @@ def test_poster_reconnect_stops_if_session_no_longer_ready_after_timeout(
     assert "CDP đang bận hoặc không phản hồi" in message
     assert "43997" in message
     assert "profile" in message
-    assert connect.await_count == 1
+    assert connect.await_count == 2
     assert sleep_calls == []
+    launch.assert_not_awaited()
+
+
+def test_poster_ready_false_raises_clear_fail_closed_error_without_launch(tmp_path, monkeypatch):
+    profile = tmp_path / "etsy-profile"
+    shops = {
+        "daisyflowdigital": {
+            "browser_session": str(profile),
+            "etsy_login_debug_port": 43997,
+        }
+    }
+    connect = AsyncMock()
+    launch = AsyncMock()
+    chromium = Mock(
+        connect_over_cdp=connect,
+        launch_persistent_context=launch,
+    )
+    pw = Mock(chromium=chromium)
+
+    monkeypatch.setattr(etsy_auto_post, "SHOPS", shops)
+    monkeypatch.setattr(
+        etsy_auto_post,
+        "is_etsy_session_ready",
+        lambda session: False,
+    )
+
+    with pytest.raises(RuntimeError, match="Đăng nhập Etsy cho Post"):
+        asyncio.run(etsy_auto_post._open_poster_context(pw, "daisyflowdigital", profile))
+
+    connect.assert_not_called()
     launch.assert_not_awaited()
 
 

@@ -139,6 +139,142 @@
       "count": 1
     },
     {
+      "path": "creativeca_etsy_bot.py",
+      "code": "B902",
+      "scope": "connected_browser",
+      "source": "except Exception as exc:",
+      "fingerprint": "65457f5506d10afad66c3e62ff0efcde801e05dc38e1fb781b91f2f95c82054e",
+      "count": 1
+    },
+    {
+      "path": "creativeca_etsy_bot.py",
+      "code": "B902",
+      "scope": "creative_fabrica_download",
+      "source": "except Exception as exc:",
+      "fingerprint": "c8efac2bdcba10ee46b9459558987ecb57f6c9ba8100535b6d8d8de38923c7a8",
+      "count": 2
+    },
+    {
+      "path": "creativeca_etsy_bot.py",
+      "code": "B902",
+      "scope": "reset_chatgpt_composer",
+      "source": "except Exception as exc:",
+      "fingerprint": "6848de040852d1895e73e8328e0a322457b5acbb17581e1e6680feb316b22222",
+      "count": 1
+    },
+    {
+      "path": "creativeca_etsy_bot.py",
+      "code": "B902",
+      "scope": "generate_chatgpt_images",
+      "source": "except Exception as exc:",
+      "fingerprint": "d90592dfa06aafd82f98acbb856ad0fcfde0005e4bd52af0f522c31236043749",
+      "count": 2
+    },
+    {
+      "path": "creativeca_etsy_bot.py",
+      "code": "B902",
+      "scope": "creative_fabrica_download",
+      "source": "except Exception as exc: # try the next UI candidate",
+      "fingerprint": "f5e592c894c96dabee87aeb91053c1a8c6bdf6de76591800427123443f6bb198",
+      "count": 1
+    },
+    {
+      "path": "creativeca_etsy_bot.py",
+      "code": "B902",
+      "scope": "page_body",
+      "source": "except Exception:",
+      "fingerprint": "46393d07085c88855510080fc46b2d04fb9902f132f31e2e08b60097c9d84c68",
+      "count": 1
+    },
+    {
+      "path": "creativeca_etsy_bot.py",
+      "code": "B902",
+      "scope": "creative_fabrica_download",
+      "source": "except Exception:",
+      "fingerprint": "e60fdfebb8a0ba3c539264f281ed7637110c1de9bfea916063e64540729976c2",
+      "count": 1
+    },
+    {
+      "path": "creativeca_etsy_bot.py",
+      "code": "B902",
+      "scope": "await_count",
+      "source": "except Exception:",
+      "fingerprint": "e686d339e822b035c7e9702efb6d4ca254de0cc770b01cf308b66bf3fbd52a02",
+      "count": 1
+    },
+    {
+      "path": "creativeca_etsy_bot.py",
+      "code": "B902",
+      "scope": "prompt_text_without_tool_pill",
+      "source": "except Exception:",
+      "fingerprint": "e6d1a9a8cbe34a1aa8d2d699d9e32733cc6a1b6f804fb942098a35d0f3893a54",
+      "count": 1
+    },
+    {
+      "path": "creativeca_etsy_bot.py",
+      "code": "B902",
+      "scope": "materialize_product",
+      "source": "except Exception:",
+      "fingerprint": "d24497f0e13738cdcd8ae138d7345d5635d3538b370c22e6bfe34f2d84b2a24b",
+      "count": 1
+    },
+    {
+      "path": "creativeca_etsy_bot.py",
+      "code": "B902",
+      "scope": "create_workbook_row",
+      "source": "except Exception:",
+      "fingerprint": "f8333cfdc89d32da93859f582c9dab84894f9f79272600bf4978e9732a6bee38",
+      "count": 1
+    },
+    {
+      "path": "creativeca_etsy_bot.py",
+      "code": "B902",
+      "scope": "publish_listing",
+      "source": "except Exception:",
+      "fingerprint": "e1576158a2d6286e40a0fd1785df41f91f09cb589dd75179fd77e49faa483700",
+      "count": 1
+    },
+    {
+      "path": "creativeca_etsy_bot.py",
+      "code": "B902",
+      "scope": "run",
+      "source": "except Exception:",
+      "fingerprint": "e5ea6029e0a5252c784a4fd0fa9667223b8ba07f55c13ef4627133ae793591e1",
+      "count": 1
+    },
+    {
+      "path": "creativefabrica_bundle_survey.py",
+      "code": "B902",
+      "scope": "survey_one",
+      "source": "except Exception as exc: # preserve failures in the export",
+      "fingerprint": "01555b803d7404a420b3a96aa2ba07cfead93c423778bb77b48cccdafdae828c",
+      "count": 1
+    },
+    {
+      "path": "creativefabrica_bundle_survey.py",
+      "code": "B902",
+      "scope": "read_current_metric",
+      "source": "except Exception:",
+      "fingerprint": "8140d80c01966896637242c52c0d9cb71f3fb39b502b6574c232ac8b2f035fc9",
+      "count": 1
+    },
+    {
+      "path": "creativefabrica_top100_zip_download.py",
+      "code": "B902",
+      "scope": "run",
+      "source": "except Exception as exc:",
+      "fingerprint": "c1ff575a1aed3eeb1838fd1d4423c9c71294655425baf1ccab7564c8e79ec230",
+      "count": 3
+    },
+    {
+      "path": "creativefabrica_top100_zip_download.py",
+      "code": "B902",
+      "scope": "run",
+      "source": "except Exception:",
+      "fingerprint": "a2c0252eabc7f7fef5e05a53ea34043d12c8f2cd0d53350a43e559ebe77d81ab",
+      "count": 1
+    },
+    {
       "path": "dashboard_app.py",
       "code": "B902",
       "scope": "_service_status_snapshot",
@@ -381,9 +517,9 @@
     {
       "path": "dashboard_app.py",
       "code": "B902",
-      "scope": "_generate_bai_content_with_retry",
+      "scope": "_generate_together_content_with_retry",
       "source": "except Exception as error:",
-      "fingerprint": "67dc9e9bda1634c81a5d81f64bcce54144d0c2b700a73617c4244342f3d514b6",
+      "fingerprint": "b1042346ce2091be92e56dbc5279273a2ead64f2d3563f53181b75777e499344",
       "count": 1
     },
     {
@@ -741,6 +877,14 @@
     {
       "path": "dashboard_app.py",
       "code": "B902",
+      "scope": "update_together_config",
+      "source": "except Exception:",
+      "fingerprint": "c04f84db4b27e8eca4151dc99c35a186be69bf88bbb9c98d4115fd943cdb1376",
+      "count": 1
+    },
+    {
+      "path": "dashboard_app.py",
+      "code": "B902",
       "scope": "register_local_products",
       "source": "except Exception:",
       "fingerprint": "2b80c2a693c4ce89e946c0d935adaaeb3683fcf010e9b4738fe3d5df1c7213c0",
@@ -789,9 +933,9 @@
     {
       "path": "dashboard_app.py",
       "code": "B902",
-      "scope": "_check_bai_service_async",
+      "scope": "_run_together_readiness_probe",
       "source": "except Exception:",
-      "fingerprint": "1f52d7c78a41da21ea0dc431efc90ba064634e5249745a4ae8ce583981d89802",
+      "fingerprint": "3117245b859c0f1ac4ad47722a4e59049a3c6ac947335a349312f761b19c1345",
       "count": 1
     },
     {
@@ -857,22 +1001,6 @@
       "source": "except Exception:",
       "fingerprint": "b98c805647752ffc57f451dfe1cc8b27f6d1e81028cf7adc89f415d422cee25d",
       "count": 1
-    },
-    {
-      "path": "dashboard_app.py",
-      "code": "B902",
-      "scope": "api_scan_listings.event_stream",
-      "source": "except Exception:",
-      "fingerprint": "bb64b1d8fa9befbefcc83adbe138409084ee71ef0a06735c3ddb57fc0ae5d77a",
-      "count": 2
-    },
-    {
-      "path": "dashboard_app.py",
-      "code": "B902",
-      "scope": "api_clean_duplicates.event_stream",
-      "source": "except Exception:",
-      "fingerprint": "190e6126675ca30f1433d64c7259e92df384e3d42c33332e178e9f80deed089c",
-      "count": 2
     },
     {
       "path": "dashboard_app.py",
@@ -1269,6 +1397,14 @@
     {
       "path": "etsy_auto_post.py",
       "code": "B902",
+      "scope": "main",
+      "source": "except Exception as pipeline_exc:",
+      "fingerprint": "271b05481e6a45367a3b2cbd694dda4d9128192be81e70556f6440e9aa7865f4",
+      "count": 1
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
       "scope": "fill_listing",
       "source": "except Exception as ss_ex:",
       "fingerprint": "b8861fee0d858399509af696cf91d90b2f21536d6a2fcff7f4e2ef08e26cd59b",
@@ -1296,6 +1432,22 @@
       "scope": "_load_shop_configs",
       "source": "except Exception:",
       "fingerprint": "79527dcd0c9cb859fd7e48cbd29d107ef0998c7669a05c5d4a834be3570ad5ea",
+      "count": 1
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "scope": "_current_committed_category_is_physical",
+      "source": "except Exception:",
+      "fingerprint": "15516a22ef76e7630889f9dc8492c83b8ab34a1c778a110c96150d050a78bfa3",
+      "count": 3
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "scope": "_force_draft_filter",
+      "source": "except Exception:",
+      "fingerprint": "f6e266d1d2ab3fdc26b93f2098acfbcdb504b9ed37b0b0bba587a5b745a361aa",
       "count": 1
     },
     {
@@ -1405,6 +1557,14 @@
     {
       "path": "etsy_auto_post.py",
       "code": "B902",
+      "scope": "_collect_editor_navigation_evidence",
+      "source": "except Exception:",
+      "fingerprint": "c1ee8b4eb431850862e13d7c6a129d5bbde3b65fef83b5481e15e61e752bd7fb",
+      "count": 3
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
       "scope": "_input_has_digital_scope",
       "source": "except Exception:",
       "fingerprint": "30a06cc096f97cf8f207ebef3084c023b4630d99dec0846528248fbb5822cdd2",
@@ -1440,6 +1600,14 @@
       "scope": "_select_category_with_exact_readback",
       "source": "except Exception:",
       "fingerprint": "4cea0430001352b0a6397b886fe39bd1a9add6adaee8758dc6a92c1fdf317fdf",
+      "count": 2
+    },
+    {
+      "path": "etsy_auto_post.py",
+      "code": "B902",
+      "scope": "fill_item_details_tab",
+      "source": "except Exception:",
+      "fingerprint": "8cc133b1c86dafc71bff04e7dd2be6129f18ab26fbc0398cc7f855e18186874d",
       "count": 2
     },
     {
@@ -2077,9 +2245,73 @@
     {
       "path": "job_store.py",
       "code": "B902",
+      "scope": "JobStore.claim_pipeline_job",
+      "source": "except Exception:",
+      "fingerprint": "95d2efaeb66e8382963a9256407145e3debf9cdb62e25f02c0e5994380e9d50a",
+      "count": 1
+    },
+    {
+      "path": "job_store.py",
+      "code": "B902",
+      "scope": "JobStore.record_pipeline_manifest",
+      "source": "except Exception:",
+      "fingerprint": "3cf5f75d18d279765bd82333f4b9072741c6387c72f72e1b1e781e8f3c3211e8",
+      "count": 1
+    },
+    {
+      "path": "job_store.py",
+      "code": "B902",
+      "scope": "JobStore.prepare_pipeline_write",
+      "source": "except Exception:",
+      "fingerprint": "d8ffa54d8f17fbb194eaa2d5c4b439bee250a8c59e38e05caab4202847e4d644",
+      "count": 1
+    },
+    {
+      "path": "job_store.py",
+      "code": "B902",
+      "scope": "JobStore.complete_verified",
+      "source": "except Exception:",
+      "fingerprint": "8c0a17cc75cce631fbaeb84b9b8ea4498bc62c4c1644829a5d1856fc91e98588",
+      "count": 1
+    },
+    {
+      "path": "job_store.py",
+      "code": "B902",
+      "scope": "JobStore.reserve_pipeline_quota",
+      "source": "except Exception:",
+      "fingerprint": "cab9b8961fd7c6cce62975589354ce7600134ffccfb047565cfae9cdefefce4f",
+      "count": 1
+    },
+    {
+      "path": "job_store.py",
+      "code": "B902",
+      "scope": "JobStore._pipeline_row_to_dict.parse",
+      "source": "except Exception:",
+      "fingerprint": "5d70e55828b73719060996955c219a4c095ad9772c177a87928b74e27796aa6d",
+      "count": 1
+    },
+    {
+      "path": "job_store.py",
+      "code": "B902",
+      "scope": "JobStore._pipeline_outbox_row_to_dict",
+      "source": "except Exception:",
+      "fingerprint": "5f78b72f1efe8bf8c71427f68885bc69d326f13f7bc6761a5c2491afe018e385",
+      "count": 1
+    },
+    {
+      "path": "job_store.py",
+      "code": "B902",
       "scope": "_stable_json",
       "source": "except Exception:",
       "fingerprint": "892eacf3c4f26f5613c08d3163d9efb97f4a70949b6871572d13008023e4fe3c",
+      "count": 1
+    },
+    {
+      "path": "job_store.py",
+      "code": "B902",
+      "scope": "_pipeline_quota_date",
+      "source": "except Exception: # pragma: no cover - the bundled zoneinfo is available on macOS",
+      "fingerprint": "30ef150a19d8c4eb207f53b4be29bef41e48cb3e9bdc8a6de085673ed39708b1",
       "count": 1
     },
     {
@@ -2104,6 +2336,14 @@
       "scope": "kill_chrome_on_port",
       "source": "except:",
       "fingerprint": "542ee044b82a1cb3ba4e742a112d79435be2c96d34457b69f4bbe2401d98cbad",
+      "count": 1
+    },
+    {
+      "path": "pipeline_contracts.py",
+      "code": "B902",
+      "scope": "_validate_pdf",
+      "source": "except Exception as exc:",
+      "fingerprint": "29f0b0b39c05a9544e5c23001c6407abc4336cc5468a5fcbe6c290d34d14f904",
       "count": 1
     },
     {
@@ -2163,6 +2403,54 @@
       "count": 1
     },
     {
+      "path": "scripts/bubble_redesign_57.py",
+      "code": "B902",
+      "scope": "main",
+      "source": "except Exception as exc:",
+      "fingerprint": "31cc1c88e67358b8853fa7b2afe75017958eec251b1a58abc360cb85c44cb88f",
+      "count": 1
+    },
+    {
+      "path": "scripts/bubble_redesign_cdp_batch.py",
+      "code": "B902",
+      "scope": "main",
+      "source": "except Exception as exc:",
+      "fingerprint": "8b30fa138c2ddf392b3bf51964c10a2fd87f2d6dc44308caeab8a83f6c67587e",
+      "count": 1
+    },
+    {
+      "path": "scripts/bubble_redesign_cdp_batch.py",
+      "code": "B902",
+      "scope": "promote",
+      "source": "except Exception:",
+      "fingerprint": "ba687df124826261b145878d63b17a42f818e5d239f4530d0825b6fdb6f6ea58",
+      "count": 1
+    },
+    {
+      "path": "scripts/bubble_redesign_cdp_batch.py",
+      "code": "B902",
+      "scope": "main",
+      "source": "except Exception:",
+      "fingerprint": "3e6ffc5e509c9cb4d96deb4972ae54b60d7c38d3bd551f6ab829fe0314902762",
+      "count": 1
+    },
+    {
+      "path": "scripts/creativefabrica_kdp_favorites_worker.py",
+      "code": "B902",
+      "scope": "fetch_product",
+      "source": "except Exception as exc:",
+      "fingerprint": "a048f368fd4d6655e403b48b046f70358d401179660e8e63a16246d1e9c19b68",
+      "count": 1
+    },
+    {
+      "path": "scripts/creativefabrica_vps_survey.py",
+      "code": "B902",
+      "scope": "run",
+      "source": "except Exception as exc:",
+      "fingerprint": "d4769bb66f30d2f4201cf21af82588ba337677dc368b83aa83b6439e72e93991",
+      "count": 1
+    },
+    {
       "path": "scripts/daisy_folder_renumber.py",
       "code": "B902",
       "scope": "workbook_plan",
@@ -2217,6 +2505,38 @@
       "source": "except Exception:",
       "fingerprint": "e03c02e8ae10f4df7c24d305743fc2009e529e49f093610d0c1c19f589440c67",
       "count": 1
+    },
+    {
+      "path": "scripts/inspect_chatgpt_images.py",
+      "code": "B902",
+      "scope": "<module>",
+      "source": "except Exception as e:print('ERR',e)",
+      "fingerprint": "08af576c4cc8053cc31160c3306c3c1c6a8b8724360b1a4700a2ef28f389b20e",
+      "count": 1
+    },
+    {
+      "path": "scripts/promote_product08_test.py",
+      "code": "B902",
+      "scope": "<module>",
+      "source": "except Exception:",
+      "fingerprint": "3857343ef1621f848650549e8dd5104c728eab27cf23ed52c8bb02ae4e8b303e",
+      "count": 1
+    },
+    {
+      "path": "scripts/promote_product09_test.py",
+      "code": "B902",
+      "scope": "<module>",
+      "source": "except Exception:",
+      "fingerprint": "1a7b170efb50f44b8a2caee90f3beb5569aad495f19b32d053f98a444cc74536",
+      "count": 1
+    },
+    {
+      "path": "scripts/retry_product174.py",
+      "code": "E722",
+      "scope": "<module>",
+      "source": "except:pass",
+      "fingerprint": "a63079383d94647a4ae46b2144b7d04971d92580af6ebd008d12eb32923a2d68",
+      "count": 2
     },
     {
       "path": "scripts/temply_folder_renumber.py",
@@ -2459,6 +2779,14 @@
       "count": 1
     },
     {
+      "path": "test_etsy_auto_post.py",
+      "code": "B902",
+      "scope": "PhotoUploadStateTests.asyncSetUp",
+      "source": "except Exception as exc:",
+      "fingerprint": "4502029b3c6dc1737fbb96b32d79e6ef126eb670cb238b4c528fc6804ca9aff9",
+      "count": 1
+    },
+    {
       "path": "test_etsy_draft_delete.py",
       "code": "B902",
       "scope": "TestEtsyDraftDelete._launch_browser",
@@ -2505,6 +2833,214 @@
       "source": "except Exception as e:",
       "fingerprint": "2b3086c840d05fc2b2880b7324d07d4832ec1dc0b56ebcd50f0fd8c0da1c8bf1",
       "count": 2
+    },
+    {
+      "path": "tools/_legacy/pivotandpage_gallery_batch_pillow_20260901.py",
+      "code": "B902",
+      "scope": "load_catalog",
+      "source": "except Exception as exc:",
+      "fingerprint": "f8fc6516d6d7ae5d7f4facb7331e3896e75821cc8c11fcdaf0f49683608e95da",
+      "count": 1
+    },
+    {
+      "path": "tools/_legacy/pivotandpage_gallery_batch_pillow_20260901.py",
+      "code": "B902",
+      "scope": "download",
+      "source": "except Exception as exc:",
+      "fingerprint": "30e1376f74ba9eaa5d52816af705c8981b78a489d6b5ff3cd188f2827bfad1a2",
+      "count": 1
+    },
+    {
+      "path": "tools/_legacy/pivotandpage_gallery_batch_pillow_20260901.py",
+      "code": "B902",
+      "scope": "process_one",
+      "source": "except Exception as exc:",
+      "fingerprint": "2961644b975d670ff0a0213137ddfaa4b4ce7c2bd0f3fe6580fdd372a98fe9eb",
+      "count": 1
+    },
+    {
+      "path": "tools/_legacy/pivotandpage_gallery_batch_pillow_20260901.py",
+      "code": "B902",
+      "scope": "install_gallery",
+      "source": "except Exception:",
+      "fingerprint": "afeff584668dc91119ceb09b32e938a679af0c1f4645d7b6bf5ec71d8ee82dc3",
+      "count": 1
+    },
+    {
+      "path": "tools/_legacy/pivotandpage_gallery_batch_pillow_20260901.py",
+      "code": "B902",
+      "scope": "operation_queue",
+      "source": "except Exception:",
+      "fingerprint": "3ff685814ae0b87653bb12916b591933a34dd950720db730530ab222de8fda2e",
+      "count": 1
+    },
+    {
+      "path": "tools/crawl_10k_from_sitemap.py",
+      "code": "B902",
+      "scope": "main",
+      "source": "except Exception as e:",
+      "fingerprint": "882fcef74b81f4ab0f9dd10525eee1ed7a8b573ef5f05b54c0cb3d4ee842ae75",
+      "count": 1
+    },
+    {
+      "path": "tools/crawl_10k_from_sitemap.py",
+      "code": "B902",
+      "scope": "main",
+      "source": "except Exception:",
+      "fingerprint": "7f0f763434ff415ffb724b26f422fbae5a373256f95040ae77024cea2a84cf5e",
+      "count": 1
+    },
+    {
+      "path": "tools/crawl_10k_from_sitemap.py",
+      "code": "B902",
+      "scope": "main",
+      "source": "except Exception: page=await ctx.new_page()",
+      "fingerprint": "6f67c470737afd3dd4f46e075e1d0828ce660f4841e102a9d5d66a71eb38504a",
+      "count": 1
+    },
+    {
+      "path": "tools/crawl_10k_from_sitemap.py",
+      "code": "B902",
+      "scope": "load_existing",
+      "source": "except Exception: pass",
+      "fingerprint": "e3101b1005ec0cd63a36e64dfd68c56787a70b0bf7038e86ca72a920fc16f889",
+      "count": 1
+    },
+    {
+      "path": "tools/crawl_10k_from_sitemap.py",
+      "code": "B902",
+      "scope": "load_done_new",
+      "source": "except Exception: pass",
+      "fingerprint": "3fe5f090f0e25009ce1e3a9a1759e99787867be04f639e70d68266596a373a5c",
+      "count": 1
+    },
+    {
+      "path": "tools/crawl_10k_lifestyle_tiktok_listing.py",
+      "code": "B902",
+      "scope": "main",
+      "source": "except Exception as exc:",
+      "fingerprint": "ddcccfe458973cc1a3dd9da3c3c71556ec56e85a000525abae263c2ad4fd52d5",
+      "count": 3
+    },
+    {
+      "path": "tools/crawl_10k_lifestyle_tiktok_listing.py",
+      "code": "B902",
+      "scope": "read_jsonl",
+      "source": "except Exception:",
+      "fingerprint": "690a3ddf724adccb4de0a2db59e0d3e94926b64eed039891ce53872b490bc25d",
+      "count": 1
+    },
+    {
+      "path": "tools/crawl_10k_lifestyle_tiktok_listing.py",
+      "code": "B902",
+      "scope": "main",
+      "source": "except Exception:",
+      "fingerprint": "10fd5a02a720bee99a17e6668e04ba97da3eaf0c72215b58e64288410dae0659",
+      "count": 2
+    },
+    {
+      "path": "tools/crawl_collabstr_live.py",
+      "code": "B902",
+      "scope": "main",
+      "source": "except Exception as e:",
+      "fingerprint": "21022540ea49824362ecc59ab21a491cd2b0bc5508b471e893b4acd12fe4b031",
+      "count": 1
+    },
+    {
+      "path": "tools/crawl_collabstr_live.py",
+      "code": "B902",
+      "scope": "load_done",
+      "source": "except Exception:",
+      "fingerprint": "1150c11a603d291264ed6bf9eb8fb4806b2dea9e8eade1474e0615dde826c54d",
+      "count": 1
+    },
+    {
+      "path": "tools/crawl_tiktok_beauty_listing.py",
+      "code": "B902",
+      "scope": "main",
+      "source": "except Exception as exc:",
+      "fingerprint": "fef89696fca5397ef66faa0961d24d88117bdffa9d7554968a09056cc726f37b",
+      "count": 3
+    },
+    {
+      "path": "tools/crawl_tiktok_beauty_listing.py",
+      "code": "B902",
+      "scope": "read_jsonl",
+      "source": "except Exception:",
+      "fingerprint": "5872839729a389b95373371dd6efd4c50662a6fe9736d00df645dd68865a0470",
+      "count": 1
+    },
+    {
+      "path": "tools/crawl_tiktok_beauty_listing.py",
+      "code": "B902",
+      "scope": "main",
+      "source": "except Exception:",
+      "fingerprint": "dc836006d4b8e264693cdde11e8f7c4f0c4d2ffbf59032c9e52846a04859fc72",
+      "count": 1
+    },
+    {
+      "path": "tools/crawler_recovery.py",
+      "code": "B902",
+      "scope": "recover_page",
+      "source": "except Exception:",
+      "fingerprint": "73c5ff881948303d938e73ecb1299c5f3a81ee5c996ebccbbbb26f3ba7db64e6",
+      "count": 1
+    },
+    {
+      "path": "tools/enrich_tiktok_profile_media.py",
+      "code": "B902",
+      "scope": "main",
+      "source": "except Exception as e:",
+      "fingerprint": "0e44853b76b0bdb26f1578709a83ce8b98f1f86eef1b92f045d775ef3f9fbb3f",
+      "count": 1
+    },
+    {
+      "path": "tools/enrich_tiktok_profile_media.py",
+      "code": "B902",
+      "scope": "records",
+      "source": "except Exception: pass",
+      "fingerprint": "45343523c8f00d73eff378a809a20e4f23f75c5235993731cee90b3015d205f9",
+      "count": 1
+    },
+    {
+      "path": "tools/enrich_tiktok_profile_media.py",
+      "code": "B902",
+      "scope": "done_urls",
+      "source": "except Exception: pass",
+      "fingerprint": "01283c68b6f63714f0aa39bfa4aa0147c7affa378bf9f2c140b5ba8d62f577f8",
+      "count": 1
+    },
+    {
+      "path": "tools/extract_tiktok_video_stats.py",
+      "code": "B902",
+      "scope": "main",
+      "source": "except Exception as e: out.append({'url':u,'status':'error','error':type(e).__name__+':'+str(e)[:300]})",
+      "fingerprint": "143f510969cc12633aa99c4fdc08d6b47ca59e2e635f45901a98272e2ae6e064",
+      "count": 1
+    },
+    {
+      "path": "tools/inspect_collabstr_sitemaps.py",
+      "code": "B902",
+      "scope": "main",
+      "source": "except Exception as e: out.append({'i':i,'error':type(e).__name__+':'+str(e)[:200]})",
+      "fingerprint": "1332b1ddd257e61e6b099827746fd4dd845a608094362e3addd699dc6f120e14",
+      "count": 1
+    },
+    {
+      "path": "tools/pivotandpage_gallery_final_audit.py",
+      "code": "B902",
+      "scope": "sha",
+      "source": "except Exception as e: issues.append(f'{p.name} decode={e}')",
+      "fingerprint": "c2d83a9ad01c36edcb3b8f7c5437ef614e841b1101c3b7ba4a627057898dab94",
+      "count": 1
+    },
+    {
+      "path": "tools/pivotandpage_gallery_final_audit.py",
+      "code": "B902",
+      "scope": "sha",
+      "source": "except Exception: continue",
+      "fingerprint": "ecf692cea0bc2251e9c9fceacb85c0d050f664ef6ea7583f32683d76b6d932e9",
+      "count": 1
     }
   ]
 }

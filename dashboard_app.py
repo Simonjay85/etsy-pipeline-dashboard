@@ -769,19 +769,23 @@ def _dashboard_index_html() -> str:
 app = FastAPI(title="Etsy Dashboard")
 
 # Price Studio Shop 4: local-only module, parent security remains in force.
+# The "Chi phi shop 4" tree is untracked local data; when it is absent
+# (CI checkouts, fresh clones) the integration is simply not registered.
 import importlib.util as _price_studio_importlib
 _price_studio_root = Path(__file__).resolve().parent / "Chi phi shop 4"
-_price_studio_spec = _price_studio_importlib.spec_from_file_location(
-    "etsy_price_studio_integration", _price_studio_root / "integration.py"
-)
-if _price_studio_spec is None or _price_studio_spec.loader is None:
-    raise RuntimeError("Shop 4 Price Studio integration module is missing")
-_price_studio_module = _price_studio_importlib.module_from_spec(_price_studio_spec)
-_price_studio_spec.loader.exec_module(_price_studio_module)
-_price_studio_module.register(
-    app, _price_studio_root,
-    lambda: _DASHBOARD_MUTATION_TOKEN, _DASHBOARD_MUTATION_TOKEN_HEADER,
-)
+_price_studio_integration = _price_studio_root / "integration.py"
+if _price_studio_integration.exists():
+    _price_studio_spec = _price_studio_importlib.spec_from_file_location(
+        "etsy_price_studio_integration", _price_studio_integration
+    )
+    if _price_studio_spec is None or _price_studio_spec.loader is None:
+        raise RuntimeError("Shop 4 Price Studio integration module is missing")
+    _price_studio_module = _price_studio_importlib.module_from_spec(_price_studio_spec)
+    _price_studio_spec.loader.exec_module(_price_studio_module)
+    _price_studio_module.register(
+        app, _price_studio_root,
+        lambda: _DASHBOARD_MUTATION_TOKEN, _DASHBOARD_MUTATION_TOKEN_HEADER,
+    )
 
 
 
